@@ -11,7 +11,7 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 **Description:** Create the `locode-*` workspace with empty compiling crate skeletons and the pinned toolchain + lint configs (ADR-0002, ADR-0010).
 
 **Acceptance criteria:**
-- [ ] `Cargo.toml` `[workspace]` lists all 8 crates under `crates/`; each crate compiles as an empty lib (`locode-cli` as a bin).
+- [ ] `Cargo.toml` `[workspace]` lists all 8 crates under `crates/`; each crate compiles as an empty lib (`locode-exec` as a bin).
 - [ ] `rust-toolchain.toml` pins current stable + `rustfmt`,`clippy`; `rustfmt.toml`, `clippy.toml`, `[workspace.lints]` (`unused_must_use="deny"`) present.
 - [ ] Dependency directions from the plan graph are wired (no cycles).
 
@@ -220,18 +220,18 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 **Files:** `crates/locode-engine/src/prompt/*.rs`, templates, tests
 **Scope:** S
 
-## Task 14: `locode` facade + `locode-cli` minimal binary
+## Task 14: `locode` facade + `locode-exec` minimal binary
 **Description:** Public facade and the minimal headless binary with strict stdout discipline (ADR-0009).
 
 **Acceptance criteria:**
 - [ ] `locode` re-exports the driving API (`Session`, dialect/provider selection, report types).
-- [ ] `locode-cli`: clap flags `--prompt,--cwd,--dialect(default grok),--provider(default anthropic),--max-turns(default 30)`; emits exactly one JSON report on stdout; logs on stderr; `#![deny(clippy::print_stdout)]`; exit codes per ADR-0009.
+- [ ] `locode-exec`: clap flags `--prompt,--cwd,--dialect(default grok),--provider(default anthropic),--max-turns(default 30)`; emits exactly one JSON report on stdout; logs on stderr; `#![deny(clippy::print_stdout)]`; exit codes per ADR-0009.
 
 **Verification:**
-- [ ] `cargo run -p locode-cli -- --prompt "list and summarize this repo"` prints one parseable JSON report; stderr carries logs; a `--provider mock` mode runs in CI without a key.
+- [ ] `cargo run -p locode-exec -- --prompt "list and summarize this repo"` prints one parseable JSON report; stderr carries logs; a `--provider mock` mode runs in CI without a key.
 
 **Dependencies:** Tasks 6, 12, 13
-**Files:** `crates/locode/src/lib.rs`, `crates/locode-cli/src/main.rs`, tests
+**Files:** `crates/locode/src/lib.rs`, `crates/locode-exec/src/main.rs`, tests
 **Scope:** M
 
 ### Checkpoint D — end-to-end run against Claude prints one JSON report. **v0 success criteria met.** Review.
