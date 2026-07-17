@@ -31,7 +31,7 @@ locode-protocol  (pure types)
     │               └── locode-dialects  (re-skin over tools)
     ├── locode-provider   (Provider trait + MockProvider, then Anthropic wire)
     └── locode-engine     (loop + Session)  ← composes tools+dialects+provider+host
-            └── locode (facade) ── locode-cli (minimal binary)
+            └── locode (facade) ── locode-exec (minimal binary)
 ```
 
 Build bottom-up; slice vertically so each checkpoint leaves a working, tested system.
@@ -64,9 +64,9 @@ Build bottom-up; slice vertically so each checkpoint leaves a working, tested sy
 ### Phase 3: Live Anthropic wire + minimal CLI end-to-end
 - [ ] Task 12: `locode-provider` Anthropic Messages wire impl (request build, parse, tool-call id preservation, usage, cache_control breakpoints, omit-temp-when-thinking, two-tier retry, 401 refresh, 429 surface, pre-send repair)
 - [ ] Task 13: system prompt (minijinja, grok-sized, headless-branched identity, tool names track dialect)
-- [ ] Task 14: `locode` facade + `locode-cli` minimal headless binary (clap flags, one JSON report on stdout, `#![deny(clippy::print_stdout)]`, stderr logging)
+- [ ] Task 14: `locode` facade + `locode-exec` minimal headless binary (clap flags, one JSON report on stdout, `#![deny(clippy::print_stdout)]`, stderr logging)
 
-**Checkpoint D:** `cargo run -p locode-cli -- --prompt "summarize this repo"` completes against Claude and prints exactly one JSON report. **v0 success criteria met.**
+**Checkpoint D:** `cargo run -p locode-exec -- --prompt "summarize this repo"` completes against Claude and prints exactly one JSON report. **v0 success criteria met.**
 
 ### Phase 4: Remaining dialects → first A/B (payoff of the harness)
 - [ ] Task 15: `claude` + `opencode` dialects as re-skins (opencode camelCase via `param_rename`)

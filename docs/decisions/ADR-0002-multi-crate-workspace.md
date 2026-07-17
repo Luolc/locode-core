@@ -21,7 +21,7 @@ Use a Cargo workspace of small `locode-*` crates. `locode-core` names the **work
 | `locode-host` | fs/shell/path-jail/truncation (injectable side-effect seam) |
 | `locode-engine` | sample→dispatch→append loop + `Session` driving API |
 | `locode` | thin facade re-exporting the public surface |
-| `locode-cli` | minimal headless binary |
+| `locode-exec` | minimal headless binary |
 
 ## Alternatives Considered
 ### Single crate with modules
@@ -33,6 +33,6 @@ Use a Cargo workspace of small `locode-*` crates. `locode-core` names the **work
 - Rejected: softens exactly the boundaries we most want hard (host seam, provider wire, tools vs loop). We can always merge later; splitting later is harder.
 
 ## Consequences
-- Dependency direction is explicit and acyclic: `protocol` is the shared base; `engine` composes `tools`/`dialects`/`provider`/`host`; `locode` re-exports; `locode-cli` depends only on `locode`.
+- Dependency direction is explicit and acyclic: `protocol` is the shared base; `engine` composes `tools`/`dialects`/`provider`/`host`; `locode` re-exports; `locode-exec` depends only on `locode`.
 - Tools **never** touch `std::fs`/`Command` directly — only through `locode-host` — making them trivially testable and sandbox-ready.
 - More Cargo manifests and a `[workspace.lints]` table to maintain; accepted cost.

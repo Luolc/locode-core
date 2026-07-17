@@ -9,7 +9,7 @@
 
 These are the assumptions this spec is built on. Correct any that are wrong before implementation begins.
 
-1. **locode-core is a library, not an application.** Its deliverable is a set of `locode-*` library crates plus a *minimal* headless binary (`locode-cli`) for end-to-end exercise. The full binary — TUI, MCP, richer UX — lives in a separate future repo (`locode-app`) that depends on these crates.
+1. **locode-core is a library, not an application.** Its deliverable is a set of `locode-*` library crates plus a *minimal* headless binary (`locode-exec`) for end-to-end exercise. The full binary — TUI, MCP, richer UX — lives in a separate future repo (`locode-app`) that depends on these crates.
 2. **Primary target model is Claude** (Anthropic Messages wire first; `cache_control` breakpoint caching from day one). OpenAI Chat Completions is the planned second wire but not in v0.
 3. **House dialect is `grok`** (snake_case, first-class FS tools). `claude`/`codex`/`opencode` are re-skins added after the house dialect works.
 4. **Single-user, trusted-workspace threat model for v0.** A `workspace_root` path jail + shell timeout/output caps is the security posture; OS sandboxing (Seatbelt/Landlock/seccomp) is a deferred extension behind the one dispatch door, not a v0 requirement.
@@ -21,7 +21,7 @@ These are the assumptions this spec is built on. Correct any that are wrong befo
 
 Build the **headless engine of a coding agent**: a production-grade, robust Rust core library that owns the classic *sample → dispatch → append → re-sample* loop, exposes a typed tool registry (shell + filesystem + search) whose JSON schemas are derived from the arg types, presents those tools through a selectable **dialect**, talks to a model through a **provider trait** with one wire implementation, and returns a single structured result — with **no TUI and no interactive permission prompts**.
 
-**Users:** (1) the future `locode-app` (TUI + features) as a library consumer driving the engine programmatically; (2) researchers running headless A/B comparisons of tool-harness dialects and provider wires; (3) `locode-cli` as a thin reference consumer.
+**Users:** (1) the future `locode-app` (TUI + features) as a library consumer driving the engine programmatically; (2) researchers running headless A/B comparisons of tool-harness dialects and provider wires; (3) `locode-exec` as a thin reference consumer.
 
 **Success looks like:** a caller can drive one agent session to completion against Claude, under the `grok` dialect, with the engine emitting exactly one machine-readable JSON report — and every architectural extension point (more dialects, more wires, apply_patch, sandbox, MCP, streaming, compaction) is a seam, not a rewrite.
 
@@ -34,7 +34,7 @@ Build the **headless engine of a coding agent**: a production-grade, robust Rust
 | Errors | `thiserror` |
 | HTTP | `reqwest` (with `rustls`) |
 | Prompt templating | `minijinja` (tool names track the active dialect) |
-| CLI (locode-cli only) | `clap` |
+| CLI (locode-exec only) | `clap` |
 | First provider wire | Anthropic Messages |
 
 ## Commands
@@ -50,7 +50,7 @@ cargo fmt --all
 cargo clippy --workspace --all-targets --fix --allow-dirty -- -D warnings
 
 # Run the minimal headless binary (v0)
-cargo run -p locode-cli -- --prompt "summarize this repo" --dialect grok --provider anthropic
+cargo run -p locode-exec -- --prompt "summarize this repo" --dialect grok --provider anthropic
 
 # Convenience (justfile)
 just check      # fmt-check + clippy + test
@@ -77,10 +77,10 @@ crates/
 ├── locode-host/         → fs/shell/path-jail/truncation (injectable side-effect seam)
 ├── locode-engine/       → the sample→dispatch→append loop + Session driving API
 ├── locode/              → thin facade re-exporting the public surface
-└── locode-cli/          → minimal headless binary (Codex-exec-style stdout discipline)
+└── locode-exec/          → minimal headless binary (Codex-exec-style stdout discipline)
 ```
 
-Dependency direction: `protocol` ← everything; `tools` → `host` + `protocol`; `dialects` → `tools`; `provider` → `protocol`; `engine` → `tools` + `dialects` + `provider` + `host` + `protocol`; `locode` → all; `locode-cli` → `locode`.
+Dependency direction: `protocol` ← everything; `tools` → `host` + `protocol`; `dialects` → `tools`; `provider` → `protocol`; `engine` → `tools` + `dialects` + `provider` + `host` + `protocol`; `locode` → all; `locode-exec` → `locode`.
 
 ## Code Style
 
@@ -122,7 +122,7 @@ Conventions: canonical identity is a `ToolKind`, never a wire name; a tool resul
 
 - **Always:** run the fmt+clippy+test triangle before commit; derive tool schemas from types; route every side effect through the one `dispatch` door and the `locode-host` seam (never call `std::fs`/`Command` from a tool body); guarantee every `tool_use` id gets exactly one `tool_result` before the next sample; keep stdout to exactly one JSON document.
 - **Ask first:** adding a dependency; changing the report envelope `schema_version` or any public trait signature (`Tool`, `Provider`); changing the crate boundaries; enabling new `[workspace.lints]` denies.
-- **Never:** commit secrets/API keys; `println!` from library crates or non-report paths (stdout is sacred — enforce with `#![deny(clippy::print_stdout)]` in `locode-cli`); bury allow/deny policy inside individual tools; leave a `tool_use` unpaired; introduce a second, throwaway loop for headless.
+- **Never:** commit secrets/API keys; `println!` from library crates or non-report paths (stdout is sacred — enforce with `#![deny(clippy::print_stdout)]` in `locode-exec`); bury allow/deny policy inside individual tools; leave a `tool_use` unpaired; introduce a second, throwaway loop for headless.
 
 ## Success Criteria (v0)
 
@@ -130,7 +130,7 @@ Conventions: canonical identity is a `ToolKind`, never a wire name; a tool resul
 2. Tools available: `shell`, `read`, `write`, `edit` (ExactString), `glob`, `grep` — one canonical impl each, presented under the `grok` dialect with schemas derived from arg types.
 3. All four `edit` invariants enforced; path jail rejects `..` escapes; shell honors a hard timeout + output byte cap with a truncation marker.
 4. Every tool failure is a soft `tool_result{is_error}`; a pre-send pass guarantees transcript validity (no dangling/duplicate tool results); an explicit `max_turns` ceiling terminates cleanly.
-5. `locode-cli` emits **exactly one** JSON report on stdout (stamping `dialect` + `provider`), all diagnostics on stderr, exit 0 on clean terminal state / non-zero on fatal.
+5. `locode-exec` emits **exactly one** JSON report on stdout (stamping `dialect` + `provider`), all diagnostics on stderr, exit 0 on clean terminal state / non-zero on fatal.
 6. The mandatory CI triangle is green; the loop is covered by mock-provider unit tests.
 7. Extension seams exist and are unit-touched but unimplemented: `EditEncoding::ApplyPatchFreeform`, a second `Provider` wire, additional dialects, parallel tools, compaction, sandbox, MCP.
 
