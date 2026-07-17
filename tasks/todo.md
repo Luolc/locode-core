@@ -170,18 +170,19 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 **Files:** `crates/locode-tools/src/impls/{write,edit}.rs`, tests
 **Scope:** M
 
-## Task 11: `glob` + `grep`
-**Description:** Search tools; `rg` when present, else walk.
+## Task 11: `glob` + `grep` (ripgrep-backed)
+**Description:** Search tools backed by ripgrep, resolved through the host (ADR-0011). No hand-rolled walker.
 
 **Acceptance criteria:**
-- [ ] `Glob{pattern,path?}` and `Grep{pattern,path?,glob?}` implement `Tool`; use `rg` if on PATH else a fallback walker with literal/regex match.
-- [ ] Results respect the path jail and truncation.
+- [ ] `locode-host` exposes a cached `rg` resolver: `LOCODE_RG_PATH` override → host-provided bundled path → bare `rg` on PATH (invoked by name, not a cwd-relative absolute path).
+- [ ] `Glob{pattern,path?}` (via `rg --files` + glob filter) and `Grep{pattern,path?,glob?}` implement `Tool` over the resolved `rg`; results respect the path jail and truncation.
+- [ ] If `rg` can't be resolved, both tools return a soft `Respond` error (no silent divergent fallback).
 
 **Verification:**
-- [ ] Unit tests with a temp tree: glob finds expected paths; grep matches lines; fallback path exercised with `rg` forced off.
+- [ ] Unit tests with a temp tree: glob finds expected paths; grep matches lines; the resolver honors `LOCODE_RG_PATH` (pointed at a stub); soft-error path when `rg` is unresolvable.
 
 **Dependencies:** Tasks 6, 7, 8
-**Files:** `crates/locode-tools/src/impls/{glob,grep}.rs`, tests
+**Files:** `crates/locode-host/src/rg.rs`, `crates/locode-tools/src/impls/{glob,grep}.rs`, tests
 **Scope:** M
 
 ### Checkpoint C — six tools work under grok via mock provider; edit invariants + jail tested. Review before Phase 3.
@@ -226,13 +227,15 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 **Acceptance criteria:**
 - [ ] `locode` re-exports the driving API (`Session`, dialect/provider selection, report types).
 - [ ] `locode-exec`: clap flags `--prompt,--cwd,--dialect(default grok),--provider(default anthropic),--max-turns(default 30)`; emits exactly one JSON report on stdout; logs on stderr; `#![deny(clippy::print_stdout)]`; exit codes per ADR-0009.
+- [ ] Optional `bundle-rg` cargo feature (release-gated, ADR-0011): `build.rs` downloads the pinned static `rg` for the target triple (or copies from `LOCODE_BUNDLE_RG_PATH` for offline/CI), `include_bytes!` embeds it, runtime self-extracts once to a cache dir; resolver falls back to PATH.
 
 **Verification:**
 - [ ] `cargo run -p locode-exec -- --prompt "list and summarize this repo"` prints one parseable JSON report; stderr carries logs; a `--provider mock` mode runs in CI without a key.
+- [ ] `cargo build -p locode-exec --features bundle-rg --release` yields a binary that resolves `rg` with an empty PATH.
 
 **Dependencies:** Tasks 6, 12, 13
-**Files:** `crates/locode/src/lib.rs`, `crates/locode-exec/src/main.rs`, tests
-**Scope:** M
+**Files:** `crates/locode/src/lib.rs`, `crates/locode-exec/src/main.rs`, `crates/locode-exec/build.rs`, tests
+**Scope:** M (L with `bundle-rg`)
 
 ### Checkpoint D — end-to-end run against Claude prints one JSON report. **v0 success criteria met.** Review.
 
@@ -275,4 +278,4 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 ## Deferred (reserved seams, not v0)
 `EditEncoding::ApplyPatchFreeform` + `codex` dialect · OpenAI Chat Completions wire · parallel tool
 batches (RwLock read/write) · compaction · OS sandbox · MCP · streaming events · `--json-schema`
-answers · JSONL session durability.
+answers · JSONL session durability · multi-platform `rg` bundle matrix + macOS notarization/sidecar (packaging, ADR-0011).

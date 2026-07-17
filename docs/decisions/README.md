@@ -18,3 +18,4 @@ live in `~/dev/coding-cli-survey`.
 | [0008](ADR-0008-dispatch-door-and-path-jail.md) | One dispatch door + workspace path jail (v0 security) | Accepted |
 | [0009](ADR-0009-headless-io-contract.md) | Single JSON report on stdout; diagnostics on stderr | Accepted |
 | [0010](ADR-0010-rust-tooling-baseline.md) | Rust tooling/CI baseline (pinned toolchain, fmt+clippy-deny+test) | Accepted |
+| [0011](ADR-0011-search-ripgrep-bundling.md) | Search uses ripgrep (host-resolved, bundled at packaging) | Accepted |

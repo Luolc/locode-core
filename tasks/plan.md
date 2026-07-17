@@ -57,14 +57,14 @@ Build bottom-up; slice vertically so each checkpoint leaves a working, tested sy
 - [ ] Task 8: `locode-dialects` — `Dialect`, `EditEncoding` (ExactString built), grok table, `list_specs` re-skin + reverse name/param map in dispatch
 - [ ] Task 9: `shell` + `read` tools over the host, registered under grok
 - [ ] Task 10: `write` + `edit` (ExactString) with all four edit invariants
-- [ ] Task 11: `glob` + `grep` (`rg` if on PATH, else walk)
+- [ ] Task 11: `glob` + `grep` (ripgrep, host-resolved — ADR-0011)
 
 **Checkpoint C:** all six tools work under the grok dialect, driven by the mock provider; edit invariants and path jail unit-tested.
 
 ### Phase 3: Live Anthropic wire + minimal CLI end-to-end
 - [ ] Task 12: `locode-provider` Anthropic Messages wire impl (request build, parse, tool-call id preservation, usage, cache_control breakpoints, omit-temp-when-thinking, two-tier retry, 401 refresh, 429 surface, pre-send repair)
 - [ ] Task 13: system prompt (minijinja, grok-sized, headless-branched identity, tool names track dialect)
-- [ ] Task 14: `locode` facade + `locode-exec` minimal headless binary (clap flags, one JSON report on stdout, `#![deny(clippy::print_stdout)]`, stderr logging)
+- [ ] Task 14: `locode` facade + `locode-exec` minimal headless binary (clap flags, one JSON report on stdout, `#![deny(clippy::print_stdout)]`, stderr logging; optional `bundle-rg` feature per ADR-0011)
 
 **Checkpoint D:** `cargo run -p locode-exec -- --prompt "summarize this repo"` completes against Claude and prints exactly one JSON report. **v0 success criteria met.**
 
@@ -77,7 +77,7 @@ Build bottom-up; slice vertically so each checkpoint leaves a working, tested sy
 ### Deferred (seams reserved, not v0 — see SPEC §Open Questions and ADR-0006/0007)
 `EditEncoding::ApplyPatchFreeform` (+ `codex` dialect) · 2nd provider wire (OpenAI Chat Completions) ·
 parallel tool batches · compaction · OS sandbox · MCP · streaming events · schema-constrained answers ·
-session durability (JSONL).
+session durability (JSONL) · multi-platform `rg` bundle matrix + macOS notarization/sidecar (packaging, ADR-0011).
 
 ## Definition of Done (every task clears this standing bar)
 
@@ -92,18 +92,19 @@ session durability (JSONL).
 | Transcript pairing bugs reject whole provider requests | High | Central pre-send repair/dedup pass (Task 6); mock-provider tests exercise abort/mid-batch cancel before any live wire |
 | Anthropic `cache_control` over-marking → 400 | Med | Exactly one marker on last message + ≤4 on system blocks; assert marker count in a test (Task 12) |
 | Edit invariants subtly wrong → silent file corruption | High | Dedicated unit tests per invariant; reject on any doubt; exact-match-only in v0 (Task 10) |
-| `rg` absent on target machines | Low | Fallback walker; feature-detect PATH (Task 11) |
+| `rg` absent on target machines | Low | Bundled `rg` guarantees availability in shipped binaries (ADR-0011); dev/CI use PATH or the `bundle-rg` feature; missing `rg` → clear soft error, never a silent divergent result |
 | Loop/registry coupling makes the loop hard to test in isolation | Med | Trivial in-test tool + `MockProvider`; keep `dispatch` behind a small trait boundary (Task 4/6) |
 | Scope creep from deferred seams | Med | Seams are enum variants / trait impls with reserved slots; v0 builds only the first variant |
 
 ## Open questions (from SPEC; resolve during their phase)
 
 1. Edit strictness — exact-only vs one tolerant replacer (Task 10). Default: exact-only.
-2. Search — `rg` shell-out vs embedded walker (Task 11). Default: `rg` if present, else walk.
-3. When `apply_patch` (P1) lands — with the `codex` dialect A/B, or when multi-hunk edits hurt.
-4. Schema-constrained answers (`--json-schema`) — envelope-only for v0; native-first + tool-fallback later.
-5. Session durability — when ephemeral runs need JSONL persistence.
-6. Facade surface — how much `locode` re-exports vs keeps crate-private for `locode-app`.
+2. When `apply_patch` (P1) lands — with the `codex` dialect A/B, or when multi-hunk edits hurt.
+3. Schema-constrained answers (`--json-schema`) — envelope-only for v0; native-first + tool-fallback later.
+4. Session durability — when ephemeral runs need JSONL persistence.
+5. Facade surface — how much `locode` re-exports vs keeps crate-private for `locode-app`.
+
+_Resolved: Search — **ripgrep, host-resolved, bundled at packaging; no walker** (ADR-0011)._
 
 ## Parallelization
 
