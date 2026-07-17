@@ -18,7 +18,7 @@ Use a Cargo workspace of small `locode-*` crates. `locode-core` names the **work
 | `locode-tools` | canonical `Tool` trait + registry + 6 tool impls (host-agnostic contracts) |
 | `locode-dialects` | dialect packs (name/param/desc overrides + `EditEncoding`) over `locode-tools` |
 | `locode-provider` | `Provider` trait + API-agnostic `ConversationRequest` + Anthropic wire impl |
-| `locode-host` | fs/shell/path-jail/truncation (injectable side-effect seam) |
+| `locode-host` | fs/shell/path-jail/truncation/rg-resolution (injectable side-effect seam) |
 | `locode-engine` | sample→dispatch→append loop + `Session` driving API |
 | `locode` | thin facade re-exporting the public surface |
 | `locode-exec` | minimal headless binary |

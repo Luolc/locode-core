@@ -74,7 +74,7 @@ crates/
 ├── locode-tools/        → canonical Tool trait + registry + 6 tool impls (host-agnostic contracts)
 ├── locode-dialects/     → dialect packs: name/param/desc overrides + EditEncoding per pack
 ├── locode-provider/     → Provider trait + API-agnostic ConversationRequest + Anthropic wire impl
-├── locode-host/         → fs/shell/path-jail/truncation (injectable side-effect seam)
+├── locode-host/         → fs/shell/path-jail/truncation/rg-resolution (injectable side-effect seam)
 ├── locode-engine/       → the sample→dispatch→append loop + Session driving API
 ├── locode/              → thin facade re-exporting the public surface
 └── locode-exec/          → minimal headless binary (Codex-exec-style stdout discipline)
@@ -136,14 +136,13 @@ Conventions: canonical identity is a `ToolKind`, never a wire name; a tool resul
 
 ## Open Questions
 
-Carried from the design doc §12, minus what we've now decided (wire = Anthropic; dialect = grok; workspace layout; in-repo minimal CLI). Still genuinely undecided:
+Carried from the design doc §12, minus what we've now decided (wire = Anthropic; dialect = grok; workspace layout; in-repo minimal binary; search = ripgrep per ADR-0011). Still genuinely undecided:
 
 1. **Edit strictness** — exact-match-only in v0, or adopt one or two of OpenCode's tolerant replacers early? (Default: exact-only.)
-2. **Search impl** — shell out to `rg` when present, or embed a walker for determinism/cross-platform? (Default: `rg` if on PATH, else walk.)
-3. **When to add `apply_patch` (P1)** — as soon as the `codex` dialect enters the A/B, or when multi-hunk string edits get painful?
-4. **Schema-constrained task answers** (`--json-schema`) — native `response_format` first with a `StructuredOutput`-tool fallback; envelope-only for v0. Needed when?
-5. **Session durability** — when do ephemeral runs need JSONL transcript persistence?
-6. **`Cargo.lock` + facade surface** — how much does `locode` re-export vs. keep crate-private for the future `locode-app`?
+2. **When to add `apply_patch` (P1)** — as soon as the `codex` dialect enters the A/B, or when multi-hunk string edits get painful?
+3. **Schema-constrained task answers** (`--json-schema`) — native `response_format` first with a `StructuredOutput`-tool fallback; envelope-only for v0. Needed when?
+4. **Session durability** — when do ephemeral runs need JSONL transcript persistence?
+5. **`Cargo.lock` + facade surface** — how much does `locode` re-export vs. keep crate-private for the future `locode-app`?
 
 ## Decisions of record
 
@@ -159,3 +158,4 @@ Carried from the design doc §12, minus what we've now decided (wire = Anthropic
 | [0008](docs/decisions/ADR-0008-dispatch-door-and-path-jail.md) | One dispatch door + workspace path jail as v0 security posture |
 | [0009](docs/decisions/ADR-0009-headless-io-contract.md) | Single JSON report on stdout; diagnostics on stderr |
 | [0010](docs/decisions/ADR-0010-rust-tooling-baseline.md) | Rust tooling/CI baseline (pinned toolchain, fmt+clippy-deny+test) |
+| [0011](docs/decisions/ADR-0011-search-ripgrep-bundling.md) | Search uses ripgrep (host-resolved, bundled at packaging) |
