@@ -191,18 +191,20 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 **Files:** `crates/locode-packs/src/{lib,pack,grok/mod}.rs` (tests inline). Deps: `thiserror`; dev `async-trait`/`schemars`/`serde`/`serde_json`/`tokio`/`tokio-util`.
 **Scope:** M
 
-## Task 9: grok pack — `run_terminal_cmd` + `read_file`
-**Description:** Port Grok Build's terminal + read tools from `xai-grok-tools` onto our `Tool` trait, over the host. **Faithful mimicry** (AGENTS.md): grok's real names/schemas/behavior/caps.
+## Task 9: grok pack — `run_terminal_cmd` + `read_file` ✅ done
+**Description:** Port Grok Build's terminal + read tools from `xai-grok-tools` onto our `Tool` trait, over the host. **Faithful mimicry** (AGENTS.md): grok's real names/schemas (incl. `#[schemars(description=…)]` strings verbatim)/behavior/caps.
 
 **Acceptance criteria:**
-- [ ] `run_terminal_cmd` (grok's real name) and `read_file` implement `Tool` with grok's real arg schemas/behavior/caps (read: 1000-line/25k-token); go through `locode-host` only.
-- [ ] `read_file` records freshness (path+mtime) for later edits; dual output (structured `{path,lines,truncated}` + file-body prompt_text), matching grok's shaping.
+- [x] `run_terminal_cmd` (grok's real name) + `read_file` implement `Tool`, holding `Arc<Host>`; go through `locode-host` only. Grok's real arg schema (`command`/`timeout`/`description`; `target_file`/`offset`/`limit`) with verbatim `#[schemars(description)]`; read caps 1000-line/25k-token; `is_background`/`pages`/`format` dropped (reserved seams).
+- [x] `read_file` dual output — structured `{path,lines,truncated}` + numbered-body prompt_text (`N→content`). **No freshness store** (grok has none — faithful mimicry; interview decision supersedes the plan's freshness plumbing).
+- [x] Errors soft (`ToolError::Respond`): non-zero exit / timeout are a *successful capture* (not an error); jail escape / not-found / too-large map to soft results.
+- [x] **Pack host-threading:** `Pack::register`/`build_registry` now take `&Arc<Host>` (tools need the OS seam at construction; `ToolCtx` is too small to carry it) — refines the Task 8 signature.
 
 **Verification:**
-- [ ] Unit tests: the terminal tool runs `echo`; read returns body + truncation note; a mock-provider engine run under `--harness grok` invokes both and produces a valid report.
+- [x] 6 grok tests (via `build_registry` + `dispatch`): echo (`exit: 0` + `hi`), non-zero exit is soft-ok, read numbers lines, 1500-line read truncates at 1000, not-found soft error, outside-jail soft error. (The full mock-provider engine run under `--harness grok` is deferred to Task 14, where the facade composes engine+packs+provider.)
 
 **Dependencies:** Tasks 6, 7, 8
-**Files:** `crates/locode-packs/src/grok/{terminal,read}.rs`, tests
+**Files:** `crates/locode-packs/src/grok/{mod,terminal,read}.rs`; `pack.rs` (host-threaded `register`). Deps moved to non-dev: `async-trait`/`schemars`/`serde`; dev `tempfile`.
 **Scope:** M
 
 ## Task 10: grok pack — `search_replace` (grok's real edit; no standalone `write`)
