@@ -8,6 +8,7 @@
 //!
 //! [ADR-0007]: https://github.com/Luolc/locode-core/blob/main/docs/decisions/ADR-0007-provider-trait.md
 
+pub mod anthropic;
 mod assemble;
 mod completion;
 mod mock;
