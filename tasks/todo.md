@@ -48,7 +48,7 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 
 **Acceptance criteria:**
 - [ ] History enum: `System`/`User`/`Assistant{text,tool_calls}`/`Tool{call_id,content,is_error}`.
-- [ ] `ToolCall{id,name,args}`, report envelope with `schema_version:1`, `status`, `dialect`, `provider`, `final_message`, `structured_output`, `turns`, `tool_calls[]`, `usage`, `session_id`, `error`.
+- [ ] `ToolCall{id,name,args}`, report envelope with `schema_version:1`, `status`, `harness`, `provider`, `final_message`, `structured_output`, `turns`, `tool_calls[]`, `usage`, `session_id`, `error`.
 - [ ] `status ∈ {completed,max_turns,model_error,error}` serializes to the exact strings in ADR-0009.
 
 **Verification:**
@@ -59,7 +59,7 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 **Scope:** M
 
 ## Task 4: `locode-tools` contract + registry + dispatch door
-**Description:** The most important type in the system: the typed `Tool` trait, canonical `ToolKind`, error taxonomy, dyn-erasure, and the single `dispatch` door (ADR-0003, ADR-0004, ADR-0008).
+**Description:** The most important type in the system: the typed `Tool` trait, the `ToolKind` classification tag, error taxonomy, dyn-erasure, and the single `dispatch` door (ADR-0003, ADR-0004, ADR-0008).
 
 **Acceptance criteria:**
 - [ ] `Tool` trait with `Args: DeserializeOwned+JsonSchema`, `Output: Serialize+ToolOutput`, `kind()`, `description()`, derived `parameters_schema()`, async `run()`.
@@ -110,7 +110,7 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 
 ---
 
-## Phase 2: Real tools + grok dialect + host
+## Phase 2: The grok harness pack + host
 
 ## Task 7: `locode-host` side-effect seam
 **Description:** The injectable host: path jail, shell exec with limits, fs helpers, shared truncation (ADR-0008).
@@ -127,65 +127,65 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 **Files:** `crates/locode-host/src/{path,shell,fs,truncate}.rs`, tests
 **Scope:** M
 
-## Task 8: `locode-dialects` + EditEncoding + grok table
-**Description:** The re-skin layer over one registry; grok house dialect; `EditEncoding` enum with only `ExactString` built (ADR-0006).
+## Task 8: `locode-packs` — pack framework + grok pack wiring
+**Description:** The harness-pack layer (ADR-0012). A `Pack` = a named set of `Tool`s + a system prompt + registration; `--harness` selects one. No re-skin machinery — each pack holds real tools. v0 wires the grok pack.
 
 **Acceptance criteria:**
-- [ ] `Dialect{enabled,tool_name,param_rename,edit_encoding,describe}`; `EditEncoding{ExactString, /*ApplyPatchFreeform,AnchorEdits reserved*/}`.
-- [ ] grok table: `run_terminal_command`/`read_file`/`write`/`search_replace`/`glob`/`grep`, snake_case, `ExactString`.
-- [ ] `list_specs(dialect)` re-skins derived schemas; `dispatch` reverse-maps client name+params → `ToolKind` + canonical schema.
+- [ ] `Pack` abstraction: `name`, a tool set registered into a `Registry`, and the pack's system prompt; `--harness <name>` resolves to a pack.
+- [ ] `grok` pack module scaffolded; its tools declare a `ToolKind` tag (for cross-pack A/B alignment) alongside their real grok names.
+- [ ] `dispatch` routes the pack's real tool names to its real impls; duplicate-name registration panics at startup.
 
 **Verification:**
-- [ ] Unit tests: grok `list_specs` emits expected names/params; a client call under grok names round-trips to the canonical impl.
+- [ ] Unit tests: `--harness grok` builds the expected tool specs (grok's real names/schemas); a client call routes to the grok impl; an unknown `--harness` errors clearly.
 
 **Dependencies:** Task 4
-**Files:** `crates/locode-dialects/src/{dialect,encoding,grok}.rs`, tests
+**Files:** `crates/locode-packs/src/{lib,pack,grok/mod}.rs`, tests
 **Scope:** M
 
-## Task 9: `shell` + `read` tools
-**Description:** First two canonical tool impls over the host, registered under grok.
+## Task 9: grok pack — `run_terminal_command` + `read_file`
+**Description:** Port Grok Build's terminal + read tools from `xai-grok-tools` onto our `Tool` trait, over the host (behavior P0, exact names/descriptions P1).
 
 **Acceptance criteria:**
-- [ ] `Shell{command,timeout?}` and `Read{path,offset?,limit?}` implement `Tool`; go through `locode-host` only.
-- [ ] `Read` records freshness (path+mtime) for later `edit`; dual output (structured `{path,lines,truncated}` + file-body prompt_text).
+- [ ] `run_terminal_command` and `read_file` implement `Tool` with grok's real arg schemas/behavior; go through `locode-host` only.
+- [ ] `read_file` records freshness (path+mtime) for later edits; dual output (structured `{path,lines,truncated}` + file-body prompt_text), matching grok's shaping.
 
 **Verification:**
-- [ ] Unit tests: shell runs `echo`; read returns body + truncation note; a mock-provider engine run invokes both and produces a valid report.
+- [ ] Unit tests: the terminal tool runs `echo`; read returns body + truncation note; a mock-provider engine run under `--harness grok` invokes both and produces a valid report.
 
 **Dependencies:** Tasks 6, 7, 8
-**Files:** `crates/locode-tools/src/impls/{shell,read}.rs`, tests
+**Files:** `crates/locode-packs/src/grok/{terminal,read}.rs`, tests
 **Scope:** M
 
-## Task 10: `write` + `edit` (ExactString) with the four invariants
-**Description:** The edit slice — where real bugs live. Enforce every guardrail (ADR-0006, SPEC §Testing).
+## Task 10: grok pack — `write` + `search_replace` (grok's real edit)
+**Description:** Port grok's `write` + `search_replace` (exact-string edit). The edit slice — where real bugs live; replicate grok's guardrails faithfully (SPEC §Testing).
 
 **Acceptance criteria:**
-- [ ] `Write{path,content}` create/overwrite via host; updates freshness.
-- [ ] `Edit` (ExactString: `old_string`/`new_string`/`replace_all`) enforces: (1) read-before-edit (except new-file empty `old_string`), (2) exact + unique match (soft-error with match count otherwise), (3) mtime freshness re-check, (4) reject `old_string==new_string`. Updates freshness after write.
+- [ ] `write` create/overwrite via host; updates freshness.
+- [ ] `search_replace` replicates grok's real behavior: exact + unique match (soft-error with match count otherwise), read-before-edit (except new-file), mtime freshness re-check, reject no-op. Updates freshness after write.
 
 **Verification:**
 - [ ] One unit test **per** invariant (each violation → the correct soft error); a happy-path chained edit test.
 
 **Dependencies:** Task 9
-**Files:** `crates/locode-tools/src/impls/{write,edit}.rs`, tests
+**Files:** `crates/locode-packs/src/grok/{write,search_replace}.rs`, tests
 **Scope:** M
 
-## Task 11: `glob` + `grep` (ripgrep-backed)
-**Description:** Search tools backed by ripgrep, resolved through the host (ADR-0011). No hand-rolled walker.
+## Task 11: grok pack — `grep` + dir/glob (ripgrep-backed)
+**Description:** Port grok's search tools; ripgrep-backed, resolved through the host (ADR-0011). No hand-rolled walker.
 
 **Acceptance criteria:**
 - [ ] `locode-host` exposes a cached `rg` resolver: `LOCODE_RG_PATH` override → host-provided bundled path → bare `rg` on PATH (invoked by name, not a cwd-relative absolute path).
-- [ ] `Glob{pattern,path?}` (via `rg --files` + glob filter) and `Grep{pattern,path?,glob?}` implement `Tool` over the resolved `rg`; results respect the path jail and truncation.
+- [ ] grok's `grep` and dir/glob tools implement `Tool` over the resolved `rg` (glob via `rg --files` + filter); results respect the path jail and truncation.
 - [ ] If `rg` can't be resolved, both tools return a soft `Respond` error (no silent divergent fallback).
 
 **Verification:**
 - [ ] Unit tests with a temp tree: glob finds expected paths; grep matches lines; the resolver honors `LOCODE_RG_PATH` (pointed at a stub); soft-error path when `rg` is unresolvable.
 
 **Dependencies:** Tasks 6, 7, 8
-**Files:** `crates/locode-host/src/rg.rs`, `crates/locode-tools/src/impls/{glob,grep}.rs`, tests
+**Files:** `crates/locode-host/src/rg.rs`, `crates/locode-packs/src/grok/{grep,glob}.rs`, tests
 **Scope:** M
 
-### Checkpoint C — six tools work under grok via mock provider; edit invariants + jail tested. Review before Phase 3.
+### Checkpoint C — the grok pack's tools work under the mock provider; edit invariants + jail tested. Review before Phase 3.
 
 ---
 
@@ -207,26 +207,26 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 **Files:** `crates/locode-provider/src/anthropic/*.rs`, tests/fixtures
 **Scope:** L
 
-## Task 13: system prompt
-**Description:** Minijinja-rendered, grok-sized prompt whose tool names track the active dialect and whose identity branches on headless (design doc §8).
+## Task 13: grok pack system prompt
+**Description:** The grok pack's system prompt, ported from grok's real prompt (minijinja-rendered, grok-sized), with identity branched on headless (design doc §8).
 
 **Acceptance criteria:**
-- [ ] Template renders identity (autonomous vs interactive branch), cwd/OS/shell/date, and tool guidance referring to tools **by dialect name**.
-- [ ] Rendered length ≈ grok-sized (short); placeholders resolve for grok.
+- [ ] Renders grok's identity (autonomous vs interactive branch), cwd/OS/shell/date, and tool guidance referring to the grok pack's real tool names.
+- [ ] Rendered length ≈ grok-sized (short); placeholders resolve for the grok pack.
 
 **Verification:**
 - [ ] Snapshot test of the rendered grok prompt; headless branch toggles the identity line.
 
 **Dependencies:** Task 8
-**Files:** `crates/locode-engine/src/prompt/*.rs`, templates, tests
+**Files:** `crates/locode-packs/src/grok/prompt.rs`, templates, tests
 **Scope:** S
 
 ## Task 14: `locode` facade + `locode-exec` minimal binary
 **Description:** Public facade and the minimal headless binary with strict stdout discipline (ADR-0009).
 
 **Acceptance criteria:**
-- [ ] `locode` re-exports the driving API (`Session`, dialect/provider selection, report types).
-- [ ] `locode-exec`: clap flags `--prompt,--cwd,--dialect(default grok),--provider(default anthropic),--max-turns(default 30)`; emits exactly one JSON report on stdout; logs on stderr; `#![deny(clippy::print_stdout)]`; exit codes per ADR-0009.
+- [ ] `locode` re-exports the driving API (`Session`, harness/provider selection, report types).
+- [ ] `locode-exec`: clap flags `--prompt,--cwd,--harness(default grok),--provider(default anthropic),--max-turns(default 30)`; emits exactly one JSON report on stdout; logs on stderr; `#![deny(clippy::print_stdout)]`; exit codes per ADR-0009.
 - [ ] Optional `bundle-rg` cargo feature (release-gated, ADR-0011): `build.rs` downloads the pinned static `rg` for the target triple (or copies from `LOCODE_BUNDLE_RG_PATH` for offline/CI), `include_bytes!` embeds it, runtime self-extracts once to a cache dir; resolver falls back to PATH.
 
 **Verification:**
@@ -241,41 +241,42 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 
 ---
 
-## Phase 4: Remaining dialects → first A/B
+## Next milestone (post-v0): more harness packs → first A/B
 
-## Task 15: `claude` + `opencode` dialects
-**Description:** Two more re-skins over the same six impls (ADR-0006). (`codex` waits on apply_patch P1.)
+## Task 15: additional packs (`codex` / `claude` / `opencode`) + `locode`
+**Description:** Faithful ports of the other studied harnesses' real toolsets, plus our own `locode` best-of pack (grok-build-style snake_case naming). Real per-harness implementations, not re-skins (ADR-0012). The `codex` pack introduces `apply_patch` (JSON-string framing on the Anthropic wire).
 
 **Acceptance criteria:**
-- [ ] claude: `Bash`/`Read`/`Write`/`Edit`, PascalCase, ExactString (`old_string`/`new_string`/`replace_all`).
-- [ ] opencode: `bash`/`read`/`write`/`edit`, lowercase, camelCase args via `param_rename` (`filePath`/`oldString`).
+- [ ] Each pack registers its harness's real tools (names, schemas, descriptions, behavior) and system prompt; selectable via `--harness`.
+- [ ] Tools carry `ToolKind` tags so comparable tools align across packs.
+- [ ] `codex` pack: `apply_patch` via a shared parser, delivered as a JSON string arg.
 
 **Verification:**
-- [ ] Unit tests: each dialect's `list_specs` names/params; a client call under each round-trips to the canonical impl.
+- [ ] Per-pack unit tests: real tool specs + behavior; `--harness <pack>` routes to that pack's impls.
 
-**Dependencies:** Task 8
-**Files:** `crates/locode-dialects/src/{claude,opencode}.rs`, tests
-**Scope:** S
+**Dependencies:** Task 8 (+ Task 12 for live runs)
+**Files:** `crates/locode-packs/src/{codex,claude,opencode,locode}/…`, shared `apply_patch` parser, tests
+**Scope:** L (multiple packs — split per pack when implementing)
 
 ## Task 16: first A/B run
-**Description:** The payoff — run one task under two dialects and compare.
+**Description:** The payoff — run one task under two packs and compare their genuinely different behavior.
 
 **Acceptance criteria:**
-- [ ] Same prompt runs under `--dialect grok` and `--dialect claude`; both reports stamp their dialect.
-- [ ] A short doc note captures the trajectory/token/edit-success diff.
+- [ ] Same prompt runs under `--harness grok` and another pack; both reports stamp their `harness`.
+- [ ] A short doc note captures the trajectory/token/edit-success diff (aligned by `ToolKind`).
 
 **Verification:**
 - [ ] Two reports produced; diff recorded in `docs/` or a scratch note.
 
 **Dependencies:** Tasks 14, 15
-**Files:** `docs/ab-notes.md` (or scratch), no code changes required
+**Files:** `docs/ab-notes.md` (or scratch), no core code changes required
 **Scope:** XS
 
-### Checkpoint E — two dialects, one task, six shared impls; A/B is mechanical. v0 complete.
+### Milestone goal — two packs, one task, genuinely different tool behavior; the A/B is honest and mechanical.
 
 ---
 
 ## Deferred (reserved seams, not v0)
-`EditEncoding::ApplyPatchFreeform` + `codex` dialect · OpenAI Chat Completions wire · parallel tool
+freeform-grammar `apply_patch` (OpenAI Responses wire) · OpenAI Chat Completions wire · parallel tool
 batches (RwLock read/write) · compaction · OS sandbox · MCP · streaming events · `--json-schema`
 answers · JSONL session durability · multi-platform `rg` bundle matrix + macOS notarization/sidecar (packaging, ADR-0011).

@@ -1,7 +1,14 @@
 # ADR-0006: Dialect packs over one registry; `grok` default; `EditEncoding` enum
 
 ## Status
-Accepted
+Superseded by [ADR-0012](ADR-0012-harness-packs.md)
+
+> **Superseded (2026-07-17).** The re-skin model below (one canonical impl per
+> `ToolKind`, renamed per "dialect") was replaced by **harness packs** — faithful
+> per-harness toolsets with their own real implementations — because locode is a
+> fidelity-first experiment bed, where a shared impl would contaminate the
+> comparison. `grok` remaining the first/house pack and the apply_patch seam carry
+> forward; the `Dialect`/`EditEncoding`-as-reskin machinery does not. See ADR-0012.
 
 ## Date
 2026-07-17
