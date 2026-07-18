@@ -172,19 +172,23 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 **Scope:** M
 **Deps added:** `nix` (Unix, signal+process — safe `killpg`); dev-only `tempfile`; `tokio` features (process/io-util/fs/time/rt/macros).
 
-## Task 8: `locode-packs` — pack framework + grok pack wiring
-**Description:** The harness-pack layer (ADR-0012). A `Pack` = a named set of `Tool`s + a system prompt + registration; `--harness` selects one. No re-skin machinery — each pack holds real tools. v0 wires the grok pack.
+## Task 8: `locode-packs` — pack framework + grok pack wiring ✅ done
+**Description:** The harness-pack layer (ADR-0012). A `Pack` = a named tool set + a base preamble + registration; `--harness` selects one. No re-skin machinery — each pack holds real tools. v0 wires the grok pack (scaffold).
 
 **Acceptance criteria:**
-- [ ] `Pack` abstraction: `name`, a tool set registered into a `Registry`, and the pack's system prompt; `--harness <name>` resolves to a pack.
-- [ ] `grok` pack module scaffolded; its tools declare a `ToolKind` tag (for cross-pack A/B alignment) alongside their real grok names.
-- [ ] `dispatch` routes the pack's real tool names to its real impls; duplicate-name registration panics at startup.
+- [x] `Pack` abstraction: `name()`, `register(&mut Registry)` (real wire names), `preamble(&PackContext) -> Vec<Message>` (role-tagged System/Developer — **renamed from `system_prompt()->String`** so a pack expresses its own role split; user decision), provided `build_registry()`; `resolve(name)`/`available()` resolver.
+- [x] `grok` pack module scaffolded (`GrokPack`, `&'static` singleton); real tools carry a `ToolKind` tag via `Tool::kind()` when they land (Tasks 9-11), so no per-pack A/B machinery is needed. `register` is empty until Task 9; `preamble` is a scaffold (single `System` message, headless-branched).
+- [x] `dispatch` routes a pack's tool names to its impls (proven via a test-local fake pack); duplicate-name registration panics at startup.
 
 **Verification:**
-- [ ] Unit tests: `--harness grok` builds the expected tool specs (grok's real names/schemas); a client call routes to the grok impl; an unknown `--harness` errors clearly.
+- [x] 7 unit tests: `resolve("grok")` + `available()`; `unknown_harness` Display names the requested + available; fake pack builds expected specs (derived schemas) + routes to impl; duplicate registration panics; grok scaffold wired (empty registry, headless-branched preamble).
+
+**Design notes:**
+- `preamble()` returns role-tagged `Vec<Message>` (not a bare system-prompt string) — each pack maps its harness onto our System/Developer roles; the wire (Task 12) places each role. grok's real System-vs-Developer/User split is deferred to Task 13 (grok has no Developer role — its base prompt is a System item; env is injected as User system-reminders).
+- Pack identity = the module/struct (not a per-tool namespace tag, unlike grok's multi-tenant server); fresh `Registry` per pack, so no name collision across packs. No name/param override layer (ADR-0012 drops the re-skin).
 
 **Dependencies:** Task 4
-**Files:** `crates/locode-packs/src/{lib,pack,grok/mod}.rs`, tests
+**Files:** `crates/locode-packs/src/{lib,pack,grok/mod}.rs` (tests inline). Deps: `thiserror`; dev `async-trait`/`schemars`/`serde`/`serde_json`/`tokio`/`tokio-util`.
 **Scope:** M
 
 ## Task 9: grok pack — `run_terminal_cmd` + `read_file`

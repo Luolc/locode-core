@@ -3,6 +3,14 @@
 > **Resolved (user-confirmed):** the grok pack registers grok's **real** tool names
 > (e.g. `run_terminal_cmd`) and **omits a standalone `write`** tool; faithfully mimic Grok
 > Build. See `tasks/plans/README.md`.
+>
+> **Built with one change from §3 below:** `Pack::system_prompt(&PackContext) -> String`
+> became **`Pack::preamble(&PackContext) -> Vec<Message>`** (role-tagged `System`/`Developer`),
+> so each pack expresses its own role split and the wire places each role. grok's real
+> System-vs-Developer/User split is deferred to Task 13 (source: grok has no `Developer`
+> role — its base prompt is a `System` item, env is injected as `User` system-reminders).
+> Task 8's grok `register` is empty (real tools land Tasks 9-11); the framework is proven
+> via a test-local fake pack.
 
 Detailed implementation plan (pre-implementation). Source of truth: `SPEC.md`,
 `docs/decisions/ADR-0012-harness-packs.md` (supersedes ADR-0006), `tasks/plan.md`,
