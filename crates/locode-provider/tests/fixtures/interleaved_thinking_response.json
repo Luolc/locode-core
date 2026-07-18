@@ -1,0 +1,41 @@
+{
+  "id": "msg_01B2C3D4E5F6G7H8I9J0K1L2",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "thinking",
+      "thinking": "The user wants the repo summarized. Start by reading the manifest.",
+      "signature": "EqQBCgIYAhIM1gbcDa9GJwZA2b3hGgxBdjrkzLoky3dl1pkiMOYds"
+    },
+    {
+      "type": "tool_use",
+      "id": "toolu_staged_01",
+      "name": "read_file",
+      "input": { "target_file": "Cargo.toml" }
+    },
+    {
+      "type": "thinking",
+      "thinking": "Manifest read; now check the lib entry point.",
+      "signature": "EqQBCgIYAhIMSecondSignature999AbCdEfGh"
+    },
+    {
+      "type": "redacted_thinking",
+      "data": "EncryptedOpaquePayload=="
+    },
+    {
+      "type": "tool_use",
+      "id": "toolu_staged_02",
+      "name": "read_file",
+      "input": { "target_file": "src/lib.rs" }
+    }
+  ],
+  "model": "claude-sonnet-5",
+  "stop_reason": "tool_use",
+  "usage": {
+    "input_tokens": 2048,
+    "output_tokens": 512,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 1800
+  }
+}

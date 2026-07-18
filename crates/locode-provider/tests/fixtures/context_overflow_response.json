@@ -1,0 +1,12 @@
+{
+  "id": "msg_01Overflow",
+  "type": "message",
+  "role": "assistant",
+  "content": [],
+  "model": "claude-sonnet-5",
+  "stop_reason": "model_context_window_exceeded",
+  "usage": {
+    "input_tokens": 199999,
+    "output_tokens": 0
+  }
+}

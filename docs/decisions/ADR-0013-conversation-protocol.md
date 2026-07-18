@@ -106,3 +106,21 @@ Responses (inbound) map trivially both ways: a model only emits **Assistant** co
 - The core stays provider-neutral (ADR-0007) while being modeled on Anthropic's block shape (the maintainer's preference).
 - `Developer` fidelity is a wire flag (beta message vs portable `<system-reminder>` block) — decided in the Anthropic wire task, not the protocol crate.
 - Updates Task 3's acceptance to this model.
+
+## Amendment (2026-07-18): `ContentBlock::RedactedThinking`
+
+The Task-12 live smoke against the real Anthropic wire returned a
+`redacted_thinking` block (provider-encrypted reasoning) alongside signed
+thinking. The API requires it to be **replayed verbatim** in the assistant turn,
+exactly like signed thinking — dropping it invalidates a thinking + tool-use
+replay — so it must survive the round trip through the neutral model.
+`ContentBlock` (already `#[non_exhaustive]`) gains:
+
+```rust
+/// Assistant reasoning the provider encrypted (Anthropic `redacted_thinking`).
+RedactedThinking { data: String },
+```
+
+Carried opaquely end-to-end: the wire parses it into the block, the engine
+appends it with the rest of the assistant content, and the wire re-emits it
+untouched on the next request. No other crate interprets `data`.

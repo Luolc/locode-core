@@ -81,6 +81,15 @@ pub enum ContentBlock {
         /// Opaque provider signature required to replay the thinking block, if any.
         signature: Option<String>,
     },
+    /// Assistant reasoning the provider encrypted (Anthropic `redacted_thinking`).
+    ///
+    /// Carried opaquely and **replayed verbatim** exactly like signed thinking —
+    /// dropping it from a thinking + tool-use turn invalidates the replay.
+    /// (Observed live on the Anthropic wire during the Task-12 smoke test.)
+    RedactedThinking {
+        /// The provider's encrypted payload, replayed untouched.
+        data: String,
+    },
     /// A tool call emitted by the assistant.
     ToolUse {
         /// Provider-assigned id, paired with a later [`ContentBlock::ToolResult`].

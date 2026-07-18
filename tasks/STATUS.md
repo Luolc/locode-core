@@ -1,4 +1,4 @@
-# Repo status & handoff — as of Task 11 / Checkpoint C (2026-07-18)
+# Repo status & handoff — as of Task 12 (the live Anthropic wire) (2026-07-18)
 
 > **ADRs (and SPEC) are the intended source of truth and should stay trustworthy** — going
 > forward, reconcile them *before* changing code (AGENTS.md "ADR-first"). This doc exists
@@ -9,7 +9,8 @@
 
 ## Where we are
 
-Phases 0–2 complete; Checkpoints A/B/C reached. Phase 3 (Tasks 12–14) remains. Every
+Phases 0–2 complete (Checkpoints A/B/C) **plus Task 12 — the live Anthropic wire,
+smoke-tested end-to-end against OpenRouter**. Tasks 13–14 remain in Phase 3. Every
 merged crate passes the full gate (`fmt` · `clippy --all-targets --all-features -D warnings`
 · `test` · `doc` with `RUSTDOCFLAGS=-D warnings`). CI is green on `main`.
 
@@ -17,7 +18,7 @@ merged crate passes the full gate (`fmt` · `clippy --all-targets --all-features
 |---|---|---|---|
 | `locode-protocol` | done | 4-role conversation model; report envelope (`schema_version:1`; wire-id field is **`api_schema`**, not `provider`); `stream-json` `Event` + `reconstruct_conversation`; `ToolSpec`; `Usage` (+`AddAssign`) | 7 |
 | `locode-tools` | done | `Tool` (schemars-derived args), `ToolKind`(+`Other`), `ToolError{Respond,Fatal}`, `ToolCtx`, `DynTool` + `TypedTool` adapter, `Registry` (`register`/`register_dyn`/`dispatch`/`specs`), `ToolSpec` re-export | 8 |
-| `locode-provider` | done | `Provider` (`api_schema`+`complete`), `ConversationRequest`, `SamplingArgs`, `Completion`(`Vec<ContentBlock>`), `StopReason`(`#[non_exhaustive]`), `ProviderError`(exhaustive+`retryable`), `MockProvider`, `ToolCallAssembler`, `repair_pairing` | 15 |
+| `locode-provider` | done | `Provider` (`api_schema`+`complete`), `ConversationRequest`, `SamplingArgs`, `Completion`(`Vec<ContentBlock>`), `StopReason`(`#[non_exhaustive]`), `ProviderError`(exhaustive+`retryable`; `Api` retryable = 408/409/5xx), `MockProvider`, `ToolCallAssembler`, `repair_pairing`; **`AnthropicProvider`** (Task 12): wire DTOs (+`is_error`, +`RedactedThinking`), `ModelConfig`/`ApiBackend{Native,OpenRouter,Proxy}`, build (system hoist, 2-marker `cache_control` +≤4 assert, temp-omit, `reasoning_effort`→budget w/ interleaved waiver, `$schema`-stripped tool schemas), parse (verbatim ids, signatures, `Unknown` stop catch-all, empty-overflow→terminal), classify+retry (429 cap-2 surfaced, `Retry-After`, `x-should-retry:false`), client (beta mirroring, prefs injection), 401 refresh-once seam | 60 |
 | `locode-engine` | done | `Session` + the loop (4 terminals, mid-batch abort synthesis, thinking replay, `stream-json` events); `run()` **infallible** → `Report` | 10 |
 | `locode-host` | done | `Host` + `PathPolicy{Jailed,Unrestricted}`; shell `exec` (`bash -lc`, timeout, tail byte-cap, `unsafe`-free group-kill via `nix`, cancel); `run_capture` (argv); `read_dir`; `read_file`/`write_file`/`stat`; `truncate_for_model`; `rg_program` | 15 |
 | `locode-packs` | done | `Pack` (`name`/`register(&Arc<Host>,…)`/`preamble→Vec<Message>`/`build_registry`), `resolve`/`available`, `GrokPack` with 5 real tools | 23 |
@@ -52,30 +53,25 @@ and the ADR amendments (0002/0008/0009/0011).
 ## ⚠️ OPEN CONCERNS / gaps for the next session
 
 1. **`truncate_for_model` is not wired anywhere yet.** It exists in `locode-host` but nothing applies it — `locode-engine/src/run.rs` has a `// TODO(Task 7/9)` where it should run post-dispatch, and the engine **doesn't even depend on `locode-host`/`locode-packs`** (removed in Task 6). Today only each tool's own cap applies, not the shared middle-truncation. **Decide at Task 14:** the facade constructs the `Host` and either (a) the engine gains a `locode-host` dep + a budget field and truncates `tool_result` text chunks, or (b) the facade wraps the registry. This is the one real cross-crate wiring gap.
-2. **Tool-schema cross-API compatibility is UNVERIFIED — check FIRST at Task 12.** `Registry::specs()` emits schemars **draft-2020-12** (`$defs`/`$ref`/`$schema`). Decided: keep `specs()` + a **shared normalization helper**, assuming Anthropic/OpenAI accept the same schema. **Verify against the real Anthropic `input_schema` before relying on it**; add the helper where the schema is shaped for the wire.
+2. ~~Tool-schema cross-API compatibility~~ **RESOLVED (Task 12 spike + live smoke):** our flat `Args` structs emit no `$defs`/`$ref`; `parameters_schema()` now inlines subschemas at the source (grok's `generate_schema` precedent) and the wire strips only the top-level `$schema`. Live tool calls worked against the real API.
 3. **`ToolKind::Glob` tags `list_dir`** — a semantic stretch (it's a directory walk, not a glob). For honest cross-pack A/B alignment, consider adding a `ListDir`/`Dir` kind, or accept `Glob`. Low priority.
 4. **`Fatal`-on-output-serialize** (`locode-tools/src/registry.rs`, `TypedTool::call`) is untested and arguably too harsh — a serialize failure could be `Respond`. Realistically unreachable, but flagged.
-5. **Wire config record `{api_schema, base_url, api_key, model}`** is designed but unbuilt (Task 12/14) — env `LOCODE_API_SCHEMA`/`LOCODE_BASE_URL`/`LOCODE_API_KEY` + `--api-schema`, growable to per-model `{extra_headers, auth}`.
+5. ~~Wire config record~~ **BUILT (Task 12):** `ModelConfig` with env `LOCODE_BASE_URL`/`LOCODE_API_KEY`/`LOCODE_MODEL` (default model `claude-sonnet-5`), `ApiBackend` auto-detection incl. OpenRouter, betas defaulting to interleaved thinking, `extra_headers`/`provider_prefs`. `LOCODE_API_SCHEMA` + `--api-schema` land with the exec (Task 14).
 6. **No end-to-end integration test** composes engine+packs+provider yet. It lands at Task 14 (mock in CI, real against Claude → Checkpoint D). The engine's own tests use trivial tools; the packs' tests use `dispatch` directly.
 7. **Jail root vs cwd must agree.** `Host` canonicalizes `workspace_root`; the caller **must** set `EngineConfig.cwd`/`ToolCtx.cwd` to the same canonical path (on macOS `/var` → `/private/var`), or the jail rejects. Bake this into the Task 14 exec wiring (canonicalize the CLI `--cwd` and build the `Host` from it).
 8. **`read_file` double-resolves** the path (`resolve_in_jail` then `read_file`, which resolves again) — minor; could thread the resolved path through `FileRead`.
 
-## Task 12 starting point
+## Task 13 starting point
 
-`tasks/plans/task-12-anthropic-wire.md` (+ its banner) is the design — **read its §9
-addendum (2026-07-18) first**: the pre-implementation review closed all §8 open
-questions, approved the deps (`reqwest` rustls / `rand` / tokio `time`), and changed
-two defaults — betas now default to `["interleaved-thinking-2025-05-14"]` and
-`ApiBackend` gains an auto-detected `OpenRouter` variant (the user's real backend;
-Bearer auth, `x-anthropic-beta` mirroring, `provider` prefs injection). ADR-0007
-carries the matching amendment. Default model `claude-sonnet-5`; env adds
-`LOCODE_MODEL`; `api_schema` string is plain `"anthropic"`; live smoke at task end
-against OpenRouter. Build the Anthropic Messages wire: request build (hoist leading
-`System` → top-level `system`; `cache_control` ≤4 on system + 1 on last message with
-a count assert; omit temperature when thinking on; `reasoning_effort`→`budget_tokens`,
-clamp waived under interleaved thinking), parse → `Completion` (preserve tool_use ids
-verbatim, `Thinking{signature}`, `usage`), **two-tier retry** (transport tier here
-honoring `Retry-After`; the bounded loop-resample tier is already in the engine),
-**429 surfaced**, context-overflow/quota terminal, 401 refresh-once, call
-`repair_pairing` before send, the modest config record. **Do concern #2 (schema
-compat) first.**
+Task 12 is merged: `AnthropicProvider` in `locode-provider/src/anthropic/` — see the
+plan's §9 addendum + **§9.5 live-smoke findings** (redacted-thinking replay,
+Vertex-allowed default prefs, cache-read vs cross-provider routing) and the
+ADR-0007/ADR-0013 amendments. The live smoke (`tests/anthropic_live_smoke.rs`,
+`#[ignore]`d) runs manually via direnv env against OpenRouter.
+
+Next: **Task 13 — the grok pack system prompt** (`tasks/plans/task-13-grok-prompt.md`):
+port grok's real minijinja-rendered prompt, identity branched on headless, cwd/OS/
+shell/date placeholders, tool guidance naming the grok pack's real tools; snapshot
+test. Then Task 14 (facade + exec) composes engine+packs+provider — remember
+concern #1 (`truncate_for_model` wiring) and #7 (jail root vs cwd canonicalization)
+land there.

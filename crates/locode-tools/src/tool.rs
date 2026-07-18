@@ -90,13 +90,22 @@ pub trait Tool: Send + Sync {
     /// The JSON Schema for [`Tool::Args`], derived via `schemars` (ADR-0003).
     ///
     /// The default derives it from the type and should rarely be overridden.
+    /// Subschemas are **inlined** (no `$defs`/`$ref`) so every wire can ship the
+    /// schema as a self-contained `input_schema` — Grok Build generates tool
+    /// schemas the same way (`registry/types.rs` `generate_schema`,
+    /// `inline_subschemas = true`). Flat `Args` structs are unaffected; this
+    /// guards future enum/nested args.
     #[must_use]
     fn parameters_schema(&self) -> Value {
-        // `schema_for!` yields a `schemars::Schema`, which is `Serialize`;
-        // converting an already-JSON schema to a `Value` cannot realistically
+        let settings = schemars::generate::SchemaSettings::draft2020_12().with(|s| {
+            s.inline_subschemas = true;
+        });
+        let schema = settings
+            .into_generator()
+            .into_root_schema_for::<Self::Args>();
+        // An already-JSON schema converting to a `Value` cannot realistically
         // fail, but we avoid `unwrap`/`expect` and degrade to an empty object.
-        serde_json::to_value(schemars::schema_for!(Self::Args))
-            .unwrap_or_else(|_| Value::Object(serde_json::Map::new()))
+        serde_json::to_value(schema).unwrap_or_else(|_| Value::Object(serde_json::Map::new()))
     }
 
     /// Execute the call.

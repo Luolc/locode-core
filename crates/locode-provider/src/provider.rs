@@ -78,12 +78,15 @@ pub enum ProviderError {
 
 impl ProviderError {
     /// Whether the loop/transport should retry this error (vs treat it as terminal).
+    ///
+    /// `Api` is retryable for any 5xx plus 408/409 — Claude Code's retryable
+    /// set (Task-12 plan §4.6); everything 4xx-terminal stays terminal.
     #[must_use]
     pub fn retryable(&self) -> bool {
         match self {
             ProviderError::Transport(_) | ProviderError::RateLimited { .. } => true,
             ProviderError::Api { status, .. } => {
-                matches!(status, 500 | 502 | 503 | 504 | 520 | 529)
+                matches!(status, 408 | 409 | 500..=599)
             }
             ProviderError::ContextOverflow
             | ProviderError::Quota
