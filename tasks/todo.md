@@ -76,20 +76,25 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 **Files:** `crates/locode-protocol/src/lib.rs`, tests
 **Scope:** S
 
-## Task 4: `locode-tools` contract + registry + dispatch door
+## Task 4: `locode-tools` contract + registry + dispatch door ✅ done
 **Description:** The most important type in the system: the typed `Tool` trait, the `ToolKind` classification tag, error taxonomy, dyn-erasure, and the single `dispatch` door (ADR-0003, ADR-0004, ADR-0008).
 
 **Acceptance criteria:**
-- [ ] `Tool` trait with `Args: DeserializeOwned+JsonSchema`, `Output: Serialize+ToolOutput`, `kind()`, `description()`, derived `parameters_schema()`, async `run()`.
-- [ ] `ToolError{Respond,Fatal}`; `ToolCtx{cwd,call_id,workspace_root,cancel}`; `ToolOutput::to_prompt_text()`.
-- [ ] `DynTool` erasure (JSON decode → run → re-serialize); `Registry` with `dispatch(name,raw_args,ctx)` returning both a history `tool_result` and a report record.
-- [ ] Duplicate-name registration panics at startup; unknown tool + bad args are **soft** (`Respond`).
+- [x] `Tool` trait with `Args: DeserializeOwned+JsonSchema`, `Output: Serialize+ToolOutput`, `kind()`, `description()`, derived `parameters_schema()`, async `run()`.
+- [x] `ToolError{Respond,Fatal}`; `ToolCtx{cwd,call_id,workspace_root,cancel}`; `ToolOutput::to_prompt_text()`.
+- [x] `DynTool` erasure (JSON decode → run → re-serialize); `Registry` with `dispatch(name,raw_args,ctx)` returning both a history `tool_result` and a report record (`Dispatched{tool_result,record,fatal}`).
+- [x] Duplicate-name registration panics at startup; unknown tool + bad args are **soft** (`Respond`).
 
 **Verification:**
-- [ ] Unit tests: schema derived matches `Args`; bad-args → `Respond`; a trivial echo tool round-trips output/prompt_text; duplicate registration panics.
+- [x] Unit tests: schema derived matches `Args`; bad-args → `Respond`; a trivial echo tool round-trips output/prompt_text; duplicate registration panics; unknown tool soft; fatal sets flag + still pairs; MCP-style `register_dyn` works.
+
+**Design notes (decided during implementation):**
+- **Three names, don't conflate.** A tool has a Rust type name (`GrokReadFile`, incidental), a **wire name** (`read_file`, the model-facing name = the registry key, assigned by the pack — hence `Tool` has no `name()`), and a `ToolKind` tag (cross-pack A/B only). One pack is active per run, so no cross-pack key collision — only duplicates within a pack panic. Wire-name assignment is the pack's job (Task 8).
+- **MCP / dynamic tools.** `Registry` has two doors: `register<T: Tool>` (typed, schema derived) and `register_dyn(Box<dyn DynTool>)` (raw, for MCP tools with no compile-time `Args`). `ToolKind` is closed + an `Other` catch-all (mirrors Grok Build). A `TypedTool<T>` adapter (not a blanket impl) keeps the `impl DynTool for McpTool` seam open under Rust coherence.
+- **Deps added** (ADR-0003 alignment + Codex/Grok precedent): `async-trait`, `schemars` 1, `thiserror` 2, `tokio-util` (`CancellationToken` for `ToolCtx.cancel`).
 
 **Dependencies:** Task 3
-**Files:** `crates/locode-tools/src/{tool,registry,error,ctx}.rs`, tests
+**Files:** `crates/locode-tools/src/{tool,registry,error,ctx,lib}.rs` (tests inline)
 **Scope:** M
 
 ## Task 5: `locode-provider` trait + MockProvider
