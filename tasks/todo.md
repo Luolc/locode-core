@@ -7,16 +7,16 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 
 ## Phase 0: Scaffolding
 
-## Task 1: Cargo workspace + crate skeletons + toolchain pin
+## Task 1: Cargo workspace + crate skeletons + toolchain pin ✅ done
 **Description:** Create the `locode-*` workspace with empty compiling crate skeletons and the pinned toolchain + lint configs (ADR-0002, ADR-0010).
 
 **Acceptance criteria:**
-- [ ] `Cargo.toml` `[workspace]` lists all 8 crates under `crates/`; each crate compiles as an empty lib (`locode-exec` as a bin).
-- [ ] `rust-toolchain.toml` pins current stable + `rustfmt`,`clippy`; `rustfmt.toml`, `clippy.toml`, `[workspace.lints]` (`unused_must_use="deny"`) present.
-- [ ] Dependency directions from the plan graph are wired (no cycles).
+- [x] `Cargo.toml` `[workspace]` lists all 8 crates under `crates/`; each crate compiles as an empty lib (`locode-exec` as a bin).
+- [x] `rust-toolchain.toml` pins current stable (1.97.1) + `rustfmt`,`clippy`; `rustfmt.toml`, `clippy.toml`, `[workspace.lints]` (`unused_must_use="deny"`) present.
+- [x] Dependency directions from the plan graph are wired (no cycles).
 
 **Verification:**
-- [ ] `cargo build --workspace` succeeds; `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` clean.
+- [x] `cargo build --workspace` succeeds; `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` clean.
 
 **Dependencies:** None
 **Files:** `Cargo.toml`, `rust-toolchain.toml`, `rustfmt.toml`, `clippy.toml`, `crates/*/Cargo.toml`, `crates/*/src/lib.rs|main.rs`
