@@ -29,3 +29,17 @@ Adopt the **mandatory triangle** — `cargo fmt --all -- --check` + `cargo clipp
 - Every incremental slice lands green against a consistent, pinned toolchain.
 - Phased hardening path: **Phase 0** triangle+CI → **Phase 1** justfile/pre-commit/rust-cache/nextest → **Phase 2** cargo-deny/audit, tighter lints → **Phase 3** multi-platform release (only if shipping installers).
 - `cargo-nextest` and `cargo-deny`/`cargo-audit` are adopted **when** the suite gets slow/flaky or deps grow — not before.
+
+## Amendment (2026-07-17): strict-from-empty lints
+
+The original "start mild, tighten later" advice assumed the usual trap of tightening lints *after* code exists — which Grok Build's own `Cargo.toml` documents as painful (a lint added late breaks `main` when older branches merge). We are in the opposite position: the workspace was enabled while all 8 crates are **empty**, so front-loading strict lints is free. The maintainer prefers a high standard, so we turn the strictness up now rather than retrofit it.
+
+**Enabled at scaffold time (Task 2):**
+- `[workspace.lints.rust]`: `unsafe_code = "forbid"` (this project needs no `unsafe`), `unused_must_use = "deny"`, `missing_docs = "warn"` (every public item is documented), `rust_2018_idioms = "warn"`.
+- `[workspace.lints.clippy]`: `pedantic = "warn"` (the opinionated high-value group; individual lints get `#[allow(…)]` with a reason when genuinely wrong), plus `unwrap_used`/`expect_used`/`dbg_macro = "deny"`.
+- `clippy.toml`: `allow-unwrap-in-tests` / `allow-expect-in-tests = true` — the "ban in library code, allow in tests" pattern (matches Codex).
+- CI (`.github/workflows/ci.yml`): a single Ubuntu job — `fmt --check`, `clippy --all-targets --all-features -D warnings`, `cargo test`, and `cargo doc --no-deps` with `RUSTDOCFLAGS=-D warnings` (broken intra-doc links fail). `Swatinem/rust-cache`; `concurrency: cancel-in-progress`; toolchain pinned to match `rust-toolchain.toml`.
+
+**Deliberately deferred** (revisit as the repo grows): the clippy `cargo` group (needs crate metadata/licence fields first), `cargo-deny` (Phase B — little to check against an empty dep tree), `cargo-nextest` (+ a `--doc` step, since nextest skips doctests), a macOS matrix (when we build/bundle `rg`), coverage, `cargo-semver-checks`, and typo/spell checks. **Not** adopted at all: Bazel, custom dylint, multi-hour path-filtered job graphs (Codex-scale machinery).
+
+Once CI is green on `main`, branch protection requires the `ci` check and merges use `gh pr merge --auto` (self-merge on green) — the automation gate from the git workflow.

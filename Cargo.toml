@@ -8,6 +8,16 @@ edition = "2024"
 rust-version = "1.97"
 publish = false
 
-# Start mild; tighten (e.g. clippy::unwrap_used) as the codebase stabilizes — see ADR-0010.
+# Strict-from-empty: these are enabled now, while the crates are empty, so we never pay
+# the churn of adding lints after code exists. See ADR-0010.
 [workspace.lints.rust]
+unsafe_code = "forbid"       # this project needs no `unsafe`
 unused_must_use = "deny"
+missing_docs = "warn"        # every public item needs a doc comment
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"         # allowed in tests via clippy.toml
+expect_used = "deny"         # allowed in tests via clippy.toml
+dbg_macro = "deny"

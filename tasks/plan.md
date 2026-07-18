@@ -40,7 +40,7 @@ Build bottom-up; slice vertically so each checkpoint leaves a working, tested sy
 
 ### Phase 0: Scaffolding (foundation must land green first)
 - [x] Task 1: Cargo workspace + crate skeletons + pinned toolchain + fmt/clippy configs
-- [ ] Task 2: CI (single GitHub Actions job) + justfile
+- [x] Task 2: CI (single GitHub Actions job) + justfile + strict-from-empty lints
 
 **Checkpoint A:** empty workspace compiles; `just check` is green in CI.
 
