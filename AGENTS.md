@@ -94,6 +94,12 @@ the platform CLI (`gh` or equivalent); do not ask the user to push or click.
 - **Squash-merge** and delete the branch (the repo is configured for squash-only +
   auto-delete). Keep `main` linear. Once CI exists, use auto-merge gated on green
   checks instead of merging by hand.
+- **Tidy local branches after merging.** Deleting the branch (above) removes only
+  the *remote* one; the local branch lingers, and since we **squash**-merge it
+  isn't an ancestor of `main`, so `git branch -d` refuses it. Prune stale tracking
+  refs and force-delete the gone ones:
+  `git fetch -p && git branch -vv | awk '/: gone]/{print $1}' | xargs -r git branch -D`.
+  Keep the local branch list ≈ just `main`.
 - **`main` stays always-green:** every merged change must pass the mandatory
   checks below. Direct-to-`main` is reserved for trivial or urgent fixes.
 - **Commit messages:** imperative mood, explain the *why*. Attribute the agent that
