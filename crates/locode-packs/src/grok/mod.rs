@@ -1,8 +1,9 @@
 //! The `grok` pack — a faithful port of Grok Build's `xai-grok-tools` toolset, trimmed
 //! to headless-minimal (ADR-0012), over `locode-host`. Task 13 renders its real system
-//! prompt; the remaining tools (`search_replace`, `grep`, `list_dir`) land in Tasks 10-11.
+//! prompt; `grep` + `list_dir` land in Task 11.
 
 mod read;
+mod search_replace;
 mod terminal;
 
 use std::sync::Arc;
@@ -13,6 +14,7 @@ use locode_tools::Registry;
 
 use crate::pack::{Pack, PackContext};
 use read::GrokReadFile;
+use search_replace::GrokSearchReplace;
 use terminal::GrokRunTerminalCmd;
 
 /// The grok harness pack (a zero-sized `&'static` singleton).
@@ -30,7 +32,8 @@ impl Pack for GrokPack {
             GrokRunTerminalCmd::new(Arc::clone(host)),
         );
         registry.register("read_file", GrokReadFile::new(Arc::clone(host)));
-        // Tasks 10-11 add: search_replace, grep, list_dir.
+        registry.register("search_replace", GrokSearchReplace::new(Arc::clone(host)));
+        // Task 11 adds: grep, list_dir.
     }
 
     fn preamble(&self, ctx: &PackContext) -> Vec<Message> {
@@ -200,5 +203,110 @@ mod tests {
             .await;
         assert!(!out.record.ok);
         assert!(is_error(&out.tool_result));
+    }
+
+    // ---- search_replace ----
+
+    async fn edit(
+        registry: &Registry,
+        root: &Path,
+        args: serde_json::Value,
+    ) -> locode_tools::Dispatched {
+        registry.dispatch("search_replace", args, &ctx(root)).await
+    }
+
+    #[tokio::test]
+    async fn search_replace_creates_file_on_empty_old_string() {
+        let (_dir, registry, root) = setup();
+        let out = edit(
+            &registry,
+            &root,
+            json!({ "file_path": "new.txt", "old_string": "", "new_string": "hello world" }),
+        )
+        .await;
+        assert!(out.record.ok);
+        assert_eq!(out.record.output["created"], json!(true));
+        assert_eq!(
+            std::fs::read_to_string(root.join("new.txt")).unwrap(),
+            "hello world"
+        );
+    }
+
+    #[tokio::test]
+    async fn search_replace_edits_unique_match() {
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("f.txt"), "alpha beta gamma").unwrap();
+        let out = edit(
+            &registry,
+            &root,
+            json!({ "file_path": "f.txt", "old_string": "beta", "new_string": "BETA" }),
+        )
+        .await;
+        assert!(out.record.ok);
+        assert_eq!(out.record.output["replacements"], json!(1));
+        assert_eq!(
+            std::fs::read_to_string(root.join("f.txt")).unwrap(),
+            "alpha BETA gamma"
+        );
+    }
+
+    #[tokio::test]
+    async fn search_replace_no_op_is_soft_error() {
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("f.txt"), "x").unwrap();
+        let out = edit(
+            &registry,
+            &root,
+            json!({ "file_path": "f.txt", "old_string": "x", "new_string": "x" }),
+        )
+        .await;
+        assert!(!out.record.ok);
+        assert!(result_text(&out.tool_result).contains("same"));
+    }
+
+    #[tokio::test]
+    async fn search_replace_not_found_is_soft_error() {
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("f.txt"), "abc").unwrap();
+        let out = edit(
+            &registry,
+            &root,
+            json!({ "file_path": "f.txt", "old_string": "zzz", "new_string": "q" }),
+        )
+        .await;
+        assert!(!out.record.ok);
+        assert!(result_text(&out.tool_result).contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn search_replace_multiple_matches_without_replace_all_is_soft_error() {
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("f.txt"), "a a a").unwrap();
+        let out = edit(
+            &registry,
+            &root,
+            json!({ "file_path": "f.txt", "old_string": "a", "new_string": "b" }),
+        )
+        .await;
+        assert!(!out.record.ok);
+        assert!(result_text(&out.tool_result).contains("multiple times"));
+    }
+
+    #[tokio::test]
+    async fn search_replace_replace_all() {
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("f.txt"), "a a a").unwrap();
+        let out = edit(
+            &registry,
+            &root,
+            json!({ "file_path": "f.txt", "old_string": "a", "new_string": "b", "replace_all": true }),
+        )
+        .await;
+        assert!(out.record.ok);
+        assert_eq!(out.record.output["replacements"], json!(3));
+        assert_eq!(
+            std::fs::read_to_string(root.join("f.txt")).unwrap(),
+            "b b b"
+        );
     }
 }

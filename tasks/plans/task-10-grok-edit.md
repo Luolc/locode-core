@@ -1,4 +1,13 @@
-# Task 10 — grok pack: `write` + `search_replace` (the edit slice)
+# Task 10 — grok pack: `search_replace` (grok's real edit; **no `write`**)
+
+> **⚠️ SUPERSEDED BODY:** the sections below that design a **separate `write` tool** and
+> make an **empty `old_string` a soft error** are DROPPED and NOT implemented. Verified in
+> source: grok has **no `write` module** (`implementations/grok_build/` has none), and an
+> **empty `old_string` IS grok's file-creation path** (`handle_new_file_creation`,
+> `search_replace/mod.rs:203,273`). The grok pack ships **only `search_replace`**, faithful
+> to grok: `old==new` → soft "same string"; empty `old_string` → create the file;
+> not-found / multiple-matches-without-`replace_all` → soft errors; `replace_all` replaces
+> all. No `write`, no mtime freshness.
 
 > **Resolved (user-confirmed):** **skip the standalone `write` tool** in the grok pack —
 > grok has no `write` (it creates files via `search_replace` with empty `old_string`);
@@ -9,14 +18,14 @@
 > none, so neither do we (faithful mimicry, not locode hardening). SPEC criterion 3
 > reworded to match. See `tasks/plans/README.md`.
 
-> HIGHEST RISK. Port grok's exact-string edit and file creation, and enforce the four
-> edit invariants (SPEC §Testing; design-doc `…minimal-headless-rust-agent.md:254-261`).
-> One unit test per invariant.
+> HIGHEST RISK. Port grok's exact-string edit + create-via-empty-`old_string` faithfully.
+> Runtime enforces grok's real guards only: exact + unique match (or `replace_all`), reject
+> `old==new`. One unit test per grok behavior.
 
 **Grok source root (`gb/…`):**
 `coding-cli-survey/submodules/grok-build/crates/codegen/xai-grok-tools/src/implementations/grok_build/`
 
-**locode target files:** `crates/locode-packs/src/grok/{write.rs, search_replace.rs}`.
+**locode target file:** `crates/locode-packs/src/grok/search_replace.rs`.
 
 ---
 
