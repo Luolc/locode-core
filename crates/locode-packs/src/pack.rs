@@ -24,6 +24,13 @@ pub struct PackContext {
     pub date: String,
     /// Headless run → autonomous identity branch (vs interactive). See Task 13.
     pub headless: bool,
+    /// Strip identity-revealing sentences from the rendered prompt (e.g. grok's
+    /// "You are Grok released by xAI." and the `<user_guide>` block naming the
+    /// Grok Build TUI). **Default `false` = faithful reproduction** (user
+    /// decision, 2026-07-18); `true` is for A/B runs where the harness's
+    /// self-identity would contaminate the comparison. Post-processing on the
+    /// rendered output only — the verbatim template copies are never edited.
+    pub strip_identity: bool,
 }
 
 /// A faithful reproduction of one harness: its real toolset + its base prompt, selected

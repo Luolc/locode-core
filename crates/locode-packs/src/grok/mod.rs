@@ -4,6 +4,7 @@
 
 mod grep;
 mod list_dir;
+pub mod prompt;
 mod read;
 mod search_replace;
 mod terminal;
@@ -42,20 +43,26 @@ impl Pack for GrokPack {
     }
 
     fn preamble(&self, ctx: &PackContext) -> Vec<Message> {
-        // Scaffold. Task 13 renders grok's real prompt (minijinja) and decides its final
-        // System/Developer split. For now: a single `System` message with the
-        // headless-branched identity line.
-        let identity = if ctx.headless {
-            "You are Grok, an autonomous coding agent operating headlessly."
-        } else {
-            "You are Grok, an interactive coding assistant."
-        };
-        vec![Message {
-            role: Role::System,
-            content: vec![ContentBlock::Text {
-                text: identity.to_owned(),
-            }],
-        }]
+        // grok's real split (Task 13, ADR-0013): the rendered base prompt is the
+        // System item; environment info (cwd/OS/shell/date) is NOT in grok's
+        // system prompt — it rides in the first user message as the minimal
+        // `<user_info>` prefix (grok's own headless variant). The actual user
+        // prompt is wrapped in `<user_query>` by the exec layer (Task 14) via
+        // `prompt::user_query`.
+        vec![
+            Message {
+                role: Role::System,
+                content: vec![ContentBlock::Text {
+                    text: prompt::render_base_prompt(ctx),
+                }],
+            },
+            Message {
+                role: Role::User,
+                content: vec![ContentBlock::Text {
+                    text: prompt::user_info_block(ctx),
+                }],
+            },
+        ]
     }
 }
 
