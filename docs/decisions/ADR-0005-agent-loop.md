@@ -26,3 +26,21 @@ Use **sample → dispatch → append → re-sample**. Model calls are **non-stre
 - The loop is small and testable with a mock provider (the highest-leverage test surface).
 - Streaming, parallel dispatch, and compaction are additive extension points with reserved slots, not rewrites.
 - A `max_turns` ceiling means the engine never hangs; callers get a structured terminal state every time.
+
+## Amendment (2026-07-18): `max_turns` defaults to unlimited
+
+The original decision set a default ceiling of 30. Source-checking the studied
+harnesses (user question) showed **none of them caps turns by default**:
+Claude Code's `maxTurns?` is enforced only when explicitly set
+(`query.ts:1705`, `if (maxTurns && …)`); Grok Build's `max_turns` is
+`Option<u32>` defaulting to `None` (`xai-grok-agent/src/config.rs:1440`; only
+sub-agent *definitions* opt into caps); Codex has no turn-cap concept at all.
+A 30-turn default would silently truncate real agentic work and skew A/B runs.
+
+`EngineConfig.max_turns` is now `Option<u32>` with **`None` (unlimited) as the
+default**; the `MaxTurns` terminal fires only when a caller sets a ceiling
+(`--max-turns` in `locode-exec`, Task 14). The stream-json `init` event's
+`max_turns` field becomes optional and is omitted when unlimited (ADR-0014's
+event shape; changed before any binary emits the stream). The "engine never
+hangs" consequence now holds via the other terminals plus caller interrupts —
+the same posture as the studied harnesses.

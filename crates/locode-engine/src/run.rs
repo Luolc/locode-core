@@ -110,9 +110,13 @@ impl Session {
                 break Terminal::Error { error };
             }
 
-            // (h) Max-turns, checked AFTER dispatch so the ceiling never severs a
-            // tool_use/tool_result pair (grok/claude do the same).
-            if acc.turns >= self.config.max_turns {
+            // (h) Max-turns (only when a ceiling is configured — unlimited by
+            // default, like every studied harness), checked AFTER dispatch so the
+            // ceiling never severs a tool_use/tool_result pair (grok/claude do
+            // the same).
+            if let Some(cap) = self.config.max_turns
+                && acc.turns >= cap
+            {
                 break Terminal::MaxTurns;
             }
         };
