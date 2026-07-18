@@ -14,7 +14,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
-# The Anthropic wire (Task 12): backoff sleeps + jitter.
+# The Anthropic wire (Task 12): HTTP client, backoff sleeps + jitter.
+reqwest = { workspace = true }
 tokio = { workspace = true, features = ["time"] }
 rand = { workspace = true }
 

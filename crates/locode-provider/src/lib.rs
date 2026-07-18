@@ -16,6 +16,7 @@ mod provider;
 mod repair;
 mod request;
 
+pub use anthropic::{AnthropicProvider, AuthRefresh};
 pub use assemble::{AssembleError, ToolCallAssembler};
 pub use completion::{Completion, StopReason};
 pub use mock::MockProvider;
