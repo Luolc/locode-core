@@ -45,7 +45,7 @@ Build bottom-up; slice vertically so each checkpoint leaves a working, tested sy
 **Checkpoint A:** empty workspace compiles; `just check` is green in CI.
 
 ### Phase 1: Core spine, proven with a mock provider (zero API spend)
-- [ ] Task 3: `locode-protocol` — history model, tool call/result, report envelope + golden test
+- [ ] Task 3: `locode-protocol` — conversation model (4-role, ADR-0013), tool call/result, report envelope + golden test
 - [ ] Task 4: `locode-tools` — `Tool` trait, `ToolKind`, `ToolError`, `ToolCtx`, `ToolOutput`, `DynTool` erasure, registry + `dispatch` door
 - [ ] Task 5: `locode-provider` — `Provider` trait, `ConversationRequest`, `Completion`, `MockProvider` (scripted tool_calls) + partial-JSON assembly helper
 - [ ] Task 6: `locode-engine` — the loop + `Session` API; terminal states, transcript repair/dedup, max-turns, abort synthesis; unit-tested end-to-end with mock provider + trivial tools

@@ -45,15 +45,17 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 ## Phase 1: Core spine (mock provider, zero API spend)
 
 ## Task 3: `locode-protocol` types + report envelope
-**Description:** Pure types shared by all crates: the minimal history model, tool call/result, and the JSON report envelope (ADR-0009).
+**Description:** Pure types shared by all crates: the 4-role conversation model (ADR-0013), tool call/result, and the JSON report envelope (ADR-0009). Provider-neutral, Anthropic-shaped; no wire (de)serialization here (that lives in each `Provider` impl).
 
 **Acceptance criteria:**
-- [ ] History enum: `System`/`User`/`Assistant{text,tool_calls}`/`Tool{call_id,content,is_error}`.
-- [ ] `ToolCall{id,name,args}`, report envelope with `schema_version:1`, `status`, `harness`, `provider`, `final_message`, `structured_output`, `turns`, `tool_calls[]`, `usage`, `session_id`, `error`.
+- [ ] `Conversation { messages: Vec<Message> }`; `Message { role, content: Vec<ContentBlock> }`; `Role ∈ {System, Developer, User, Assistant}` (ADR-0013).
+- [ ] `#[non_exhaustive] ContentBlock`: `Text`, `Image(ImageSource)`, `Thinking{text,signature?}`, `ToolUse{id,name,input:Value}`, `ToolResult{tool_use_id,content:Vec<ResultChunk>,is_error}`; `ResultChunk ∈ {Text, Image}`; optional per-block cache marker. Only `Text`/`ToolUse`/`ToolResult` need to be exercised in v0.
+- [ ] Report envelope with `schema_version:1`, `status`, `harness`, `provider`, `final_message`, `structured_output`, `turns`, `tool_calls[]`, `usage`, `session_id`, `error`.
 - [ ] `status ∈ {completed,max_turns,model_error,error}` serializes to the exact strings in ADR-0009.
 
 **Verification:**
 - [ ] Golden test: a fixed report serializes to a committed JSON snapshot (freezes the envelope shape).
+- [ ] Round-trip test: a `Conversation` covering all four roles + `ToolUse`/`ToolResult` pairing serializes/deserializes losslessly (native serde, not a wire format).
 
 **Dependencies:** Task 1
 **Files:** `crates/locode-protocol/src/*.rs`, `crates/locode-protocol/tests/envelope_golden.rs`

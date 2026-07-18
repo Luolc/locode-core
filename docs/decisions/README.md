@@ -20,3 +20,4 @@ live in `~/dev/coding-cli-survey`.
 | [0010](ADR-0010-rust-tooling-baseline.md) | Rust tooling/CI baseline (pinned toolchain, fmt+clippy-deny+test) | Accepted |
 | [0011](ADR-0011-search-ripgrep-bundling.md) | Search uses ripgrep (host-resolved, bundled at packaging) | Accepted |
 | [0012](ADR-0012-harness-packs.md) | Harness packs — faithful per-harness toolsets (supersedes 0006) | Accepted |
+| [0013](ADR-0013-conversation-protocol.md) | Conversation protocol — 4-role (System/Developer/User/Assistant), Anthropic-shaped blocks | Accepted |
