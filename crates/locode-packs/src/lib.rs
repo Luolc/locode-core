@@ -217,9 +217,15 @@ mod tests {
         let (_dir, host) = test_host();
         let pack = resolve("grok").unwrap();
         let registry = pack.build_registry(&host);
-        assert!(registry.contains("run_terminal_cmd"));
-        assert!(registry.contains("read_file"));
-        assert!(registry.contains("search_replace"));
+        for tool in [
+            "run_terminal_cmd",
+            "read_file",
+            "search_replace",
+            "grep",
+            "list_dir",
+        ] {
+            assert!(registry.contains(tool), "grok pack registers {tool}");
+        }
 
         let headless = pack.preamble(&ctx(true));
         assert_eq!(headless.len(), 1);

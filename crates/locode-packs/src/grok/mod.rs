@@ -1,7 +1,9 @@
 //! The `grok` pack — a faithful port of Grok Build's `xai-grok-tools` toolset, trimmed
 //! to headless-minimal (ADR-0012), over `locode-host`. Task 13 renders its real system
-//! prompt; `grep` + `list_dir` land in Task 11.
+//! prompt; all five grok tools are wired (run_terminal_cmd, read_file, search_replace, grep, list_dir).
 
+mod grep;
+mod list_dir;
 mod read;
 mod search_replace;
 mod terminal;
@@ -13,6 +15,8 @@ use locode_protocol::{ContentBlock, Message, Role};
 use locode_tools::Registry;
 
 use crate::pack::{Pack, PackContext};
+use grep::GrokGrep;
+use list_dir::GrokListDir;
 use read::GrokReadFile;
 use search_replace::GrokSearchReplace;
 use terminal::GrokRunTerminalCmd;
@@ -33,7 +37,8 @@ impl Pack for GrokPack {
         );
         registry.register("read_file", GrokReadFile::new(Arc::clone(host)));
         registry.register("search_replace", GrokSearchReplace::new(Arc::clone(host)));
-        // Task 11 adds: grep, list_dir.
+        registry.register("grep", GrokGrep::new(Arc::clone(host)));
+        registry.register("list_dir", GrokListDir::new(Arc::clone(host)));
     }
 
     fn preamble(&self, ctx: &PackContext) -> Vec<Message> {
@@ -308,5 +313,79 @@ mod tests {
             std::fs::read_to_string(root.join("f.txt")).unwrap(),
             "b b b"
         );
+    }
+
+    // ---- grep (needs `rg`; the happy path is gated on its presence) ----
+
+    fn rg_present() -> bool {
+        std::process::Command::new("rg")
+            .arg("--version")
+            .output()
+            .is_ok()
+    }
+
+    #[tokio::test]
+    async fn grep_finds_matches() {
+        if !rg_present() {
+            return;
+        }
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("a.txt"), "needle here\nother line\n").unwrap();
+        std::fs::write(root.join("b.txt"), "nothing\n").unwrap();
+        let out = registry
+            .dispatch("grep", json!({ "pattern": "needle" }), &ctx(&root))
+            .await;
+        assert!(out.record.ok);
+        assert_eq!(out.record.output["matched"], json!(true));
+        let text = result_text(&out.tool_result);
+        assert!(text.contains("needle"), "{text}");
+        assert!(text.contains("a.txt"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn grep_no_match_is_soft_ok() {
+        if !rg_present() {
+            return;
+        }
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("a.txt"), "hello\n").unwrap();
+        let out = registry
+            .dispatch("grep", json!({ "pattern": "zzzznotfound" }), &ctx(&root))
+            .await;
+        assert!(out.record.ok);
+        assert_eq!(out.record.output["matched"], json!(false));
+        assert!(result_text(&out.tool_result).contains("No matches"));
+    }
+
+    // ---- list_dir (self-implemented walk; no external binary) ----
+
+    #[tokio::test]
+    async fn list_dir_walks_the_tree() {
+        let (_dir, registry, root) = setup();
+        std::fs::create_dir(root.join("src")).unwrap();
+        std::fs::write(root.join("src/main.rs"), "").unwrap();
+        std::fs::write(root.join("Cargo.toml"), "").unwrap();
+        let out = registry
+            .dispatch("list_dir", json!({ "target_directory": "." }), &ctx(&root))
+            .await;
+        assert!(out.record.ok);
+        let text = result_text(&out.tool_result);
+        assert!(text.contains("src/"), "{text}");
+        assert!(text.contains("main.rs"), "{text}");
+        assert!(text.contains("Cargo.toml"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn list_dir_missing_is_soft_error() {
+        let (_dir, registry, root) = setup();
+        let out = registry
+            .dispatch(
+                "list_dir",
+                json!({ "target_directory": "nope" }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(!out.record.ok);
+        assert!(is_error(&out.tool_result));
     }
 }

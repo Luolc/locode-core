@@ -24,6 +24,15 @@ pub struct FileStat {
     pub modified: Option<SystemTime>,
 }
 
+/// One entry in a directory listing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirEntry {
+    /// The entry's file name (not a full path).
+    pub name: String,
+    /// Whether the entry is a directory.
+    pub is_dir: bool,
+}
+
 /// A filesystem operation failure.
 #[derive(Debug, thiserror::Error)]
 pub enum FsError {
@@ -92,6 +101,35 @@ impl Host {
     pub async fn stat(&self, cwd: &Path, path: &Path) -> Result<FileStat, FsError> {
         let resolved = self.resolve_in_jail(cwd, path).await?;
         self.stat_resolved(&resolved).await
+    }
+
+    /// List a directory's immediate entries (jail-resolved), unsorted.
+    ///
+    /// # Errors
+    /// [`FsError::Path`] if the path escapes the jail; [`FsError::Io`] if it is not a
+    /// readable directory.
+    pub async fn read_dir(&self, cwd: &Path, path: &Path) -> Result<Vec<DirEntry>, FsError> {
+        let resolved = self.resolve_in_jail(cwd, path).await?;
+        let mut reader = tokio::fs::read_dir(&resolved)
+            .await
+            .map_err(|source| FsError::Io {
+                op: "read_dir",
+                path: resolved.display().to_string(),
+                source,
+            })?;
+        let mut entries = Vec::new();
+        while let Some(entry) = reader.next_entry().await.map_err(|source| FsError::Io {
+            op: "read_dir",
+            path: resolved.display().to_string(),
+            source,
+        })? {
+            let is_dir = entry.file_type().await.is_ok_and(|t| t.is_dir());
+            entries.push(DirEntry {
+                name: entry.file_name().to_string_lossy().into_owned(),
+                is_dir,
+            });
+        }
+        Ok(entries)
     }
 
     async fn stat_resolved(&self, resolved: &Path) -> Result<FileStat, FsError> {
