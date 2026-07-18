@@ -22,16 +22,17 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 **Files:** `Cargo.toml`, `rust-toolchain.toml`, `rustfmt.toml`, `clippy.toml`, `crates/*/Cargo.toml`, `crates/*/src/lib.rs|main.rs`
 **Scope:** M
 
-## Task 2: CI + justfile
-**Description:** Single GitHub Actions job running the mandatory triangle, plus developer `justfile` (ADR-0010).
+## Task 2: CI + justfile ✅ done
+**Description:** Single GitHub Actions job running the mandatory triangle + a docs gate, plus developer `justfile` and strict-from-empty workspace lints (ADR-0010 amendment).
 
 **Acceptance criteria:**
-- [ ] `.github/workflows/ci.yml`: checkout → toolchain from file → `Swatinem/rust-cache` → fmt-check, clippy `-D warnings`, test; runs on PR + push to main.
-- [ ] `justfile` with `fmt`, `fmt-check`, `clippy`, `fix`, `test`, `check`.
-- [ ] `Cargo.lock` committed.
+- [x] `.github/workflows/ci.yml`: checkout → pinned toolchain → `Swatinem/rust-cache` → fmt-check, clippy `-D warnings` (`--all-targets --all-features`), test, `cargo doc` with `RUSTDOCFLAGS=-D warnings`; runs on PR + push to main; `concurrency: cancel-in-progress`.
+- [x] `justfile` with `fmt`, `fmt-check`, `clippy`, `fix`, `test`, `doc`, `check`.
+- [x] `Cargo.lock` committed (in Task 1).
+- [x] Strict workspace lints enabled while empty: `unsafe_code=forbid`, `missing_docs=warn`, `rust_2018_idioms=warn`, clippy `pedantic` + `unwrap_used`/`expect_used`/`dbg_macro` deny; `allow-{unwrap,expect}-in-tests`.
 
 **Verification:**
-- [ ] `just check` green locally; CI green on a pushed branch.
+- [x] The full gate (`fmt-check` / `clippy -D warnings` / `test` / `doc`) is green locally on the scaffold; CI green on the pushed branch (PR).
 
 **Dependencies:** Task 1
 **Files:** `.github/workflows/ci.yml`, `justfile`, `Cargo.lock`

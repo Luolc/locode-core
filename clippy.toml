@@ -1,2 +1,6 @@
-# Project clippy configuration. Intentionally minimal for now;
-# tighten as the codebase stabilizes — see ADR-0010.
+# Project clippy configuration — see ADR-0010.
+
+# `unwrap`/`expect` are denied in library code (Cargo.toml workspace lints) but
+# allowed in tests, where a panic is a perfectly good failure signal.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
