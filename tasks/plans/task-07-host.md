@@ -1,10 +1,14 @@
 # Task 7 — `locode-host`: the injectable side-effect seam
 
-> **Resolved / pending:** the shared `truncate_for_model` is applied in the **engine loop**
-> (post-dispatch, before appending each `tool_result`), since `locode-host` and
-> `locode-tools` are siblings — the Task 6 loop already marks this seam. **Pending user
-> approval:** the new deps this plan proposes (`nix` for the `unsafe`-free process-group
-> kill, dev-only `tempfile`) before implementation. See `tasks/plans/README.md`.
+> **Resolved (user-confirmed):** `truncate_for_model` is applied in the **engine loop**
+> (post-dispatch), since host + tools are siblings (Task 6 marks the seam); middle-truncation
+> (head+tail + marker). Deps **`nix` + dev-`tempfile` approved**. Shell = **`bash -lc`**
+> (login shell, loads the user's profile/RC — matches all four harnesses; shell program is a
+> configurable field for later shell-detection); **10s** timeout (configurable); group-kill
+> SIGTERM→grace→SIGKILL. Path jail is a configurable **`PathPolicy{Jailed(default),
+> Unrestricted}`** (ADR-0008 amendment) — `Unrestricted` is the `--dangerously-skip-permissions`
+> / `--yolo` behavior; only FS tools are jailed, shell caps stay on under `--yolo`. See
+> `tasks/plans/README.md`.
 
 Detailed implementation plan. Refines `tasks/todo.md` → Task 7 and `tasks/plan.md`
 Phase 2. Written **before** implementation, grounded in the actual harness source

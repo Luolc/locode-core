@@ -22,7 +22,31 @@ Route **every** tool call through one `dispatch(name, args, ctx)` door — even 
 ### Interactive approval prompts
 - Out of scope by ADR-0001 (headless; no human to prompt).
 
+## Amendment (2026-07-18): the jail is a configurable policy with a skip escape hatch
+The path jail is the **default**, not a hard wall — every studied harness offers a
+full-access / bypass mode, and since we are headless (the jail substitutes for their
+permission prompt) a caller must be able to opt out. Model it as a host **path policy**,
+minimizing Codex's `SandboxPolicy`:
+
+- `PathPolicy::Jailed { root }` — **default.** The first-class FS tools (`read_file`,
+  `search_replace`, `grep`, `list_dir`) resolve every path under `root`; `..`/absolute
+  escapes are a soft `Respond` error. (≈ Codex `WorkspaceWrite`.)
+- `PathPolicy::Unrestricted` — resolve relative paths against `cwd`, allow absolute /
+  out-of-root paths, no rejection. (≈ Codex `SandboxPolicy::DangerFullAccess` /
+  Claude Code `--dangerously-skip-permissions` / `bypassPermissions`.)
+
+Extensible later to `ReadOnly` and a real OS sandbox — the deferred policy layer; this
+two-value toggle is its safe seed and does not pull that work forward. Set on the host by
+the caller; `locode-exec` exposes it as **`--dangerously-skip-permissions`** (matching
+Claude Code) with a **`--yolo`** alias; **default = `Jailed`** (opt *into* danger).
+
+Scope notes: (1) the jail only ever constrained the **structured FS tools** — the shell
+tool was never path-jailed — so `Unrestricted` mainly widens the FS tools to match the
+shell's existing reach. (2) The shell's **timeout + output caps stay on** even under
+`--yolo`: those are robustness limits, not access control.
+
 ## Consequences
 - When a sandbox or workspace policy arrives, one function changes.
 - The path jail + shell caps give a small, safe minimal agent without a permission UI.
 - Arbitrary-shell risk is bounded by timeout/byte caps and the jail; first-class FS tools (not a shell-only surface) keep the privilege surface smaller.
+- The jail is default-on but skippable (`--dangerously-skip-permissions`/`--yolo`), so a trusting caller gets the harnesses' full-access behavior without a code change.

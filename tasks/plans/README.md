@@ -82,3 +82,11 @@ load-bearing outcomes:
   10s timeout (configurable); middle-truncation with marker.
 - **grok prompt:** cwd/OS/shell/date as a `Role::Developer` message (keeps the
   system-prompt cache boundary).
+- **Path jail is a configurable policy with a skip flag** (ADR-0008 amendment):
+  `PathPolicy::{Jailed(default), Unrestricted}`; `Unrestricted` = the full-access behavior
+  of Codex `DangerFullAccess` / Claude `bypassPermissions`, exposed as
+  `--dangerously-skip-permissions` (alias `--yolo`). Only the FS tools are jailed (never the
+  shell); shell timeout/output caps stay on even under `--yolo`.
+- **Shell loads the login profile/RC by default** (`bash -lc`) — matches all four harnesses
+  (grok/codex/opencode use login `-lc`; Claude uses an env snapshot). Shell program is a
+  configurable field for later shell-detection.
