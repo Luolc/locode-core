@@ -314,7 +314,11 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 
 ## Next milestone (post-v0): more harness packs → first A/B
 
-## Task 15: additional packs (`codex` / `claude` / `opencode`) + `locode`
+## Task 15: additional packs (`codex` / `claude` / `opencode`) + `locode` — DEFERRED after Tasks 17/18
+> Deferred (user decision, 2026-07-18): the OpenAI wires come first. The `codex` pack is
+> **blocked on Task 18** anyway — codex is Responses-API-only (`WireApi { Responses }`,
+> chat_completions.rs deleted) and `apply_patch` is a freeform/custom tool with a Lark
+> grammar, a Responses-only feature.
 **Description:** Faithful ports of the other studied harnesses' real toolsets, plus our own `locode` best-of pack (grok-build-style snake_case naming). Real per-harness implementations, not re-skins (ADR-0012). The `codex` pack introduces `apply_patch` (JSON-string framing on the Anthropic wire).
 
 **Acceptance criteria:**
@@ -329,21 +333,38 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 **Files:** `crates/locode-packs/src/{codex,claude,opencode,locode}/…`, shared `apply_patch` parser, tests
 **Scope:** L (multiple packs — split per pack when implementing)
 
-## Task 16: first A/B run
-**Description:** The payoff — run one task under two packs and compare their genuinely different behavior.
+## ~~Task 16: first A/B run~~ — REMOVED (user decision, 2026-07-18)
+A/B runs are just usage of the binary once multiple packs/wires exist — no explicit task
+needed. The old acceptance (two reports stamping their `harness`, a diff note) remains a
+good ad-hoc exercise, not a tracked deliverable.
 
-**Acceptance criteria:**
-- [ ] Same prompt runs under `--harness grok` and another pack; both reports stamp their `harness`.
-- [ ] A short doc note captures the trajectory/token/edit-success diff (aligned by `ToolKind`).
+### Milestone goal — the three wires (anthropic · openai-chat · openai-responses) + more packs; A/B runs become plain binary usage.
 
-**Verification:**
-- [ ] Two reports produced; diff recorded in `docs/` or a scratch note.
+---
 
-**Dependencies:** Tasks 14, 15
-**Files:** `docs/ab-notes.md` (or scratch), no core code changes required
-**Scope:** XS
+## Task 17: OpenAI Chat Completions wire
+**Description:** The second live `Provider` (ADR-0007's planned order): `api_schema = "openai-chat"`, `POST {base_url}/v1/chat/completions`. The **broadest-supported schema** — OpenRouter's default surface for every model/provider (no translation layer in the path), grok's `ApiBackend` default. Motivated by testing non-Anthropic models WITHOUT OpenRouter's Messages/Responses conversion in the path (user decision, 2026-07-18).
 
-### Milestone goal — two packs, one task, genuinely different tool behavior; the A/B is honest and mechanical.
+**Acceptance criteria (sketch — plan the task from source before starting):**
+- [ ] Build/parse: messages (system role native), JSON function tools (shared schema normalization reused), tool_call ids verbatim, usage mapping; `reasoning_effort` → the OpenAI `reasoning_effort`/`reasoning` param per current API.
+- [ ] Hoist the transport-retry + error-classification machinery (`RetryPolicy`/`run_with_retry`/`HttpFailure`/`classify`) out of the `anthropic` module into a shared `locode-provider` layer; both wires consume it (grok/codex both share one retry core).
+- [ ] Config: reuse `ModelConfig`-style record; OpenRouter/native/proxy backend handling per this wire's conventions (always Bearer for OpenAI-family).
+- [ ] Fixture tests mirroring the anthropic wire's suite + canned-server provider tests; `--api-schema openai-chat` in `locode-exec`.
+
+**Dependencies:** Task 12 (patterns), Task 5 (trait)
+**Scope:** L
+
+## Task 18: OpenAI Responses wire
+**Description:** The third `Provider`: `api_schema = "openai-responses"`, `POST {base_url}/v1/responses`, **stateless** (`store: false` always — codex and grok both run it that way; OpenRouter's beta *rejects* stateful requests). Required for faithful codex: codex is Responses-only and `apply_patch` is a **custom/freeform tool with a Lark grammar** — verified live through OpenRouter (`custom_tool_call` round-trips). Also grok build's own backend for xAI models (encrypted reasoning replay, ZDR).
+
+**Acceptance criteria (sketch — plan from source; needs an ADR-0003/ToolSpec design decision):**
+- [ ] `ToolSpec` grows a variant/kind for freeform/custom tools (name + description + grammar) alongside JSON-schema function tools — the protocol change that unblocks codex's `apply_patch` (ask-first: protocol shape).
+- [ ] Build/parse: `input` item list, function + custom tool calls, `reasoning` items with `encrypted_content` replay (the Responses analog of thinking signatures), usage mapping.
+- [ ] Stateless discipline: `store: false` on every request; `previous_response_id` never used (OpenRouter rejects it; grok sends store=false for ZDR).
+- [ ] Shared retry/classify layer from Task 17; fixture + canned-server tests; `--api-schema openai-responses` in `locode-exec`.
+
+**Dependencies:** Task 17 (shared retry layer)
+**Scope:** L
 
 ---
 
