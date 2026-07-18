@@ -372,18 +372,26 @@ pub enum StopReason {
 }
 
 /// Token accounting from a Messages response.
+///
+/// Every field is `Option` + `default`: gateways translating other providers
+/// into the Messages shape return `null` (observed live: OpenRouter serving
+/// `openai/*` models sends `"cache_creation_input_tokens": null`), and
+/// `#[serde(default)]` alone covers *missing*, not `null` — a bare `u64`
+/// would fail the whole response parse.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MessagesUsage {
     /// Input (prompt) tokens.
-    pub input_tokens: u64,
+    #[serde(default)]
+    pub input_tokens: Option<u64>,
     /// Output (completion) tokens.
-    pub output_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: Option<u64>,
     /// Tokens written to the prompt cache.
     #[serde(default)]
-    pub cache_creation_input_tokens: u64,
+    pub cache_creation_input_tokens: Option<u64>,
     /// Tokens served from the prompt cache.
     #[serde(default)]
-    pub cache_read_input_tokens: u64,
+    pub cache_read_input_tokens: Option<u64>,
 }
 
 /// A structured error body (`{"type":"error","error":{"type":…,"message":…}}`).
