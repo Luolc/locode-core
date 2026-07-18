@@ -62,12 +62,20 @@ and the ADR amendments (0002/0008/0009/0011).
 
 ## Task 12 starting point
 
-`tasks/plans/task-12-anthropic-wire.md` (+ its banner) is the design. Build the Anthropic
-Messages wire: request build (hoist leading `System` → top-level `system`; `cache_control`
-≤4 on system + 1 on last message with a count assert; omit temperature when thinking on;
-`reasoning_effort`→`budget_tokens`), parse → `Completion` (preserve tool_use ids verbatim,
-`Thinking{signature}`, `usage`), **two-tier retry** (transport tier here honoring
-`Retry-After`; the bounded loop-resample tier is already in the engine), **429 surfaced**,
-context-overflow/quota terminal, 401 refresh-once, call `repair_pairing` before send, the
-modest config record. **Do concern #2 (schema compat) first.** New dep: `reqwest` (rustls) —
-ask-first, get approval.
+`tasks/plans/task-12-anthropic-wire.md` (+ its banner) is the design — **read its §9
+addendum (2026-07-18) first**: the pre-implementation review closed all §8 open
+questions, approved the deps (`reqwest` rustls / `rand` / tokio `time`), and changed
+two defaults — betas now default to `["interleaved-thinking-2025-05-14"]` and
+`ApiBackend` gains an auto-detected `OpenRouter` variant (the user's real backend;
+Bearer auth, `x-anthropic-beta` mirroring, `provider` prefs injection). ADR-0007
+carries the matching amendment. Default model `claude-sonnet-5`; env adds
+`LOCODE_MODEL`; `api_schema` string is plain `"anthropic"`; live smoke at task end
+against OpenRouter. Build the Anthropic Messages wire: request build (hoist leading
+`System` → top-level `system`; `cache_control` ≤4 on system + 1 on last message with
+a count assert; omit temperature when thinking on; `reasoning_effort`→`budget_tokens`,
+clamp waived under interleaved thinking), parse → `Completion` (preserve tool_use ids
+verbatim, `Thinking{signature}`, `usage`), **two-tier retry** (transport tier here
+honoring `Retry-After`; the bounded loop-resample tier is already in the engine),
+**429 surfaced**, context-overflow/quota terminal, 401 refresh-once, call
+`repair_pairing` before send, the modest config record. **Do concern #2 (schema
+compat) first.**
