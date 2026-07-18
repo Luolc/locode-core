@@ -8,6 +8,11 @@ edition = "2024"
 rust-version = "1.97"
 publish = false
 
+# Shared dependency versions (referenced from crates via `<dep>.workspace = true`).
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
 # Strict-from-empty: these are enabled now, while the crates are empty, so we never pay
 # the churn of adding lints after code exists. See ADR-0010.
 [workspace.lints.rust]
