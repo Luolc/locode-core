@@ -9,11 +9,13 @@
 
 mod fs;
 mod path;
+mod rg;
 mod shell;
 mod truncate;
 
-pub use fs::{FileRead, FileStat, FsError};
+pub use fs::{DirEntry, FileRead, FileStat, FsError};
 pub use path::PathError;
+pub use rg::rg_program;
 pub use shell::{ExecError, ExecOutput, ExecRequest};
 pub use truncate::{MODEL_OUTPUT_BUDGET, truncate_for_model};
 

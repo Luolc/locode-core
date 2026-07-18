@@ -1,6 +1,6 @@
 //! Shell execution: capture stdout/stderr/exit, hard timeout, output cap, group-kill.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
@@ -67,17 +67,53 @@ impl Host {
         req: ExecRequest,
         cancel: &CancellationToken,
     ) -> Result<ExecOutput, ExecError> {
-        let started = Instant::now();
         let timeout = req
             .timeout
             .unwrap_or(self.limits.default_timeout)
             .min(self.limits.max_timeout);
+        let cmd = self.build_shell_command(&req);
+        self.run_captured(cmd, timeout, cancel).await
+    }
+
+    /// Run a resolved program with explicit argv (**no shell** — safe for untrusted args
+    /// like a regex or glob), capturing output under the same limits/kill/cancel machinery
+    /// as [`Host::exec`]. Used by rg-backed tools (Task 11).
+    ///
+    /// # Errors
+    /// [`ExecError::Spawn`] if the program cannot be started (e.g. `rg` not on PATH).
+    pub async fn run_capture(
+        &self,
+        program: &Path,
+        args: &[String],
+        cwd: &Path,
+        timeout: Option<Duration>,
+        cancel: &CancellationToken,
+    ) -> Result<ExecOutput, ExecError> {
+        let timeout = timeout
+            .unwrap_or(self.limits.default_timeout)
+            .min(self.limits.max_timeout);
+        let mut cmd = Command::new(program);
+        cmd.args(args);
+        cmd.current_dir(cwd);
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        #[cfg(unix)]
+        cmd.process_group(0);
+        self.run_captured(cmd, timeout, cancel).await
+    }
+
+    /// The shared spawn → bounded-capture → timeout/cancel-kill → assemble body.
+    async fn run_captured(
+        &self,
+        mut cmd: Command,
+        timeout: Duration,
+        cancel: &CancellationToken,
+    ) -> Result<ExecOutput, ExecError> {
+        let started = Instant::now();
         let cap = self.limits.max_output_bytes;
 
-        let mut child = self
-            .build_command(&req)
-            .spawn()
-            .map_err(|e| ExecError::Spawn(e.to_string()))?;
+        let mut child = cmd.spawn().map_err(|e| ExecError::Spawn(e.to_string()))?;
         let pid = child.id();
 
         let stdout = child.stdout.take();
@@ -120,7 +156,7 @@ impl Host {
         })
     }
 
-    fn build_command(&self, req: &ExecRequest) -> Command {
+    fn build_shell_command(&self, req: &ExecRequest) -> Command {
         let mut cmd = Command::new(&self.shell_program);
         cmd.arg(if self.login_shell { "-lc" } else { "-c" });
         cmd.arg(&req.command);

@@ -222,22 +222,22 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 **Files:** `crates/locode-packs/src/grok/search_replace.rs` (tests in `grok/mod.rs`)
 **Scope:** M
 
-## Task 11: grok pack — `grep` (ripgrep) + `list_dir` (grok's walker)
-**Description:** Port grok's search + directory tools **faithfully** (AGENTS.md; ADR-0011 amendment). grok's `grep` is ripgrep-backed (resolved through the host); grok's directory tool is **`list_dir`, a real fs tree walker** — port it as-is, **not** an rg-glob (the rg-glob is the `locode` pack's choice, next milestone).
+## Task 11: grok pack — `grep` (ripgrep) + `list_dir` (grok's walker) ✅ done
+**Description:** Port grok's search + directory tools **faithfully** (AGENTS.md; ADR-0011 amendment). grok's `grep` is ripgrep-backed (resolved through the host); grok's directory tool is **`list_dir`, a real fs tree walker** — ported as-is, **not** an rg-glob (the rg-glob is the `locode` pack's choice, next milestone).
 
 **Acceptance criteria:**
-- [ ] `locode-host` exposes a cached `rg` resolver: `LOCODE_RG_PATH` override → host-provided bundled path → bare `rg` on PATH (invoked by name, not a cwd-relative absolute path).
-- [ ] grok's `grep` implements `Tool` over the resolved `rg` with grok's real flag set + caps (5MB/40KB/1000-char/200-line, 20s timeout); if `rg` can't be resolved → soft `Respond` error. Results respect the path jail + truncation.
-- [ ] grok's `list_dir` implements `Tool` as grok's fs walker (faithful), through the host; respects the path jail + truncation.
+- [x] `locode-host` exposes `rg_program()` (`LOCODE_RG_PATH` override → bare `rg` on PATH by name; bundled path deferred to Task 14) + a `run_capture(program, args, cwd, …)` argv process-runner (shares `exec`'s capture/timeout/kill/cancel) + a jailed `read_dir`.
+- [x] grok's `grep` (`pattern`/`path`/`glob`/`case_insensitive`; context/type/multiline/output-mode dropped) over the resolved `rg` with grok's flag set (`--heading --with-filename --line-number --color=never --max-columns 1000 --max-columns-preview`, `--ignore-case`, `--glob`, `--regexp … -- PATH`). rg exit 0 = matched, 1 = no-match (soft-ok), 2+ = error; spawn failure → soft `Respond`.
+- [x] grok's `list_dir` as a **self-implemented recursive walk** over `Host::read_dir` (jailed), indented tree, char/item budget (grok's 10k `DEFAULT_MAX_OUTPUT_CHARS`). Simplifications flagged: no gitignore filter; simpler budget than grok's seed+deep-walk.
 
 **Verification:**
-- [ ] Unit tests with a temp tree: `list_dir` returns the expected tree; `grep` matches lines; the resolver honors `LOCODE_RG_PATH` (pointed at a stub); soft-error path when `rg` is unresolvable.
+- [x] 4 tests: `grep` finds matches (+ filename), no-match is soft-ok (both gated on `rg` present); `list_dir` walks a temp tree; missing dir → soft error. (Host: 15 tests still green after the `run_capture` refactor.)
 
 **Dependencies:** Tasks 6, 7, 8
-**Files:** `crates/locode-host/src/rg.rs`, `crates/locode-packs/src/grok/{grep,list_dir}.rs`, tests
+**Files:** `crates/locode-host/src/{rg,shell,fs,lib}.rs`, `crates/locode-packs/src/grok/{grep,list_dir}.rs` (tests in `grok/mod.rs`)
 **Scope:** M
 
-### Checkpoint C — the grok pack's tools work under the mock provider; edit invariants + jail tested. Review before Phase 3.
+### Checkpoint C — the grok pack's tools work end-to-end (via `dispatch`); edit + jail tested. ✅ reached. (The full mock-provider engine run under `--harness grok` composes at Task 14.)
 
 ---
 

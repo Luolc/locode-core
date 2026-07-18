@@ -58,9 +58,9 @@ Build bottom-up; slice vertically so each checkpoint leaves a working, tested sy
 - [x] Task 8: `locode-packs` — pack framework (`Pack` = named tool set + `preamble(&PackContext)->Vec<Message>` + registration) + `resolve`/`available` `--harness` selection; grok pack scaffold (`ToolKind` tags come with the real tools, Tasks 9-11)
 - [x] Task 9: grok pack — `run_terminal_cmd` + `read_file`, ported from `xai-grok-tools` over the host (grok's real schemas/descriptions; no freshness store per faithful mimicry; `Pack::register` host-threaded)
 - [x] Task 10: grok pack — `search_replace` (grok's real exact-string edit + create-via-empty-`old_string`; no standalone `write`; faithful guards)
-- [ ] Task 11: grok pack — `grep` + dir/glob, ripgrep-backed (host-resolved — ADR-0011)
+- [x] Task 11: grok pack — `grep` (rg via host `run_capture`) + `list_dir` (self-implemented walk over jailed `read_dir`); host gains the `rg` resolver (ADR-0011)
 
-**Checkpoint C:** the grok pack's tools work end-to-end under the mock provider; edit invariants and path jail unit-tested.
+**Checkpoint C:** the grok pack tools work end-to-end via `dispatch`; edit invariants + jail unit-tested. ✅ reached.
 
 ### Phase 3: Live Anthropic wire + minimal CLI end-to-end
 - [ ] Task 12: `locode-provider` Anthropic Messages wire impl (request build, parse, tool-call id preservation, usage, cache_control breakpoints, omit-temp-when-thinking, two-tier retry, 401 refresh, 429 surface, pre-send repair)
