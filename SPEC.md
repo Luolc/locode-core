@@ -114,7 +114,7 @@ Conventions: `kind()` is a classification tag for cross-pack A/B alignment — n
 - **Framework:** `cargo test` (workspace). Adopt `cargo-nextest` only when subprocess tests get flaky/slow.
 - **Highest-leverage surface:** a **mock `Provider`** that emits scripted `tool_calls`, so the loop is unit-tested with zero API spend. The loop — transcript pairing, soft/fatal handling, max-turns, abort repair — is where the subtle bugs live.
 - **Golden test** on the report-envelope JSON shape (freeze `schema_version: 1`).
-- **Per-crate unit tests**, especially the four `edit` invariants (read-before-edit, exact+unique match, mtime freshness, reject no-op) and the path jail.
+- **Per-crate unit tests**, especially the grok-faithful `edit` guards (as built: exact + unique match, reject no-op — grok has **no** runtime read-before-edit or mtime-freshness check, so we don't either) and the path jail.
 - **One end-to-end integration test** driving `locode-engine` through a real or recorded Anthropic wire on a trivial task.
 - Tests live inline (`#[cfg(test)]`) for unit scope; cross-crate integration under each crate's `tests/`.
 

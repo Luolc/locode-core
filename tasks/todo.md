@@ -3,6 +3,10 @@
 Detailed, ordered tasks for [`plan.md`](plan.md). Each clears the Definition of Done in the plan.
 Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 
+> **📍 Current state, deviations from plans, and open concerns: [`STATUS.md`](STATUS.md).**
+> Read it first — the merged code is the source of truth; plans/ADRs may be legacy. Tasks 1–11
+> are done (Checkpoints A/B/C); **Task 12 (Anthropic wire) is next.**
+
 ---
 
 ## Phase 0: Scaffolding
