@@ -864,3 +864,30 @@ One multi-turn run with the user's OpenRouter key proving, on the real backend:
    an invalid-model 4xx) and check `classify` degrades sensibly.
 Optionally routed through `cc-reverse-proxy` (`--target https://openrouter.ai/api`)
 to capture the exact wire traffic for the fixtures directory.
+
+### 9.5 Live-smoke findings (2026-07-18, recorded after implementation)
+
+The §9.4 smoke ran against OpenRouter with the user's key; all three invariants
+passed (thinking + signature + `redacted_thinking` replayed across turns with no
+400; `cache_read_input_tokens` = the full turn-1 write; a real OpenRouter error
+body classified terminal). Findings folded back into the code/docs:
+
+1. **`redacted_thinking` is real and load-bearing.** A live response carried a
+   `redacted_thinking` block; without a wire variant the whole response fails to
+   deserialize. Added end-to-end (`ContentBlock::RedactedThinking { data }` in
+   `locode-protocol` — ADR-0013 amendment — plus wire/parse/build replay).
+   grok's `messages.rs` lacks the variant; noted as our third delta.
+2. **Vertex stays allowed (user decision).** The default `provider` prefs remain
+   cc-reverse-proxy's trio (`ignore: ["amazon-bedrock"]`, no `only` pin) —
+   Vertex is a production-relevant Anthropic provider. Probes showed Vertex
+   honours the thinking config **only when the interleaved-thinking beta header
+   reaches it** (silently drops thinking otherwise — `require_parameters` does
+   not catch header-gated behavior), which our always-on beta mirroring covers.
+3. **Cross-provider routing forfeits cache reads.** Turn 2 routed to a different
+   provider re-*writes* the prompt cache instead of reading it. Where cache-hit
+   determinism matters (e.g. the smoke itself), set
+   `provider_prefs = {"only": ["anthropic"], …}` per-config; the default keeps
+   failover.
+4. **Thinking emission is model-discretionary under the interleaved beta** —
+   trivial prompts may yield zero thinking blocks; the smoke uses a
+   comparison task that reliably provokes one. Not a wire defect.

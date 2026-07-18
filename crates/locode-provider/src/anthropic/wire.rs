@@ -218,6 +218,13 @@ pub enum ContentBlock {
         /// The opaque signature required for replay.
         signature: String,
     },
+    /// Encrypted assistant thinking, replayed verbatim like signed thinking.
+    /// **Delta over grok's structs**: observed live during the Task-12 smoke —
+    /// without this variant the whole response fails to deserialize.
+    RedactedThinking {
+        /// The encrypted payload.
+        data: String,
+    },
 }
 
 /// The source of an image block.

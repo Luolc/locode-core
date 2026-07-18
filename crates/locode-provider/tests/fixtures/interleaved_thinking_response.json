@@ -20,6 +20,10 @@
       "signature": "EqQBCgIYAhIMSecondSignature999AbCdEfGh"
     },
     {
+      "type": "redacted_thinking",
+      "data": "EncryptedOpaquePayload=="
+    },
+    {
       "type": "tool_use",
       "id": "toolu_staged_02",
       "name": "read_file",

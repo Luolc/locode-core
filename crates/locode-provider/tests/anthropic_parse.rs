@@ -51,8 +51,12 @@ fn interleaved_thinking_signatures_round_trip_through_build() {
     let completion =
         response_to_completion(fixture("interleaved_thinking_response.json")).expect("parses");
 
-    // Parsed: 4 blocks in wire order, signatures attached.
-    assert_eq!(completion.content.len(), 4);
+    // Parsed: 5 blocks in wire order (incl. redacted thinking), signatures attached.
+    assert_eq!(completion.content.len(), 5);
+    assert!(matches!(
+        &completion.content[3],
+        ContentBlock::RedactedThinking { data } if data == "EncryptedOpaquePayload=="
+    ));
     assert!(matches!(
         &completion.content[0],
         ContentBlock::Thinking { signature: Some(sig), .. }
@@ -88,7 +92,7 @@ fn interleaved_thinking_signatures_round_trip_through_build() {
     let json = serde_json::to_value(&built).expect("serializes");
 
     let replayed = json["messages"][1]["content"].as_array().expect("blocks");
-    assert_eq!(replayed.len(), 4, "all four blocks replayed in order");
+    assert_eq!(replayed.len(), 5, "all five blocks replayed in order");
     assert_eq!(replayed[0]["type"], "thinking");
     assert_eq!(
         replayed[0]["signature"],
@@ -101,8 +105,13 @@ fn interleaved_thinking_signatures_round_trip_through_build() {
         replayed[2]["signature"],
         "EqQBCgIYAhIMSecondSignature999AbCdEfGh"
     );
-    assert_eq!(replayed[3]["type"], "tool_use");
-    assert_eq!(replayed[3]["id"], "toolu_staged_02");
+    assert_eq!(replayed[3]["type"], "redacted_thinking");
+    assert_eq!(
+        replayed[3]["data"], "EncryptedOpaquePayload==",
+        "encrypted thinking replays verbatim"
+    );
+    assert_eq!(replayed[4]["type"], "tool_use");
+    assert_eq!(replayed[4]["id"], "toolu_staged_02");
 }
 
 #[test]

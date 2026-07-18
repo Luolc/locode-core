@@ -239,6 +239,11 @@ fn map_assistant_blocks(blocks: &[ContentBlock]) -> Vec<wire::ContentBlock> {
                     });
                 }
             }
+            // Encrypted thinking replays verbatim, in place, like signed
+            // thinking (observed live during the Task-12 smoke).
+            ContentBlock::RedactedThinking { data } => {
+                out.push(wire::ContentBlock::RedactedThinking { data: data.clone() });
+            }
             ContentBlock::ToolUse { id, name, input } => {
                 // id preserved VERBATIM — pairing is load-bearing (ADR-0004).
                 out.push(wire::ContentBlock::ToolUse {

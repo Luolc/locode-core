@@ -41,6 +41,10 @@ pub fn response_to_completion(resp: wire::MessagesResponse) -> Result<Completion
                     signature: Some(signature),
                 });
             }
+            // Encrypted thinking is kept opaquely for verbatim replay.
+            wire::ContentBlock::RedactedThinking { data } => {
+                content.push(ContentBlock::RedactedThinking { data });
+            }
             // Unexpected in an assistant response → ignore (grok does the same).
             wire::ContentBlock::Image { .. } | wire::ContentBlock::ToolResult { .. } => {}
         }

@@ -132,8 +132,15 @@ pub struct ModelConfig {
     pub reasoning_encoding: ReasoningEncoding,
     /// OpenRouter `provider` routing preferences. `None` → the default trio
     /// (`ignore: ["amazon-bedrock"], allow_fallbacks: false,
-    /// require_parameters: true`) when the backend is OpenRouter; ignored on
-    /// other backends.
+    /// require_parameters: true`, matching cc-reverse-proxy) when the backend
+    /// is OpenRouter; ignored on other backends.
+    ///
+    /// Vertex is deliberately **not** excluded — it is a production-relevant
+    /// Anthropic provider (user decision, 2026-07-18). Note from the Task-12
+    /// live smoke: Vertex honours the thinking config only when the
+    /// interleaved-thinking beta header reaches it, and cross-provider routing
+    /// between turns forfeits prompt-cache reads; pin `only: ["anthropic"]`
+    /// here when cache-hit determinism matters more than provider failover.
     pub provider_prefs: Option<serde_json::Value>,
 }
 
@@ -271,7 +278,7 @@ mod tests {
         let prefs = or.effective_provider_prefs().expect("default trio");
         assert_eq!(prefs["require_parameters"], true);
         assert_eq!(prefs["allow_fallbacks"], false);
-        assert_eq!(prefs["ignore"][0], "amazon-bedrock");
+        assert_eq!(prefs["ignore"][0], "amazon-bedrock", "Vertex stays allowed");
 
         let mut custom = ModelConfig::new("m", "https://openrouter.ai/api", "k");
         custom.provider_prefs = Some(serde_json::json!({"only": ["anthropic"]}));
