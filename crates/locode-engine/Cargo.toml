@@ -11,6 +11,15 @@ workspace = true
 [dependencies]
 locode-protocol = { path = "../locode-protocol" }
 locode-tools = { path = "../locode-tools" }
-locode-packs = { path = "../locode-packs" }
 locode-provider = { path = "../locode-provider" }
-locode-host = { path = "../locode-host" }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["time"] }
+tokio-util = { workspace = true }
+
+# `locode-packs` and `locode-host` join when the grok pack + host land (Tasks 7-9);
+# Task 6 proves the loop with a mock provider and trivial in-test tools.
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
+async-trait = { workspace = true }
+serde = { workspace = true }

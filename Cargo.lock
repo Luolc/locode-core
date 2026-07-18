@@ -59,11 +59,14 @@ dependencies = [
 name = "locode-engine"
 version = "0.0.0"
 dependencies = [
- "locode-host",
- "locode-packs",
+ "async-trait",
  "locode-protocol",
  "locode-provider",
  "locode-tools",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

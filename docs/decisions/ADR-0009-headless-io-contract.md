@@ -10,9 +10,9 @@ Accepted
 Headless agents are driven by other programs. Codex enforces "stdout is sacred" structurally with `#![deny(clippy::print_stdout)]` in its `exec` crate: exactly one machine-readable artifact on stdout, everything else on stderr. A predictable output contract is what makes cross-run analysis and programmatic consumption mechanical.
 
 ## Decision
-`locode-exec` emits **exactly one JSON document** — the final report — on **stdout**, and routes all human logs/traces to **stderr**. Exit `0` on any structured terminal state (`completed`/`max_turns`); non-zero on fatal (auth/config error, `Fatal` tool error, model error after retry). The report envelope stamps `harness` and `provider` (so A/B runs are self-describing) and freezes `schema_version: 1` early. Enforce stdout discipline structurally: `#![deny(clippy::print_stdout)]` in `locode-exec`; library crates never print. Keep two "JSON" concerns distinct: the always-emitted **report envelope**, and an optional **schema-constrained task answer** (`--json-schema`, deferred) that would go in `structured_output` inside the envelope.
+`locode-exec` emits **exactly one JSON document** — the final report — on **stdout**, and routes all human logs/traces to **stderr**. Exit `0` on any structured terminal state (`completed`/`max_turns`); non-zero on fatal (auth/config error, `Fatal` tool error, model error after retry). The report envelope stamps `harness` and `api_schema` (so A/B runs are self-describing) and freezes `schema_version: 1` early. (The wire-identity field is named `api_schema`, not `provider`: it names the request/response *protocol shape* — the provider's `api_schema()` — not a gateway/endpoint, which is configuration.) Enforce stdout discipline structurally: `#![deny(clippy::print_stdout)]` in `locode-exec`; library crates never print. Keep two "JSON" concerns distinct: the always-emitted **report envelope**, and an optional **schema-constrained task answer** (`--json-schema`, deferred) that would go in `structured_output` inside the envelope.
 
-Illustrative envelope: `{ schema_version, status, harness, provider, final_message, structured_output, turns, tool_calls[], usage, session_id, error }`; `status ∈ {completed, max_turns, model_error, error}`.
+Illustrative envelope: `{ schema_version, status, harness, api_schema, final_message, structured_output, turns, tool_calls[], usage, session_id, error }`; `status ∈ {completed, max_turns, model_error, error}`.
 
 ## Alternatives Considered
 ### Human-readable transcript on stdout
@@ -24,4 +24,4 @@ Illustrative envelope: `{ schema_version, status, harness, provider, final_messa
 ## Consequences
 - Any caller can parse one JSON blob and know the run's full outcome.
 - A stray `println!` in `locode-exec` fails the build.
-- `harness`/`provider` in the envelope make A/B comparison mechanical; `schema_version` protects consumers against format drift.
+- `harness`/`api_schema` in the envelope make A/B comparison mechanical; `schema_version` protects consumers against format drift.

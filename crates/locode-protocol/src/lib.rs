@@ -149,8 +149,9 @@ pub struct Report {
     pub status: Status,
     /// The harness pack the run used (e.g. `grok`).
     pub harness: String,
-    /// The provider wire the run used (e.g. `anthropic`).
-    pub provider: String,
+    /// The wire schema the run used (e.g. `anthropic`) — the provider's `api_schema()`.
+    /// Names the request/response protocol shape, not a gateway/endpoint.
+    pub api_schema: String,
     /// The assistant's final text message, if the run completed with one.
     pub final_message: Option<String>,
     /// A schema-constrained task answer, if one was requested (`--json-schema`).
@@ -212,6 +213,16 @@ pub struct Usage {
     pub cache_creation_tokens: u64,
 }
 
+impl std::ops::AddAssign for Usage {
+    /// Accumulate another turn's usage field-wise (the engine sums across turns).
+    fn add_assign(&mut self, rhs: Self) {
+        self.input_tokens += rhs.input_tokens;
+        self.output_tokens += rhs.output_tokens;
+        self.cache_read_tokens += rhs.cache_read_tokens;
+        self.cache_creation_tokens += rhs.cache_creation_tokens;
+    }
+}
+
 // ================================= Tool spec =================================
 
 /// A provider-neutral tool spec: name + description + args JSON Schema.
@@ -252,8 +263,8 @@ pub enum Event {
         session_id: String,
         /// The harness pack in use (e.g. `grok`).
         harness: String,
-        /// The provider wire in use (e.g. `anthropic`).
-        provider: String,
+        /// The wire schema in use (e.g. `anthropic`) — the provider's `api_schema()`.
+        api_schema: String,
         /// The model id.
         model: String,
         /// The working directory.
@@ -399,7 +410,7 @@ mod tests {
             schema_version: 1,
             status: Status::Completed,
             harness: "grok".into(),
-            provider: "anthropic".into(),
+            api_schema: "anthropic".into(),
             final_message: Some("done".into()),
             structured_output: None,
             turns: 1,
@@ -455,7 +466,7 @@ mod tests {
             Event::Init {
                 session_id: "sess-1".into(),
                 harness: "grok".into(),
-                provider: "anthropic".into(),
+                api_schema: "anthropic".into(),
                 model: "claude-opus-4-8".into(),
                 cwd: "/repo".into(),
                 max_turns: 30,

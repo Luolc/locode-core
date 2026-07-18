@@ -121,23 +121,30 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 **Files:** `crates/locode-provider/src/{provider,request,completion,mock,assemble,lib}.rs` (tests inline); `ToolSpec` moved to `crates/locode-protocol/src/lib.rs`
 **Scope:** M
 
-## Task 6: `locode-engine` loop + Session API
+## Task 6: `locode-engine` loop + Session API ✅ done
 **Description:** The sample→dispatch→append loop with all terminal conditions and transcript hygiene, driven by MockProvider + trivial tools (ADR-0005, ADR-0004). Highest-leverage test surface.
 
 **Acceptance criteria:**
-- [ ] `Session`/`Engine` library API drives one run: sample → dispatch (serial) → append → re-sample; returns a report and emits `stream-json` `Event`s (ADR-0014) via a sink.
-- [ ] Terminal states: `Completed` (no tool calls), `MaxTurns`, `ModelError` (after bounded retry), `Error` (`Fatal`).
-- [ ] Pre-send pass guarantees every `tool_use` id has exactly one `tool_result`; abort/mid-batch synthesizes `is_error` results.
-- [ ] `Respond` errors become `tool_result{is_error}`; the loop keeps iterating.
+- [x] `Session` library API drives one run: sample → dispatch (serial) → append → re-sample; returns a `Report` and emits `stream-json` `Event`s (ADR-0014) via an `EventSink`.
+- [x] Terminal states: `Completed` (no tool calls), `MaxTurns` (post-dispatch check), `ModelError` (after bounded resample keyed on `ProviderError::retryable()`), `Error` (`Fatal`).
+- [x] Pre-send `repair_pairing` (in `locode-provider`) guarantees every `tool_use` id has exactly one `tool_result`; abort/mid-batch synthesizes `is_error` results.
+- [x] `Respond` errors become `tool_result{is_error}` (via `Registry::dispatch`); the loop keeps iterating. Assistant `content` (incl. `Thinking{signature}`) appended verbatim for replay.
 
 **Verification:**
-- [ ] Unit tests hitting **each** terminal state via MockProvider scripts; a test asserting transcript validity after a simulated mid-batch abort; a max-turns test.
+- [x] 10 unit tests: **each** terminal state via MockProvider scripts; mid-batch-abort synthesis; max-turns; thinking preserved; `reconstruct_conversation` round-trip; usage summed; non-retryable = immediate.
+
+**Design notes (per confirmed decisions):**
+- `run() -> Report` is **infallible** — every terminal (incl. provider/Fatal errors) is captured in `Report.status`/`error`; exec maps status → exit code.
+- **`repair_pairing` lives in `locode-provider`** (provider-layer concern per ADR-0004; engine depends on provider, so it calls it each iteration), not `locode-protocol`.
+- **`provider` → `api_schema`** renamed across the report envelope, `Event::Init`, ADR-0009, and the golden snapshot (the field names the wire *schema*, not a gateway).
+- `Provider`/`EventSink` are trait objects (`Arc`/`Box`) for runtime `--api-schema`/`--output-format` selection. Module `run.rs` (not `loop.rs` — keyword). `resample_retries` default 2; usage plain-summed.
+- **Deferred:** `truncate_for_model` on tool results lands when `locode-host` does (Task 7) — the loop has the seam marked; parallel batches, compaction, streaming, live cancellation all reserved.
 
 **Dependencies:** Tasks 3, 4, 5
-**Files:** `crates/locode-engine/src/{loop,session,terminal}.rs`, tests
+**Files:** `crates/locode-engine/src/{config,sink,terminal,session,run,lib}.rs`; `repair.rs` + `AddAssign for Usage` support in provider/protocol
 **Scope:** M
 
-### Checkpoint B — full loop reaches every terminal state under MockProvider, zero network. Review before Phase 2.
+### Checkpoint B — full loop reaches every terminal state under MockProvider, zero network. ✅ reached.
 
 ---
 

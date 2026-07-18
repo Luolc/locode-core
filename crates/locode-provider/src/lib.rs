@@ -12,12 +12,14 @@ mod assemble;
 mod completion;
 mod mock;
 mod provider;
+mod repair;
 mod request;
 
 pub use assemble::{AssembleError, ToolCallAssembler};
 pub use completion::{Completion, StopReason};
 pub use mock::MockProvider;
 pub use provider::{Provider, ProviderError};
+pub use repair::{RepairStats, repair_pairing};
 pub use request::{CacheHint, ConversationRequest, ReasoningEffort, SamplingArgs};
 
 #[cfg(test)]
