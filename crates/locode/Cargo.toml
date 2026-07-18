@@ -1,0 +1,17 @@
+[package]
+name = "locode"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+locode-protocol = { path = "../locode-protocol" }
+locode-tools = { path = "../locode-tools" }
+locode-packs = { path = "../locode-packs" }
+locode-provider = { path = "../locode-provider" }
+locode-host = { path = "../locode-host" }
+locode-engine = { path = "../locode-engine" }

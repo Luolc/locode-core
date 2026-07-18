@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.97"
+publish = false
+
+# Start mild; tighten (e.g. clippy::unwrap_used) as the codebase stabilizes — see ADR-0010.
+[workspace.lints.rust]
+unused_must_use = "deny"
