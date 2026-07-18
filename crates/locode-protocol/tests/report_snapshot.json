@@ -2,7 +2,7 @@
   "schema_version": 1,
   "status": "completed",
   "harness": "grok",
-  "provider": "anthropic",
+  "api_schema": "anthropic",
   "final_message": "Done.",
   "structured_output": null,
   "turns": 2,

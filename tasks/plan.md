@@ -49,9 +49,9 @@ Build bottom-up; slice vertically so each checkpoint leaves a working, tested sy
 - [x] Task 3b: streaming event protocol types (`Event` + `reconstruct_conversation`) — the `stream-json` foundation (ADR-0014)
 - [x] Task 4: `locode-tools` — `Tool` trait, `ToolKind`, `ToolError`, `ToolCtx`, `ToolOutput`, `DynTool` erasure, registry (typed + `register_dyn` MCP seam) + `dispatch` door
 - [x] Task 5: `locode-provider` — `Provider` trait (`api_schema`+`complete`), `ConversationRequest`, `SamplingArgs`, `Completion` (normalized `Vec<ContentBlock>`, thinking preserved), `ProviderError` (exhaustive+`retryable`), `MockProvider` (scripted) + `ToolCallAssembler` partial-JSON helper
-- [ ] Task 6: `locode-engine` — the loop + `Session` API; terminal states, transcript repair/dedup, max-turns, abort synthesis; **emits the `stream-json` `Event`s** (ADR-0014); unit-tested end-to-end with mock provider + trivial tools
+- [x] Task 6: `locode-engine` — the loop + `Session` API; terminal states, transcript repair/dedup (`repair_pairing` in `locode-provider`), max-turns, abort synthesis; **emits the `stream-json` `Event`s** (ADR-0014); unit-tested end-to-end with mock provider + trivial tools
 
-**Checkpoint B:** the full loop runs to every terminal state under `MockProvider` with zero network — the core is proven.
+**Checkpoint B:** the full loop runs to every terminal state under `MockProvider` with zero network — the core is proven. ✅ reached.
 
 ### Phase 2: The `grok` harness pack + host seam
 - [ ] Task 7: `locode-host` — path jail, shell exec (timeout + byte cap + truncation marker), fs helpers, shared truncation post-process

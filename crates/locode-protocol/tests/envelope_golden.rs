@@ -9,7 +9,7 @@ fn sample_report() -> Report {
         schema_version: 1,
         status: Status::Completed,
         harness: "grok".to_string(),
-        provider: "anthropic".to_string(),
+        api_schema: "anthropic".to_string(),
         final_message: Some("Done.".to_string()),
         structured_output: None,
         turns: 2,

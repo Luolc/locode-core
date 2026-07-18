@@ -31,15 +31,18 @@ from a checklist into a reviewable design.
   request; `StopReason` is `#[non_exhaustive]` + `Unknown(String)`). Some plans list
   these as open — they are not.
 
-## Cross-cutting decisions still open (flagged by multiple plans)
+## Cross-cutting decisions — RESOLVED
 
-- **`run_terminal_cmd`** is grok's real tool name (SPEC/todo say `run_terminal_command`).
-- **Grok has no standalone `write` tool** — creation is `search_replace` with empty
-  `old_string`; a dedicated `write` is a documented locode/OpenCode-sourced addition.
-- **Edit invariants #1 (read-before-edit) and #3 (mtime freshness) are a locode
-  addition**, not grok-faithful (grok's `search_replace` hard-codes freshness off);
-  #2 (exact+unique) and #4 (reject no-op) are ported verbatim.
-- **`repair_pairing` home** — proposed for `locode-provider` (the provider layer, per
-  ADR-0004) rather than `locode-protocol`.
-- **`--provider` → `--api-schema`** rename (report field + `Event::Init` + CLI flag)
-  for consistency with `Provider::api_schema()`.
+- **`repair_pairing` home → `locode-provider`.** Provider-layer concern (ADR-0004);
+  the engine depends on provider, so it calls it each iteration. Landed in Task 6.
+- **`provider` → `api_schema` rename → done** in the report envelope, `Event::Init`,
+  ADR-0009, and the golden snapshot (Task 6). The CLI flag becomes `--api-schema` in
+  Task 14. It names the wire *schema*, not a gateway.
+- **`run_terminal_cmd`** — use grok's real name (the SPEC/todo `run_terminal_command`
+  was a voice-input artifact, not a real discrepancy). Applies at Task 9.
+- **Standalone `write` tool → skip in the grok pack.** Grok creates files via
+  `search_replace` with empty `old_string`; a dedicated `write` is not grok's. Revisit
+  when implementing other harness packs. Applies at Task 10.
+- **Faithfully mimic Grok Build** for the grok pack tools' behavior/details — this
+  governs the edit-invariant question (implement grok's real `search_replace`
+  semantics). Applies at Tasks 9–11; confirm the exact #1/#3 treatment at Task 10.
