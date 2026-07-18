@@ -12,6 +12,17 @@ publish = false
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Async, object-safe tool traits (native `async fn` in traits isn't dyn-safe yet);
+# matches the ADR-0003 `#[async_trait]` sketch and Grok Build's tool runtime.
+async-trait = "0.1"
+# JSON Schema derived from `Args` types (ADR-0003). v1 matches Grok Build.
+schemars = "1"
+# Error taxonomy (`ToolError`) and beyond; the SPEC tech stack. v2 matches both refs.
+thiserror = "2"
+# `CancellationToken` for cooperative cancellation — the exact type Codex and Grok use.
+tokio-util = "0.7"
+# Async runtime; feature sets are opted in per crate (e.g. dev-only `macros`/`rt`).
+tokio = { version = "1" }
 
 # Strict-from-empty: these are enabled now, while the crates are empty, so we never pay
 # the churn of adding lints after code exists. See ADR-0010.
