@@ -1,4 +1,4 @@
-# Repo status & handoff — as of Task 13 (the grok system prompt) (2026-07-18)
+# Repo status & handoff — as of Task 14 / **Checkpoint D: v0 complete** (2026-07-18)
 
 > **ADRs (and SPEC) are the intended source of truth and should stay trustworthy** — going
 > forward, reconcile them *before* changing code (AGENTS.md "ADR-first"). This doc exists
@@ -22,8 +22,8 @@ merged crate passes the full gate (`fmt` · `clippy --all-targets --all-features
 | `locode-engine` | done | `Session` + the loop (4 terminals, mid-batch abort synthesis, thinking replay, `stream-json` events); `run()` **infallible** → `Report` | 10 |
 | `locode-host` | done | `Host` + `PathPolicy{Jailed,Unrestricted}`; shell `exec` (`bash -lc`, timeout, tail byte-cap, `unsafe`-free group-kill via `nix`, cancel); `run_capture` (argv); `read_dir`; `read_file`/`write_file`/`stat`; `truncate_for_model`; `rg_program` | 15 |
 | `locode-packs` | done | `Pack` (`name`/`register(&Arc<Host>,…)`/`preamble→Vec<Message>`/`build_registry`), `resolve`/`available`, `GrokPack` with 5 real tools + **the real grok prompt** (Task 13): verbatim template copy (provenance-pinned) rendered via minijinja custom `${{ }}` syntax, `preamble = [System(prompt), User(<user_info>)]`, `strip_identity` knob (default faithful), `user_query()` for Task 14 | 34 |
-| `locode` (facade) | **SKELETON** | Task 14 | – |
-| `locode-exec` (binary) | **SKELETON** | Task 14 | – |
+| `locode` (facade) | done | curated re-exports: the driving API (`Session`/`EngineConfig`/sinks, packs, providers, host) + the full tool surface (SPEC Users #4) | – |
+| `locode-exec` (binary) | done | positional prompt (stdin via `-`), `--cwd` (canonicalized → jail/engine/pack agree), `--harness`, `--api-schema {anthropic,mock}` (+env), `--max-turns` (unlimited default), `--output-format {json,text,stream-json}`, `--yolo`, `--strip-identity`; stdout discipline (audited writers, EPIPE-safe), tracing→stderr, ADR-0009 exit codes | 10 |
 
 ## Decisions of record made during development (authoritative)
 
@@ -52,32 +52,25 @@ and the ADR amendments (0002/0008/0009/0011).
 
 ## ⚠️ OPEN CONCERNS / gaps for the next session
 
-1. **`truncate_for_model` is not wired anywhere yet.** It exists in `locode-host` but nothing applies it — `locode-engine/src/run.rs` has a `// TODO(Task 7/9)` where it should run post-dispatch, and the engine **doesn't even depend on `locode-host`/`locode-packs`** (removed in Task 6). Today only each tool's own cap applies, not the shared middle-truncation. **Decide at Task 14:** the facade constructs the `Host` and either (a) the engine gains a `locode-host` dep + a budget field and truncates `tool_result` text chunks, or (b) the facade wraps the registry. This is the one real cross-crate wiring gap.
+1. ~~`truncate_for_model` is not wired~~ **RESOLVED (Task 14, ADR-0008 amendment):** moved to `locode-tools` and applied centrally inside `Registry::dispatch` (the door) on both ok and error results; `HostConfig.model_output_budget` removed. Original text: **`truncate_for_model` is not wired anywhere yet.** It exists in `locode-host` but nothing applies it — `locode-engine/src/run.rs` has a `// TODO(Task 7/9)` where it should run post-dispatch, and the engine **doesn't even depend on `locode-host`/`locode-packs`** (removed in Task 6). Today only each tool's own cap applies, not the shared middle-truncation. **Decide at Task 14:** the facade constructs the `Host` and either (a) the engine gains a `locode-host` dep + a budget field and truncates `tool_result` text chunks, or (b) the facade wraps the registry. This is the one real cross-crate wiring gap.
 2. ~~Tool-schema cross-API compatibility~~ **RESOLVED (Task 12 spike + live smoke):** our flat `Args` structs emit no `$defs`/`$ref`; `parameters_schema()` now inlines subschemas at the source (grok's `generate_schema` precedent) and the wire strips only the top-level `$schema`. Live tool calls worked against the real API.
 3. **`ToolKind::Glob` tags `list_dir`** — a semantic stretch (it's a directory walk, not a glob). For honest cross-pack A/B alignment, consider adding a `ListDir`/`Dir` kind, or accept `Glob`. Low priority.
 4. **`Fatal`-on-output-serialize** (`locode-tools/src/registry.rs`, `TypedTool::call`) is untested and arguably too harsh — a serialize failure could be `Respond`. Realistically unreachable, but flagged.
 5. ~~Wire config record~~ **BUILT (Task 12):** `ModelConfig` with env `LOCODE_BASE_URL`/`LOCODE_API_KEY`/`LOCODE_MODEL` (default model `claude-sonnet-5`), `ApiBackend` auto-detection incl. OpenRouter, betas defaulting to interleaved thinking, `extra_headers`/`provider_prefs`. `LOCODE_API_SCHEMA` + `--api-schema` land with the exec (Task 14).
 6. **No end-to-end integration test** composes engine+packs+provider yet. It lands at Task 14 (mock in CI, real against Claude → Checkpoint D). The engine's own tests use trivial tools; the packs' tests use `dispatch` directly.
-7. **Jail root vs cwd must agree.** `Host` canonicalizes `workspace_root`; the caller **must** set `EngineConfig.cwd`/`ToolCtx.cwd` to the same canonical path (on macOS `/var` → `/private/var`), or the jail rejects. Bake this into the Task 14 exec wiring (canonicalize the CLI `--cwd` and build the `Host` from it).
+7. ~~Jail root vs cwd~~ **RESOLVED (Task 14):** `locode-exec` canonicalizes `--cwd` once and hands the same canonical path to host/engine/pack. Original text: **Jail root vs cwd must agree.** `Host` canonicalizes `workspace_root`; the caller **must** set `EngineConfig.cwd`/`ToolCtx.cwd` to the same canonical path (on macOS `/var` → `/private/var`), or the jail rejects. Bake this into the Task 14 exec wiring (canonicalize the CLI `--cwd` and build the `Host` from it).
 8. **`read_file` double-resolves** the path (`resolve_in_jail` then `read_file`, which resolves again) — minor; could thread the resolved path through `FileRead`.
 9. **Where does faithful mimicry stop? (user-raised, 2026-07-18 — defer, but weigh at every pack/milestone decision.)** Harnesses diverge beyond tools + system prompt: each has its own **runtime context-injection machinery** (grok: `<user_info>` prefix, AGENTS.md `<system-reminder>`s, date-rollover reminders, TodoGate; Claude Code: mid-conversation system surfaces, its own reminder set) and ultimately **its own agent loop** (compaction triggers, reminder scheduling, queued-message handling). Mimicking those per pack would eventually mean per-harness loop variants — an extreme complexity cost against ADR-0005's single loop and the "no second loop" boundary. **No decision yet.** For now packs faithfully reproduce tools + prompts + static preamble (Tasks 13/15); loop-adjacent behaviors (reminders, injection cadence, compaction policy) stay OUT of the fidelity contract and on the one shared engine. When the A/B evidence shows loop-adjacent divergence actually matters, that is the moment to decide (likely a pack-owned "turn hooks" seam vs. accepting the shared loop as a controlled variable) — write the ADR then, not now.
 
-## Task 13 starting point
+## Next milestone starting point (post-v0)
 
-Task 12 is merged: `AnthropicProvider` in `locode-provider/src/anthropic/` — see the
-plan's §9 addendum + **§9.5 live-smoke findings** (redacted-thinking replay,
-Vertex-allowed default prefs, cache-read vs cross-provider routing) and the
-ADR-0007/ADR-0013 amendments. The live smoke (`tests/anthropic_live_smoke.rs`,
-`#[ignore]`d) runs manually via direnv env against OpenRouter.
+v0 is done — every crate is real, the binary runs end-to-end against Claude
+(via OpenRouter), and CI runs the keyless `--api-schema mock` path. What remains
+deferred: `bundle-rg` packaging (ADR-0011), streaming, compaction, parallel
+dispatch, OS sandbox, MCP, `--json-schema` (see `tasks/todo.md` Deferred).
 
-Task 13 is merged too: the grok pack renders its REAL prompt (byte-exact template
-copy, minijinja custom syntax) with `preamble = [System(prompt), User(<user_info>
-prefix)]` and the `strip_identity` knob (default faithful). The exec layer must wrap
-the user prompt via `grok::prompt::user_query()` (the system prompt references the
-`<user_query>` tag).
-
-Next: **Task 14 — `locode` facade + `locode-exec`** (`tasks/plans/task-14-facade-exec.md`):
-compose engine+packs+provider, clap flags, stdout discipline, exit codes, mock mode in
-CI, end-to-end run against Claude (Checkpoint D). Remember: concern #1
-(`truncate_for_model` wiring), #7 (jail root vs cwd canonicalization), a date source
-for `PackContext.date` (chrono/time — ask-first), and `LOCODE_API_SCHEMA`/`--api-schema`.
+Next: **Task 15 — additional packs** (`codex`/`claude`/`opencode` + our own
+`locode` best-of pack), then **Task 16 — the first A/B run**. Read the
+fidelity-boundary open concern (#9 above) before planning Task 15: packs
+reproduce tools + prompts + static preamble; loop-adjacent behaviors stay on
+the shared engine until A/B evidence forces the ADR.

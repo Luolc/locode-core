@@ -67,7 +67,7 @@ Build bottom-up; slice vertically so each checkpoint leaves a working, tested sy
 - [ ] Task 13: grok pack system prompt (minijinja, ported from grok's real prompt, headless-branched identity)
 - [ ] Task 14: `locode` facade + `locode-exec` minimal headless binary (`--output-format {json,text,stream-json}` per ADR-0014, `#![deny(clippy::print_stdout)]`, stderr logging; optional `bundle-rg` feature per ADR-0011)
 
-**Checkpoint D:** `cargo run -p locode-exec -- "summarize this repo"` completes against Claude and prints exactly one JSON report. **v0 success criteria met.**
+**Checkpoint D:** `cargo run -p locode-exec -- "summarize this repo"` completes against Claude and prints exactly one JSON report. **v0 success criteria met.** ✅ reached 2026-07-18.
 
 ### Next milestone (post-v0): more harness packs → first A/B
 - [ ] Additional packs: `codex`, `claude`, `opencode` (faithful ports) + the `locode` best-of pack (grok-build-style naming). The `codex` pack brings `apply_patch` (JSON-string framing on Anthropic).

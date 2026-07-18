@@ -1,4 +1,9 @@
-//! The shared model-facing truncation post-process (ADR-0008).
+//! The shared model-facing truncation post-process (ADR-0008 amendment
+//! 2026-07-18: applied centrally at the dispatch door — every `tool_result`
+//! passes through [`truncate_for_model`] in `Registry::dispatch`, so no tool
+//! can flood the model regardless of its own caps). Moved from `locode-host`
+//! (where nothing consumed it): the budget is a property of the model-facing
+//! boundary, not of OS access.
 
 /// Default model-facing byte budget. Matches Grok's shell output cap.
 pub const MODEL_OUTPUT_BUDGET: usize = 30_000;

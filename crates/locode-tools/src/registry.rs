@@ -197,7 +197,7 @@ impl Registry {
                 output,
                 prompt_text,
             }) => Dispatched {
-                tool_result: ok_result(&id, prompt_text),
+                tool_result: ok_result(&id, &prompt_text),
                 record: record(&id, name, kind, raw_args, true, output),
                 fatal: None,
             },
@@ -215,8 +215,11 @@ impl Registry {
     }
 }
 
-/// Build a `tool_result` for a successful call.
-fn ok_result(id: &str, text: String) -> ContentBlock {
+/// Build a `tool_result` for a successful call. The shared model-facing
+/// truncation applies HERE — the dispatch door — so every result is bounded
+/// centrally regardless of any tool's own caps (ADR-0008 amendment).
+fn ok_result(id: &str, text: &str) -> ContentBlock {
+    let (text, _) = crate::truncate_for_model(text, crate::MODEL_OUTPUT_BUDGET);
     ContentBlock::ToolResult {
         tool_use_id: id.to_owned(),
         content: vec![ResultChunk::Text { text }],
@@ -224,13 +227,13 @@ fn ok_result(id: &str, text: String) -> ContentBlock {
     }
 }
 
-/// Build an `is_error` `tool_result` the model can recover from.
+/// Build an `is_error` `tool_result` the model can recover from (same central
+/// truncation — error payloads can carry tool output too).
 fn error_result(id: &str, message: &str) -> ContentBlock {
+    let (text, _) = crate::truncate_for_model(message, crate::MODEL_OUTPUT_BUDGET);
     ContentBlock::ToolResult {
         tool_use_id: id.to_owned(),
-        content: vec![ResultChunk::Text {
-            text: message.to_owned(),
-        }],
+        content: vec![ResultChunk::Text { text }],
         is_error: true,
     }
 }
