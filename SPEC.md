@@ -11,7 +11,7 @@ These are the assumptions this spec is built on. Correct any that are wrong befo
 
 1. **locode-core is a library, not an application.** Its deliverable is a set of `locode-*` library crates plus a *minimal* headless binary (`locode-exec`) for end-to-end exercise. The full binary — TUI, MCP, richer UX — lives in a separate future repo (`locode-app`) that depends on these crates.
 2. **Primary target model is Claude** (Anthropic Messages wire first; `cache_control` breakpoint caching from day one). OpenAI Chat Completions is the planned second wire but not in v0.
-3. **House dialect is `grok`** (snake_case, first-class FS tools). `claude`/`codex`/`opencode` are re-skins added after the house dialect works.
+3. **v0 is the `grok` harness pack** — a faithful port of Grok Build's real tools (ADR-0012). Other packs (`codex`/`claude`/`opencode`) and our own `locode` pack are the next milestone — real per-harness implementations, not re-skins.
 4. **Single-user, trusted-workspace threat model for v0.** A `workspace_root` path jail + shell timeout/output caps is the security posture; OS sandboxing (Seatbelt/Landlock/seccomp) is a deferred extension behind the one dispatch door, not a v0 requirement.
 5. **Non-streaming model calls in v0.** Buffer each assistant turn fully before dispatching tools. Streaming is an additive optimization, not a second loop.
 6. **Ephemeral sessions in v0.** History lives in memory for one run; durable JSONL session files are deferred.
@@ -19,11 +19,11 @@ These are the assumptions this spec is built on. Correct any that are wrong befo
 
 ## Objective
 
-Build the **headless engine of a coding agent**: a production-grade, robust Rust core library that owns the classic *sample → dispatch → append → re-sample* loop, exposes a typed tool registry (shell + filesystem + search) whose JSON schemas are derived from the arg types, presents those tools through a selectable **dialect**, talks to a model through a **provider trait** with one wire implementation, and returns a single structured result — with **no TUI and no interactive permission prompts**.
+Build the **headless engine of a coding agent**: a production-grade, robust Rust core library that owns the classic *sample → dispatch → append → re-sample* loop, exposes a typed tool registry (shell + filesystem + search) whose JSON schemas are derived from the arg types, organized into a selectable **harness pack** (a faithful per-harness toolset), talks to a model through a **provider trait** with one wire implementation, and returns a single structured result — with **no TUI and no interactive permission prompts**.
 
-**Users:** (1) the future `locode-app` (TUI + features) as a library consumer driving the engine programmatically; (2) researchers running headless A/B comparisons of tool-harness dialects and provider wires; (3) `locode-exec` as a thin reference consumer.
+**Users:** (1) the future `locode-app` (TUI + features) as a library consumer driving the engine programmatically; (2) researchers running headless A/B comparisons of harness packs and provider wires; (3) `locode-exec` as a thin reference consumer.
 
-**Success looks like:** a caller can drive one agent session to completion against Claude, under the `grok` dialect, with the engine emitting exactly one machine-readable JSON report — and every architectural extension point (more dialects, more wires, apply_patch, sandbox, MCP, streaming, compaction) is a seam, not a rewrite.
+**Success looks like:** a caller can drive one agent session to completion against Claude, under the `grok` harness pack, with the engine emitting exactly one machine-readable JSON report — and every architectural extension point (more harness packs, more wires, apply_patch, sandbox, MCP, streaming, compaction) is a seam, not a rewrite.
 
 ## Tech Stack
 
@@ -33,7 +33,7 @@ Build the **headless engine of a coding agent**: a production-grade, robust Rust
 | Serialization / schema | `serde`, `schemars` (JSON Schema derived from arg types) |
 | Errors | `thiserror` |
 | HTTP | `reqwest` (with `rustls`) |
-| Prompt templating | `minijinja` (tool names track the active dialect) |
+| Prompt templating | `minijinja` (per-pack system prompts) |
 | CLI (locode-exec only) | `clap` |
 | First provider wire | Anthropic Messages |
 
@@ -50,7 +50,7 @@ cargo fmt --all
 cargo clippy --workspace --all-targets --fix --allow-dirty -- -D warnings
 
 # Run the minimal headless binary (v0)
-cargo run -p locode-exec -- --prompt "summarize this repo" --dialect grok --provider anthropic
+cargo run -p locode-exec -- --prompt "summarize this repo" --harness grok --provider anthropic
 
 # Convenience (justfile)
 just check      # fmt-check + clippy + test
@@ -71,8 +71,8 @@ SPEC.md                  → this file
 tasks/                   → plan.md + todo.md (Phase 2/3 output)
 crates/
 ├── locode-protocol/     → history model, tool call/result, report envelope (pure types, no I/O)
-├── locode-tools/        → canonical Tool trait + registry + 6 tool impls (host-agnostic contracts)
-├── locode-dialects/     → dialect packs: name/param/desc overrides + EditEncoding per pack
+├── locode-tools/        → Tool trait + registry + dispatch + shared primitives (framework; host-agnostic)
+├── locode-packs/        → harness packs (faithful per-harness toolsets); one module per harness
 ├── locode-provider/     → Provider trait + API-agnostic ConversationRequest + Anthropic wire impl
 ├── locode-host/         → fs/shell/path-jail/truncation/rg-resolution (injectable side-effect seam)
 ├── locode-engine/       → the sample→dispatch→append loop + Session driving API
@@ -80,7 +80,7 @@ crates/
 └── locode-exec/          → minimal headless binary (Codex-exec-style stdout discipline)
 ```
 
-Dependency direction: `protocol` ← everything; `tools` → `host` + `protocol`; `dialects` → `tools`; `provider` → `protocol`; `engine` → `tools` + `dialects` + `provider` + `host` + `protocol`; `locode` → all; `locode-exec` → `locode`.
+Dependency direction: `protocol` ← everything; `tools` → `protocol`; `host` → `protocol`; `packs` → `tools` + `host` + `protocol`; `provider` → `protocol`; `engine` → `packs` + `tools` + `provider` + `host` + `protocol`; `locode` → all; `locode-exec` → `locode`.
 
 ## Code Style
 
@@ -93,7 +93,7 @@ trait Tool: Send + Sync {
     type Args: DeserializeOwned + JsonSchema + Send;
     type Output: Serialize + ToolOutput + Send; // ToolOutput::to_prompt_text(&self) -> String
 
-    fn kind(&self) -> ToolKind;                 // canonical identity: Shell/Read/Write/Edit/Glob/Grep
+    fn kind(&self) -> ToolKind;                 // classification tag for cross-pack A/B (Shell/Read/Write/Edit/Glob/Grep)
     fn description(&self) -> &str;
     fn parameters_schema(&self) -> serde_json::Value { schema_for!(Self::Args) } // default
 
@@ -107,7 +107,7 @@ enum ToolError {
 }
 ```
 
-Conventions: canonical identity is a `ToolKind`, never a wire name; a tool result has two faces (`output` for the JSON report, `to_prompt_text()` for model history); `ToolCtx` stays small (`cwd`, `call_id`, `workspace_root`, `cancel`) — no god-object context.
+Conventions: `kind()` is a classification tag for cross-pack A/B alignment — not the wire name (each pack tool carries its harness's real name); a tool result has two faces (`output` for the JSON report, `to_prompt_text()` for model history); `ToolCtx` stays small (`cwd`, `call_id`, `workspace_root`, `cancel`) — no god-object context.
 
 ## Testing Strategy
 
@@ -127,19 +127,19 @@ Conventions: canonical identity is a `ToolKind`, never a wire name; a tool resul
 ## Success Criteria (v0)
 
 1. `locode-engine` runs a full session (sample → dispatch → append → terminal) against Claude via the Anthropic Messages wire, driven as a library API.
-2. Tools available: `shell`, `read`, `write`, `edit` (ExactString), `glob`, `grep` — one canonical impl each, presented under the `grok` dialect with schemas derived from arg types.
+2. The `grok` pack's tools — `run_terminal_command`, `read_file`, `write`, `search_replace`, `grep`, and its dir/glob tool — ported faithfully from `xai-grok-tools` (behavior P0, names/descriptions P1), schemas derived from arg types, selected via `--harness grok`.
 3. All four `edit` invariants enforced; path jail rejects `..` escapes; shell honors a hard timeout + output byte cap with a truncation marker.
 4. Every tool failure is a soft `tool_result{is_error}`; a pre-send pass guarantees transcript validity (no dangling/duplicate tool results); an explicit `max_turns` ceiling terminates cleanly.
-5. `locode-exec` emits **exactly one** JSON report on stdout (stamping `dialect` + `provider`), all diagnostics on stderr, exit 0 on clean terminal state / non-zero on fatal.
+5. `locode-exec` emits **exactly one** JSON report on stdout (stamping `harness` + `provider`), all diagnostics on stderr, exit 0 on clean terminal state / non-zero on fatal.
 6. The mandatory CI triangle is green; the loop is covered by mock-provider unit tests.
-7. Extension seams exist and are unit-touched but unimplemented: `EditEncoding::ApplyPatchFreeform`, a second `Provider` wire, additional dialects, parallel tools, compaction, sandbox, MCP.
+7. Extension seams exist but are unimplemented: additional harness packs (`codex`/`claude`/`opencode`/`locode`), `apply_patch` (JSON-string framing), a second `Provider` wire, parallel tools, compaction, sandbox, MCP.
 
 ## Open Questions
 
-Carried from the design doc §12, minus what we've now decided (wire = Anthropic; dialect = grok; workspace layout; in-repo minimal binary; search = ripgrep per ADR-0011). Still genuinely undecided:
+Carried from the design doc §12, minus what we've now decided (wire = Anthropic; v0 harness = the `grok` pack per ADR-0012; workspace layout; in-repo minimal binary; search = ripgrep per ADR-0011). Still genuinely undecided:
 
 1. **Edit strictness** — exact-match-only in v0, or adopt one or two of OpenCode's tolerant replacers early? (Default: exact-only.)
-2. **When to add `apply_patch` (P1)** — as soon as the `codex` dialect enters the A/B, or when multi-hunk string edits get painful?
+2. **When to add `apply_patch`** — with the `codex` pack (next milestone), delivered as a JSON-string patch arg on the Anthropic wire (freeform-grammar delivery deferred to a Responses wire).
 3. **Schema-constrained task answers** (`--json-schema`) — native `response_format` first with a `StructuredOutput`-tool fallback; envelope-only for v0. Needed when?
 4. **Session durability** — when do ephemeral runs need JSONL transcript persistence?
 5. **`Cargo.lock` + facade surface** — how much does `locode` re-export vs. keep crate-private for the future `locode-app`?
@@ -153,7 +153,8 @@ Carried from the design doc §12, minus what we've now decided (wire = Anthropic
 | [0003](docs/decisions/ADR-0003-typed-tool-contract.md) | Typed `Tool` contract, schemars-derived schemas, dual `output`/`prompt_text` |
 | [0004](docs/decisions/ADR-0004-error-taxonomy-and-pairing.md) | Soft/fatal error taxonomy + strict tool_use/tool_result pairing |
 | [0005](docs/decisions/ADR-0005-agent-loop.md) | Sample→dispatch→append loop; non-streaming, serial-first; explicit max-turns |
-| [0006](docs/decisions/ADR-0006-dialects-and-edit-encoding.md) | Dialect packs over one registry; `grok` default; `EditEncoding` enum |
+| [0006](docs/decisions/ADR-0006-dialects-and-edit-encoding.md) | ~~Dialect packs over one registry~~ (superseded by 0012) |
+| [0012](docs/decisions/ADR-0012-harness-packs.md) | Harness packs — faithful per-harness toolsets; `grok` pack first |
 | [0007](docs/decisions/ADR-0007-provider-trait.md) | `Provider` trait over API-agnostic request; Anthropic Messages wire first |
 | [0008](docs/decisions/ADR-0008-dispatch-door-and-path-jail.md) | One dispatch door + workspace path jail as v0 security posture |
 | [0009](docs/decisions/ADR-0009-headless-io-contract.md) | Single JSON report on stdout; diagnostics on stderr |
