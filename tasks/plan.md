@@ -55,7 +55,7 @@ Build bottom-up; slice vertically so each checkpoint leaves a working, tested sy
 
 ### Phase 2: The `grok` harness pack + host seam
 - [x] Task 7: `locode-host` — configurable `PathPolicy` jail (+ symlink check), `bash -lc` shell exec (timeout + byte cap + `unsafe`-free group-kill + cancel), fs helpers, shared middle-truncation post-process
-- [ ] Task 8: `locode-packs` — pack framework (a `Pack` = named tool set + system prompt + registration) + `--harness` selection; grok pack wiring with `ToolKind` tags for A/B
+- [x] Task 8: `locode-packs` — pack framework (`Pack` = named tool set + `preamble(&PackContext)->Vec<Message>` + registration) + `resolve`/`available` `--harness` selection; grok pack scaffold (`ToolKind` tags come with the real tools, Tasks 9-11)
 - [ ] Task 9: grok pack — `run_terminal_command` + `read_file`, ported from `xai-grok-tools` over the host
 - [ ] Task 10: grok pack — `write` + `search_replace`, ported (grok's real exact-string edit + freshness invariants)
 - [ ] Task 11: grok pack — `grep` + dir/glob, ripgrep-backed (host-resolved — ADR-0011)
