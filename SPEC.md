@@ -50,7 +50,7 @@ cargo fmt --all
 cargo clippy --workspace --all-targets --fix --allow-dirty -- -D warnings
 
 # Run the minimal headless binary (v0)
-cargo run -p locode-exec -- --prompt "summarize this repo" --harness grok --provider anthropic
+cargo run -p locode-exec -- "summarize this repo" --harness grok --provider anthropic
 
 # Convenience (justfile)
 just check      # fmt-check + clippy + test

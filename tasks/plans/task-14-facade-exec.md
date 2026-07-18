@@ -512,3 +512,25 @@ pub fn extract() -> std::io::Result<PathBuf> {
    matrix + macOS notarization are explicitly deferred (`tasks/todo.md:305`, ADR-0011:74).
 6. **Cache dir + concurrency.** Confirm `$XDG_CACHE_HOME/locode/vendor` (ADR-0011:51) and the
    atomic-rename extract; decide `directories` vs hand-rolled.
+
+---
+
+## Addendum (2026-07-18): prompt is a positional argument, not `--prompt`
+
+User decision, superseding every `--prompt` mention above. Rationale: the field
+convention is a *mode* flag plus a positional prompt — Claude Code's `-p/--print`
+enters headless mode and reads the prompt from the first non-flag argument (or
+stdin); `codex exec "…"` is a subcommand plus positional. `locode-exec` is
+**always** headless, so it needs no mode flag at all:
+
+```sh
+locode-exec "summarize this repo" [--harness grok] [--api-schema anthropic] …
+```
+
+- Prompt = the single positional argument. Absent or `-` → read stdin to string
+  (Codex's convention). The §8 stdin open question resolves to **v0-simple:
+  positional XOR stdin** (no `<stdin>`-append hybrid).
+- All other flags stay as specified, and should hew to the studied harnesses'
+  conventions (e.g. `--output-format json|text|stream-json` mirrors Claude
+  Code's `--output-format`, `--dangerously-skip-permissions` is Claude Code's
+  own flag name).
