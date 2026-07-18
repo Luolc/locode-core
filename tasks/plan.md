@@ -46,9 +46,10 @@ Build bottom-up; slice vertically so each checkpoint leaves a working, tested sy
 
 ### Phase 1: Core spine, proven with a mock provider (zero API spend)
 - [x] Task 3: `locode-protocol` — conversation model (4-role, ADR-0013), tool call/result, report envelope + golden test
+- [x] Task 3b: streaming event protocol types (`Event` + `reconstruct_conversation`) — the `stream-json` foundation (ADR-0014)
 - [ ] Task 4: `locode-tools` — `Tool` trait, `ToolKind`, `ToolError`, `ToolCtx`, `ToolOutput`, `DynTool` erasure, registry + `dispatch` door
 - [ ] Task 5: `locode-provider` — `Provider` trait, `ConversationRequest`, `Completion`, `MockProvider` (scripted tool_calls) + partial-JSON assembly helper
-- [ ] Task 6: `locode-engine` — the loop + `Session` API; terminal states, transcript repair/dedup, max-turns, abort synthesis; unit-tested end-to-end with mock provider + trivial tools
+- [ ] Task 6: `locode-engine` — the loop + `Session` API; terminal states, transcript repair/dedup, max-turns, abort synthesis; **emits the `stream-json` `Event`s** (ADR-0014); unit-tested end-to-end with mock provider + trivial tools
 
 **Checkpoint B:** the full loop runs to every terminal state under `MockProvider` with zero network — the core is proven.
 
@@ -64,7 +65,7 @@ Build bottom-up; slice vertically so each checkpoint leaves a working, tested sy
 ### Phase 3: Live Anthropic wire + minimal CLI end-to-end
 - [ ] Task 12: `locode-provider` Anthropic Messages wire impl (request build, parse, tool-call id preservation, usage, cache_control breakpoints, omit-temp-when-thinking, two-tier retry, 401 refresh, 429 surface, pre-send repair)
 - [ ] Task 13: grok pack system prompt (minijinja, ported from grok's real prompt, headless-branched identity)
-- [ ] Task 14: `locode` facade + `locode-exec` minimal headless binary (clap flags, one JSON report on stdout, `#![deny(clippy::print_stdout)]`, stderr logging; optional `bundle-rg` feature per ADR-0011)
+- [ ] Task 14: `locode` facade + `locode-exec` minimal headless binary (`--output-format {json,text,stream-json}` per ADR-0014, `#![deny(clippy::print_stdout)]`, stderr logging; optional `bundle-rg` feature per ADR-0011)
 
 **Checkpoint D:** `cargo run -p locode-exec -- --prompt "summarize this repo"` completes against Claude and prints exactly one JSON report. **v0 success criteria met.**
 

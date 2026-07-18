@@ -61,6 +61,21 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 **Files:** `crates/locode-protocol/src/*.rs`, `crates/locode-protocol/tests/envelope_golden.rs`
 **Scope:** M
 
+## Task 3b: streaming event protocol types ✅ done
+**Description:** The `stream-json` foundation (ADR-0014): a JSONL `Event` enum that makes the stream a **self-sufficient** trace source, plus reconstruction. Types only here; the loop emits them (Task 6) and `locode-exec` streams them (Task 14).
+
+**Acceptance criteria:**
+- [x] `#[non_exhaustive] Event` (`#[serde(tag="type")]`): `init{session_id,harness,provider,model,cwd,max_turns,preamble:Vec<Message>,tools:Vec<Value>}`, `message{message:Message}`, `result{report:Report}`, `error{message}`.
+- [x] `reconstruct_conversation(&[Event]) -> Conversation` = `init.preamble` ++ every `message` event.
+- [x] The terminal `result` event carries the same `Report` as `--output-format json`.
+
+**Verification:**
+- [x] JSONL round-trip test (one object per line) + a reconstruction test proving the full history (System/Developer included) rebuilds from the stream alone.
+
+**Dependencies:** Task 3
+**Files:** `crates/locode-protocol/src/lib.rs`, tests
+**Scope:** S
+
 ## Task 4: `locode-tools` contract + registry + dispatch door
 **Description:** The most important type in the system: the typed `Tool` trait, the `ToolKind` classification tag, error taxonomy, dyn-erasure, and the single `dispatch` door (ADR-0003, ADR-0004, ADR-0008).
 
@@ -97,7 +112,7 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 **Description:** The sample→dispatch→append loop with all terminal conditions and transcript hygiene, driven by MockProvider + trivial tools (ADR-0005, ADR-0004). Highest-leverage test surface.
 
 **Acceptance criteria:**
-- [ ] `Session`/`Engine` library API drives one run: sample → dispatch (serial) → append → re-sample; returns a report.
+- [ ] `Session`/`Engine` library API drives one run: sample → dispatch (serial) → append → re-sample; returns a report and emits `stream-json` `Event`s (ADR-0014) via a sink.
 - [ ] Terminal states: `Completed` (no tool calls), `MaxTurns`, `ModelError` (after bounded retry), `Error` (`Fatal`).
 - [ ] Pre-send pass guarantees every `tool_use` id has exactly one `tool_result`; abort/mid-batch synthesizes `is_error` results.
 - [ ] `Respond` errors become `tool_result{is_error}`; the loop keeps iterating.
@@ -229,7 +244,7 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 
 **Acceptance criteria:**
 - [ ] `locode` re-exports the driving API (`Session`, harness/provider selection, report types).
-- [ ] `locode-exec`: clap flags `--prompt,--cwd,--harness(default grok),--provider(default anthropic),--max-turns(default 30)`; emits exactly one JSON report on stdout; logs on stderr; `#![deny(clippy::print_stdout)]`; exit codes per ADR-0009.
+- [ ] `locode-exec`: clap flags `--prompt,--cwd,--harness(default grok),--provider(default anthropic),--max-turns(default 30),--output-format {json,text,stream-json}(default json)` (ADR-0014); `json` = the single `result` Report, `stream-json` = the JSONL `Event` stream, `text` = final message; logs on stderr; `#![deny(clippy::print_stdout)]`; exit codes per ADR-0009.
 - [ ] Optional `bundle-rg` cargo feature (release-gated, ADR-0011): `build.rs` downloads the pinned static `rg` for the target triple (or copies from `LOCODE_BUNDLE_RG_PATH` for offline/CI), `include_bytes!` embeds it, runtime self-extracts once to a cache dir; resolver falls back to PATH.
 
 **Verification:**

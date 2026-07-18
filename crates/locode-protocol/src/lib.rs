@@ -212,6 +212,74 @@ pub struct Usage {
     pub cache_creation_tokens: u64,
 }
 
+// ========================= Streaming events (stream-json) =========================
+
+/// One event in the `stream-json` trajectory (one JSON object per line).
+///
+/// The stream is a **self-sufficient, replayable source of the whole run**: `Init`
+/// carries the base prompt + tool specs + model, and each [`Event::Message`] carries a
+/// full turn — so [`reconstruct_conversation`] rebuilds the entire history with nothing
+/// else. (Claude Code's stream omits `system`/`tools`, forcing a proxy capture to
+/// recover them; `Init` closes that gap.) `#[non_exhaustive]` so events can be added
+/// (e.g. per-turn markers) without a breaking change.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum Event {
+    /// Emitted once at the start — everything needed to reconstruct context.
+    Init {
+        /// The session identifier.
+        session_id: String,
+        /// The harness pack in use (e.g. `grok`).
+        harness: String,
+        /// The provider wire in use (e.g. `anthropic`).
+        provider: String,
+        /// The model id.
+        model: String,
+        /// The working directory.
+        cwd: String,
+        /// The max-turns ceiling.
+        max_turns: u32,
+        /// The base `System` + `Developer` messages (prompt + capabilities).
+        preamble: Vec<Message>,
+        /// The tool specs offered to the model (name + JSON schema), as JSON values.
+        tools: Vec<Value>,
+    },
+    /// A full message appended to the history (the trace): role + content blocks.
+    Message {
+        /// The appended message.
+        message: Message,
+    },
+    /// The terminal event: the final report (identical to `--output-format json`).
+    Result {
+        /// The run's report envelope.
+        report: Report,
+    },
+    /// A non-terminal error note (e.g. a retry); terminal errors ride in [`Event::Result`].
+    Error {
+        /// A human-readable message.
+        message: String,
+    },
+}
+
+/// Reconstruct the full [`Conversation`] from a `stream-json` event trajectory.
+///
+/// `Init.preamble` seeds the `System`/`Developer` prompt and each [`Event::Message`]
+/// appends a turn; `Result`/`Error` events are run metadata, not part of the history.
+/// This is the inverse of what `locode-exec` emits — the stream is a complete source.
+#[must_use]
+pub fn reconstruct_conversation(events: &[Event]) -> Conversation {
+    let mut messages = Vec::new();
+    for event in events {
+        match event {
+            Event::Init { preamble, .. } => messages.extend(preamble.iter().cloned()),
+            Event::Message { message } => messages.push(message.clone()),
+            Event::Result { .. } | Event::Error { .. } => {}
+        }
+    }
+    Conversation { messages }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,5 +372,123 @@ mod tests {
         for (status, want) in cases {
             assert_eq!(serde_json::to_value(status).unwrap(), json!(want));
         }
+    }
+
+    fn minimal_report() -> Report {
+        Report {
+            schema_version: 1,
+            status: Status::Completed,
+            harness: "grok".into(),
+            provider: "anthropic".into(),
+            final_message: Some("done".into()),
+            structured_output: None,
+            turns: 1,
+            tool_calls: vec![],
+            usage: Usage::default(),
+            session_id: "sess-1".into(),
+            error: None,
+        }
+    }
+
+    /// The JSONL event stream is a self-sufficient source: `init.preamble` + every
+    /// `message` event reconstruct the entire conversation (system/developer included).
+    #[test]
+    fn events_reconstruct_full_conversation() {
+        let system = Message {
+            role: Role::System,
+            content: vec![ContentBlock::Text {
+                text: "base".into(),
+            }],
+        };
+        let developer = Message {
+            role: Role::Developer,
+            content: vec![ContentBlock::Text {
+                text: "capabilities".into(),
+            }],
+        };
+        let user = Message {
+            role: Role::User,
+            content: vec![ContentBlock::Text {
+                text: "run echo hi".into(),
+            }],
+        };
+        let assistant = Message {
+            role: Role::Assistant,
+            content: vec![ContentBlock::ToolUse {
+                id: "c1".into(),
+                name: "run_terminal_command".into(),
+                input: json!({ "command": "echo hi" }),
+            }],
+        };
+        let tool_result = Message {
+            role: Role::User,
+            content: vec![ContentBlock::ToolResult {
+                tool_use_id: "c1".into(),
+                content: vec![ResultChunk::Text {
+                    text: "hi\n".into(),
+                }],
+                is_error: false,
+            }],
+        };
+
+        let events = vec![
+            Event::Init {
+                session_id: "sess-1".into(),
+                harness: "grok".into(),
+                provider: "anthropic".into(),
+                model: "claude-opus-4-8".into(),
+                cwd: "/repo".into(),
+                max_turns: 30,
+                preamble: vec![system.clone(), developer.clone()],
+                tools: vec![json!({ "name": "run_terminal_command" })],
+            },
+            Event::Message {
+                message: user.clone(),
+            },
+            Event::Message {
+                message: assistant.clone(),
+            },
+            Event::Message {
+                message: tool_result.clone(),
+            },
+            Event::Result {
+                report: minimal_report(),
+            },
+        ];
+
+        // JSONL round-trip: one JSON object per line, parsed back losslessly.
+        let jsonl = events
+            .iter()
+            .map(|e| serde_json::to_string(e).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let parsed: Vec<Event> = jsonl
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(parsed, events, "events did not round-trip through JSONL");
+
+        // Reconstruction yields the FULL history, system/developer included.
+        let rebuilt = reconstruct_conversation(&parsed);
+        assert_eq!(
+            rebuilt,
+            Conversation {
+                messages: vec![system, developer, user, assistant, tool_result]
+            }
+        );
+    }
+
+    #[test]
+    fn event_uses_snake_case_type_tags() {
+        let event = Event::Message {
+            message: Message {
+                role: Role::User,
+                content: vec![],
+            },
+        };
+        assert_eq!(
+            serde_json::to_value(&event).unwrap()["type"],
+            json!("message")
+        );
     }
 }

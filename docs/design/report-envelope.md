@@ -1,5 +1,12 @@
 # Design discussion: the report / structured-output envelope
 
+> **Update (2026-07-17): partly decided in [ADR-0014](../decisions/ADR-0014-streaming-event-protocol.md).**
+> `stream-json` is now a **first-class v0 mode** (reprioritized above single-JSON) and must be a
+> *self-sufficient* trace source — grounded in how `~/dev/swe-lab` reconstructs Claude Code
+> history (see ADR-0014). Also settled: **flat `Status`** (open-Q 1); **cost = tokens-only, a
+> TODO** (open-Q 2); **transcript-in-`json` deferred** (open-Q 3). The §2 prior-art analysis
+> below stands; §4–§5 are superseded by ADR-0014 for those three points.
+
 > **Status: discussion doc** (not an ADR yet). Purpose: study how the four surveyed
 > agents emit headless structured output, compare against locode's current `Report`
 > envelope (ADR-0009 + the Task 3 types), and converge on the v0 shape + the seams we
