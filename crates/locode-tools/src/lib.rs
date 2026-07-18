@@ -17,7 +17,8 @@ mod tool;
 
 pub use ctx::ToolCtx;
 pub use error::ToolError;
-pub use registry::{Dispatched, DynTool, Registry, ToolRunResult, ToolSpec};
+pub use locode_protocol::ToolSpec;
+pub use registry::{Dispatched, DynTool, Registry, ToolRunResult};
 pub use tool::{Tool, ToolKind, ToolOutput};
 
 #[cfg(test)]

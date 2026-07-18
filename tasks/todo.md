@@ -97,20 +97,28 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 **Files:** `crates/locode-tools/src/{tool,registry,error,ctx,lib}.rs` (tests inline)
 **Scope:** M
 
-## Task 5: `locode-provider` trait + MockProvider
+## Task 5: `locode-provider` trait + MockProvider ✅ done
 **Description:** The API-agnostic request/response types and a scripted mock provider — the zero-spend test seam for the loop (ADR-0007).
 
 **Acceptance criteria:**
-- [ ] `Provider` trait `async fn complete(&self,&ConversationRequest)->Result<Completion,ProviderError>`.
-- [ ] `ConversationRequest{system,messages,tools,sampling,cache_hint}`; `Completion{text,tool_calls,usage,stop}`.
-- [ ] `MockProvider` returns a scripted sequence of `Completion`s (incl. tool_calls then a final text turn).
-- [ ] Reusable partial-JSON tool-arg accumulation helper (raw string per index, parse at stop), unit-tested standalone.
+- [x] `Provider` trait: `api_schema()->&str` + `async fn complete(&self,&ConversationRequest)->Result<Completion,ProviderError>`.
+- [x] `ConversationRequest{messages,tools: Vec<ToolSpec>,sampling_args,cache_hint}` (no separate `system` — the wire hoists leading System messages, ADR-0013); `SamplingArgs{max_tokens,temperature,top_p,reasoning_effort}`; `Completion{content: Vec<ContentBlock>,usage,stop: StopReason}`.
+- [x] `MockProvider` returns a scripted sequence of results (tool-call turn then final text; can inject errors); panics if over-consumed.
+- [x] Reusable partial-JSON tool-arg accumulation helper (`ToolCallAssembler`: raw string per index, parse at stop → `ContentBlock::ToolUse`), unit-tested standalone.
 
 **Verification:**
-- [ ] Unit tests: mock emits scripted turns in order; partial-JSON helper assembles fragmented args correctly.
+- [x] 11 unit tests: mock emits scripted turns in order; scripts errors; panics when over-consumed; `retryable()` classification; thinking blocks preserved; assembler stitches fragments / empty→`{}` / index order / missing-start + invalid-JSON errors.
 
-**Dependencies:** Task 3
-**Files:** `crates/locode-provider/src/{trait,request,mock,assemble}.rs`, tests
+**Design notes (decided during planning, grounded in Grok/Codex source):**
+- **`Completion` carries `Vec<ContentBlock>`, not `text`+`tool_calls`.** It is the *normalized response* (not any wire's raw shape); an ordered block list preserves thinking/text/tool_use order and **keeps `Thinking{signature}` for replay** (grok `conversation.rs` reasoning replay; codex `encrypted_content`). Thinking is **not** deferred.
+- **"Provider" = a wire schema, not a gateway.** `api_schema()` (renamed from `name()`) returns the protocol-shape id (`anthropic`/`mock`). We implement ~3 schemas total; gateways (OpenRouter/Bedrock/proxy) are config (`base_url`/auth/headers) pointed at a schema — grok `ApiBackend` vs un-enumerated base_url; codex `WireApi` + `ModelProviderInfo`. ADR-0007's `{base_url,api_backend,extra_headers}` record already encodes this.
+- **`SamplingArgs` = neutral common core only.** Per-wire params (Anthropic `top_k`/thinking budget, OpenAI `frequency_penalty`) live in each wire's builder (Task 12); `reasoning_effort` is a neutral enum mapped per-wire (grok `to_messages_api`/`to_responses_api`). Not a grand superset.
+- **`ProviderError` is exhaustive** (not `#[non_exhaustive]`) with `retryable()` matching every variant (grok/codex both do this); distinct terminal variants (context/quota/auth) + a general `Api{status}` escape. `StopReason` *is* `#[non_exhaustive]` + `Unknown(String)` (mirrors an open wire enum).
+- **`ToolSpec` hoisted to `locode-protocol`** so both `locode-tools` (builds it) and `locode-provider` (consumes it) share it without violating `provider ↛ tools`.
+- Two-tier retry: transport tier is the wire's (Task 12); bounded loop resample is the engine's (Task 6). Task 5 only fixes the taxonomy + `retryable()`.
+
+**Dependencies:** Task 3, Task 4 (ToolSpec)
+**Files:** `crates/locode-provider/src/{provider,request,completion,mock,assemble,lib}.rs` (tests inline); `ToolSpec` moved to `crates/locode-protocol/src/lib.rs`
 **Scope:** M
 
 ## Task 6: `locode-engine` loop + Session API

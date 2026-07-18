@@ -10,3 +10,9 @@ workspace = true
 
 [dependencies]
 locode-protocol = { path = "../locode-protocol" }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
