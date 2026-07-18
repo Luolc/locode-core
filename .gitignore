@@ -2,3 +2,7 @@
 /target
 
 # Cargo.lock is committed (this workspace ships a binary — see ADR-0010).
+
+# Local, gitignored secrets/overrides (direnv). `.envrc` is committed; the
+# local file holds API keys and must never be.
+.envrc.local

@@ -254,11 +254,14 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 - [ ] Builds the Messages request from `ConversationRequest`; parses response; preserves tool-call ids verbatim; extracts usage.
 - [ ] **Tool schemas:** a shared normalization helper turns `Registry::specs()` (schemars draft-2020-12: `$defs`/`$ref`/`$schema`) into the tool `input_schema` the API accepts. **First verify** whether Anthropic (and OpenAI) accept the same derived schema (we assume yes → one shared helper, not per-wire); adjust if not.
 - [ ] `cache_control` breakpoints: exactly one on last message + ≤4 on system blocks (assert count); temperature omitted when thinking is on.
+- [ ] **Betas default to `["interleaved-thinking-2025-05-14"]`** (plan §9.3, ADR-0007 amendment): interleaved thinking blocks replay in order with verbatim signatures; budget clamp waived when the beta is on; other betas opt-in.
+- [ ] **`ApiBackend { Native, OpenRouter, Proxy }`** (plan §9.2): `OpenRouter` auto-detected from the base-URL host — Bearer auth, beta list mirrored to `x-anthropic-beta`, default `provider` preferences injected (`require_parameters:true` etc., overridable).
 - [ ] Two-tier retry (transport backoff+jitter honoring `Retry-After`; bounded loop-level resample); **429 surfaced** not hammered; context-overflow/quota terminal; 401 → refresh once → retry.
-- [ ] Pre-send `repair_pairing` runs before every request; config = the modest record `{api_schema, base_url, api_key, model}` via env (`LOCODE_API_SCHEMA`/`LOCODE_BASE_URL`/`LOCODE_API_KEY`) + `--api-schema`, designed to grow to per-model `{extra_headers, auth}`.
+- [ ] Pre-send `repair_pairing` runs before every request; config = the modest record `{api_schema, base_url, api_key, model}` via env (`LOCODE_API_SCHEMA`/`LOCODE_BASE_URL`/`LOCODE_API_KEY`/`LOCODE_MODEL`) + `--api-schema`, designed to grow to per-model `{extra_headers, auth}`. Default model `claude-sonnet-5`; `api_schema` string is plain `"anthropic"`.
 
 **Verification:**
-- [ ] Tests against recorded/fixture responses (no live key in CI): request shape asserts cache-marker count; retry classifies 5xx vs 429 vs terminal; id preservation checked; the normalized tool schema matches the API's expected `input_schema` shape.
+- [ ] Tests against recorded/fixture responses (no live key in CI): request shape asserts cache-marker count; retry classifies 5xx vs 429 vs terminal; id preservation checked; the normalized tool schema matches the API's expected `input_schema` shape; an interleaved-thinking fixture (thinking→tool_use→thinking→tool_use) round-trips signatures.
+- [ ] Manual live smoke at task end against **OpenRouter** (plan §9.4): interleaved-thinking replay across turns, cache tokens non-zero on request 2, one real error body through `classify`. Never in CI.
 
 **Dependencies:** Task 5
 **Files:** `crates/locode-provider/src/anthropic/*.rs`, tests/fixtures

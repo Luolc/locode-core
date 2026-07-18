@@ -28,3 +28,31 @@ Baked into the trait's contract (or a shared wrapper): two-tier retry (transport
 - The loop builds one request and knows nothing about any wire; adding a provider is one file implementing the trait.
 - Prompt caching is Anthropic-`cache_control` in v0; the stable `prompt_cache_key` becomes the OpenAI-family concern when that wire lands.
 - Base-URL override often changes the auth header (native `x-api-key` → proxy `Authorization: Bearer`), so auth lives in the per-model record, not a global constant.
+
+## Amendment (2026-07-18): OpenRouter backend + default betas
+
+Decided in the Task-12 pre-implementation review (full detail and citations:
+`tasks/plans/task-12-anthropic-wire.md` §9). The user's primary backend is
+OpenRouter's Anthropic-compatible Messages endpoint, which needs more than the
+generic proxy path:
+
+- **`ApiBackend` gains a first-class `OpenRouter` variant** (`Native | OpenRouter |
+  Proxy`), auto-detected from a `base_url` host of `openrouter.ai` (pinnable). It
+  selects `Bearer` auth, mirrors the beta list onto OpenRouter's
+  **`x-anthropic-beta`** header (in addition to `anthropic-beta`), and injects a
+  default `provider` preferences body field
+  (`{ignore:["amazon-bedrock"], allow_fallbacks:false, require_parameters:true}`,
+  config-overridable) — `require_parameters:true` prevents OpenRouter routing to a
+  backend that silently drops `cache_control`/`thinking`. Reference implementation:
+  the user's `cc-reverse-proxy` repo. A vendor variant is preferred over generic
+  knobs so the daily path stays two env vars; `Proxy` + `extra_headers` remains the
+  generic escape hatch.
+- **Default betas are no longer empty:** v0 ships
+  `["interleaved-thinking-2025-05-14"]` by default (user requirement; Claude Code's
+  own default; proxy-safe per OpenRouter's docs). Rule going forward: **the default
+  beta set must be proxy-safe**; first-party-only betas stay opt-in. With this beta,
+  the thinking `budget_tokens` clamp to `max_tokens-1` is waived (the API allows
+  budgets exceeding `max_tokens` when thinking is interleaved).
+- **Config record env grows `LOCODE_MODEL`** alongside `LOCODE_BASE_URL` /
+  `LOCODE_API_KEY`; the v0 default model is `claude-sonnet-5`. The wire-identity
+  string is plain `"anthropic"`.

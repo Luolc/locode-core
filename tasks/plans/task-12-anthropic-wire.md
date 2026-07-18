@@ -6,6 +6,11 @@
 > `StopReason` is `#[non_exhaustive]` + `Unknown(String)`; `repair_pairing` lives in
 > `locode-provider` (the wire calls it before send); the wire-identity field is
 > `api_schema`. See `tasks/plans/README.md`. Sections below predate these.
+>
+> **Addendum §9 (2026-07-18):** the pre-implementation review resolved the remaining §8
+> questions and **supersedes two defaults below** — `betas` is **no longer empty** (v0
+> ships `interleaved-thinking-2025-05-14` by default, §9.3) and `ApiBackend` gains a
+> first-class **`OpenRouter`** variant (§9.2). Read §9 before implementing.
 
 > Implementation plan, written **before** code. Correctness of caching / retry /
 > id-pairing / thinking-replay is the point of this task; everything else is
@@ -747,3 +752,115 @@ feature pulls `serde_json` transitively but we depend on it directly anyway.
    (Task 6) or exposed as a helper here? Proposal: engine-owned; the wire only
    returns authoritative `Usage`. (grok keeps it in `xai-token-estimation`, a
    separate crate.)
+
+---
+
+## 9. Addendum — pre-implementation review decisions (2026-07-18)
+
+Recorded from the review with the user before any Task-12 code. These close every
+remaining §8 question and **supersede two defaults in §3.1/§4.8**: the empty-`betas`
+default (§8 Q6) and the two-variant `ApiBackend`. ADR-0007 carries a dated
+amendment for the ADR-level deltas (ADR-first).
+
+### 9.1 Closed questions (confirmed with the user)
+
+| Item | Decision |
+|---|---|
+| §8 Q4 refusal | A normal `Completion{stop: Refusal}`; the **engine** maps it to a terminal report. |
+| §8 Q5 default model | **`claude-sonnet-5`** (native id). New env override **`LOCODE_MODEL`** joins `LOCODE_BASE_URL`/`LOCODE_API_KEY` (via OpenRouter the user sets `LOCODE_MODEL=anthropic/claude-sonnet-5`). `max_tokens` ceiling stays ~8000, config-overridable. |
+| §8 Q6 betas | **SUPERSEDED** — see §9.3. v0 ships `interleaved-thinking-2025-05-14` **by default**. |
+| §8 Q7 token estimate | Engine-owned; the wire returns authoritative `Usage` only. |
+| `api_schema()` string | Plain **`"anthropic"`** (matches the documented `--api-schema` default; the schema names the wire format, and OpenRouter-vs-native is config, not a second schema). Supersedes §3.3's `"anthropic-messages"`. |
+| Deps (§7) | Approved as listed (`reqwest` rustls/json/http2 no-default-features, `rand`, tokio `time`). |
+| Live smoke test | **At end of Task 12** (not deferred to Task 14), manual, against **OpenRouter** (the user's real backend); never in CI. See §9.4. |
+
+### 9.2 `ApiBackend::OpenRouter` — a first-class third variant
+
+The user's primary backend is OpenRouter's Anthropic-compatible Messages endpoint
+(`https://openrouter.ai/api/v1/messages`). Two OpenRouter-specific quirks make the
+generic `Proxy` variant insufficient; both are implemented, with rationale comments,
+in the user's `~/dev/cc-reverse-proxy` (the reference implementation):
+
+1. **Beta-header mirroring.** OpenRouter reads Anthropic beta features from
+   **`x-anthropic-beta`**, not the native `anthropic-beta`
+   (`cc-reverse-proxy/reverse_proxy.go:601-607`, citing
+   `openrouter.ai/docs/guides/routing/provider-selection#anthropic-beta-features`;
+   verified against the live doc 2026-07-18). We emit the beta list on **both**
+   header names for OpenRouter (mirroring, like the proxy) — harmless and robust.
+2. **Provider-preferences injection.** For messages requests, inject a top-level
+   `provider` body field unless the request already carries one
+   (`reverse_proxy.go:562-570`):
+   ```json
+   {"ignore": ["amazon-bedrock"], "allow_fallbacks": false, "require_parameters": true}
+   ```
+   `require_parameters: true` is load-bearing: without it OpenRouter may route to a
+   backend that **silently drops unsupported params** — exactly the failure mode
+   that would eat `cache_control` or `thinking`. Config-overridable
+   (`provider_prefs: Option<serde_json::Value>`; `None` → this default trio).
+
+**Decision:** `ApiBackend { Native, OpenRouter, Proxy }`. `OpenRouter` is
+**auto-detected** when the `base_url` host is `openrouter.ai` (pinnable explicitly);
+any other non-Anthropic base URL resolves to `Proxy` as before. `OpenRouter`
+selects: `Authorization: Bearer` auth, beta mirroring (1), prefs injection (2).
+*Why a vendor variant instead of generic knobs (`beta_header_name` + `extra_body`)*:
+the user's daily path should be two env vars, not hand-written body JSON; precedent
+is grok's `ApiBackend` enum of known backends. The generic escape hatch remains
+`Proxy` + `extra_headers`.
+
+### 9.3 Betas: default = interleaved thinking (supersedes §8 Q6 and §3.1's empty default)
+
+**Decision (user, 2026-07-18): interleaved thinking is required, not optional.**
+`ModelConfig.betas` defaults to `["interleaved-thinking-2025-05-14"]`. Claude Code
+enables this beta by default for every non-3.x model on first-party
+(`betas.ts:257-262`, sole kill-switch `DISABLE_INTERLEAVED_THINKING`), and OpenRouter
+documents it explicitly — it is proxy-safe.
+
+**Wire implications (all already covered by the §4 design, now load-bearing):**
+- An assistant turn may carry **multiple `thinking` blocks interleaved with
+  `tool_use`** blocks. §4.2's replay rule applies to *every* thinking block, in
+  order, signatures verbatim — `Completion.content: Vec<ContentBlock>` preserves
+  ordering by construction. The §6 signature round-trip test gains an interleaved
+  fixture (thinking → tool_use → thinking → tool_use in one turn).
+- **Budget clamp relaxed:** with interleaved thinking, the API allows
+  `budget_tokens > max_tokens` (the budget spans the whole turn). The §4.4 clamp
+  `min(X, max_tokens-1)` applies **only when the beta is absent**; with the default
+  beta set, effort budgets (4096/8192/16384) pass unclamped.
+- Temp-omit (§4.3) unchanged: any thinking config still drops `temperature`.
+- Via OpenRouter the beta list is mirrored to `x-anthropic-beta` (§9.2).
+- The beta header is sent regardless of whether `reasoning_effort` enables a
+  thinking config (harmless no-op without one — Claude Code does the same).
+
+**Beta survey** (from Claude Code `src/constants/betas.ts` + `src/utils/betas.ts`,
+read 2026-07-18). Claude Code's own rule — experimental betas are gated on
+`shouldIncludeFirstPartyOnlyBetas()` because proxies may reject them
+(`betas.ts:210-220`) — becomes our rule: **the default set must be proxy-safe;
+everything else is opt-in config.**
+
+| Beta | Verdict for locode v0 | Why |
+|---|---|---|
+| `interleaved-thinking-2025-05-14` | **default on** | user requirement; CC default (`betas.ts:257-262`); OpenRouter-documented |
+| `effort-2025-11-24` | opt-in (existing `ReasoningEncoding::EffortAdaptive` flag) | already designed in §4.4; adaptive-model-only |
+| `context-1m-2025-08-07` | opt-in (config `betas`) | CC gates per-model (`has1mContext`); premium pricing; useful for long runs later |
+| mid-conversation-system | opt-in (existing `DeveloperRendering` flag) | already designed in §4.1 |
+| `structured-outputs-2025-12-15` | deferred with `--json-schema` | model-gated (`modelSupportsStructuredOutputs`); note the OpenRouter doc still cites the older `-2025-11-13` id — pin whichever the target accepts when this lands |
+| `context-management-2025-06-27` | skip | 1P-only per CC's proxy gate; server-side compaction is deferred anyway |
+| `prompt-caching-scope-2026-01-05` | skip | 1P-only; no-op without a scope field |
+| `fast-mode-2026-02-01` | skip (possible later seam) | `speed:"fast"` param, Opus-only |
+| `claude-code-20250219`, `cli-internal`, `token-efficient-tools`, `redact-thinking`, `afk-mode`, advisor/task-budgets | skip | CC product-identity / ant-internal experiments — not our traffic |
+| web-search / tool-search betas | skip | server-side tools, out of v0 scope |
+
+Betas stay **latched per session** (§4.8) — the set is fixed at `ModelConfig`
+construction, never toggled mid-run.
+
+### 9.4 Live smoke test (end of Task 12, manual, OpenRouter)
+
+One multi-turn run with the user's OpenRouter key proving, on the real backend:
+1. **Interleaved-thinking replay:** a turn with thinking interleaved between two
+   `tool_use` blocks round-trips (signatures echoed verbatim; no 400 on turn 2).
+2. **Caching survives routing:** `cache_read_input_tokens` /
+   `cache_creation_input_tokens` come back non-zero on the second request (proof
+   `require_parameters` + `cache_control` worked end-to-end).
+3. **Error classification sanity:** capture one OpenRouter error body shape (e.g.
+   an invalid-model 4xx) and check `classify` degrades sensibly.
+Optionally routed through `cc-reverse-proxy` (`--target https://openrouter.ai/api`)
+to capture the exact wire traffic for the fixtures directory.
