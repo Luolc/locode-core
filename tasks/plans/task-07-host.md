@@ -1,5 +1,11 @@
 # Task 7 — `locode-host`: the injectable side-effect seam
 
+> **Resolved / pending:** the shared `truncate_for_model` is applied in the **engine loop**
+> (post-dispatch, before appending each `tool_result`), since `locode-host` and
+> `locode-tools` are siblings — the Task 6 loop already marks this seam. **Pending user
+> approval:** the new deps this plan proposes (`nix` for the `unsafe`-free process-group
+> kill, dev-only `tempfile`) before implementation. See `tasks/plans/README.md`.
+
 Detailed implementation plan. Refines `tasks/todo.md` → Task 7 and `tasks/plan.md`
 Phase 2. Written **before** implementation, grounded in the actual harness source
 (Grok Build primary; Codex + Claude Code for contrast). Every non-obvious decision

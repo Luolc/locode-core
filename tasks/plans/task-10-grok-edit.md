@@ -1,5 +1,13 @@
 # Task 10 — grok pack: `write` + `search_replace` (the edit slice)
 
+> **Resolved (user-confirmed):** **skip the standalone `write` tool** in the grok pack —
+> grok has no `write` (it creates files via `search_replace` with empty `old_string`);
+> revisit a dedicated `write` when implementing other harness packs. **Faithfully mimic
+> Grok Build's real `search_replace`** semantics; confirm the exact treatment of edit
+> invariants #1 (read-before-edit) / #3 (mtime freshness) — which grok does NOT enforce
+> at runtime — during implementation (they'd be a locode hardening, not a grok port). See
+> `tasks/plans/README.md`.
+
 > HIGHEST RISK. Port grok's exact-string edit and file creation, and enforce the four
 > edit invariants (SPEC §Testing; design-doc `…minimal-headless-rust-agent.md:254-261`).
 > One unit test per invariant.

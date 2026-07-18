@@ -1,5 +1,9 @@
 # Task 8 — `locode-packs`: harness-pack framework + `grok` pack wiring
 
+> **Resolved (user-confirmed):** the grok pack registers grok's **real** tool names
+> (e.g. `run_terminal_cmd`) and **omits a standalone `write`** tool; faithfully mimic Grok
+> Build. See `tasks/plans/README.md`.
+
 Detailed implementation plan (pre-implementation). Source of truth: `SPEC.md`,
 `docs/decisions/ADR-0012-harness-packs.md` (supersedes ADR-0006), `tasks/plan.md`,
 `tasks/todo.md` (Task 8). Aligns to the already-landed `locode-tools` and

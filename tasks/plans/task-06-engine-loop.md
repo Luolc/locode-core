@@ -1,5 +1,13 @@
 # Task 6 — `locode-engine`: the sample→dispatch→append loop + Session API
 
+> **Status: IMPLEMENTED & MERGED (PR #18).** Every §8 open question was confirmed with the
+> user and built accordingly: `repair_pairing` lives in `locode-provider`; `run()` is
+> infallible → `Report`; module is `run.rs`; `resample_retries` default 2; `Provider`/
+> `EventSink` are trait objects; refusal/empty → `Completed`; usage plain-summed;
+> `final_message` = joined terminal-turn text. The `provider`→`api_schema` rename landed
+> across the envelope + `Event::Init` + ADR-0009 + golden. See `tasks/plans/README.md`
+> (RESOLVED) and the merged code. Sections below are the original plan, kept for the rationale.
+
 Pre-implementation plan. Source of truth: `SPEC.md`, ADR-0004 (error taxonomy + pairing),
 ADR-0005 (agent loop), ADR-0007 (provider trait/retry), ADR-0014 (streaming events).
 Every non-obvious decision below is grounded in the four studied harnesses with `file:line`
