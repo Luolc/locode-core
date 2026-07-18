@@ -1,0 +1,25 @@
+{
+  "id": "msg_01XFDUDYJgAACzvnptvVoYEL",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "text",
+      "text": "I'll list the directory first."
+    },
+    {
+      "type": "tool_use",
+      "id": "toolu_01A09q90qw90lq917835lq9",
+      "name": "list_dir",
+      "input": { "dir_path": "." }
+    }
+  ],
+  "model": "claude-sonnet-5",
+  "stop_reason": "tool_use",
+  "usage": {
+    "input_tokens": 1024,
+    "output_tokens": 76,
+    "cache_creation_input_tokens": 900,
+    "cache_read_input_tokens": 0
+  }
+}

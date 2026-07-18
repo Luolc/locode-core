@@ -11,7 +11,9 @@
 
 pub mod build;
 pub mod config;
+pub mod parse;
 pub mod wire;
 
 pub use build::{build_request, count_cache_controls, normalize_input_schema};
 pub use config::{ApiBackend, AuthScheme, DeveloperRendering, ModelConfig, ReasoningEncoding};
+pub use parse::response_to_completion;
