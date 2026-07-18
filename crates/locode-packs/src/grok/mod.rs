@@ -1,6 +1,6 @@
 //! The `grok` pack — a faithful port of Grok Build's `xai-grok-tools` toolset, trimmed
 //! to headless-minimal (ADR-0012), over `locode-host`. Task 13 renders its real system
-//! prompt; all five grok tools are wired (run_terminal_cmd, read_file, search_replace, grep, list_dir).
+//! prompt; all five grok tools are wired here.
 
 mod grep;
 mod list_dir;
