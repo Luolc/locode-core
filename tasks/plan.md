@@ -54,7 +54,7 @@ Build bottom-up; slice vertically so each checkpoint leaves a working, tested sy
 **Checkpoint B:** the full loop runs to every terminal state under `MockProvider` with zero network — the core is proven. ✅ reached.
 
 ### Phase 2: The `grok` harness pack + host seam
-- [ ] Task 7: `locode-host` — path jail, shell exec (timeout + byte cap + truncation marker), fs helpers, shared truncation post-process
+- [x] Task 7: `locode-host` — configurable `PathPolicy` jail (+ symlink check), `bash -lc` shell exec (timeout + byte cap + `unsafe`-free group-kill + cancel), fs helpers, shared middle-truncation post-process
 - [ ] Task 8: `locode-packs` — pack framework (a `Pack` = named tool set + system prompt + registration) + `--harness` selection; grok pack wiring with `ToolKind` tags for A/B
 - [ ] Task 9: grok pack — `run_terminal_command` + `read_file`, ported from `xai-grok-tools` over the host
 - [ ] Task 10: grok pack — `write` + `search_replace`, ported (grok's real exact-string edit + freshness invariants)
