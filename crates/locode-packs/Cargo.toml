@@ -13,11 +13,12 @@ locode-protocol = { path = "../locode-protocol" }
 locode-tools = { path = "../locode-tools" }
 locode-host = { path = "../locode-host" }
 thiserror = { workspace = true }
-
-[dev-dependencies]
 async-trait = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
+
+[dev-dependencies]
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 tokio-util = { workspace = true }
+tempfile = { workspace = true }

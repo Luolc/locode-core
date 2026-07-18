@@ -56,12 +56,21 @@ mod tests {
 
     use super::*;
     use async_trait::async_trait;
+    use locode_host::{Host, HostConfig};
     use locode_protocol::{ContentBlock, Message, Role};
     use locode_tools::{Registry, Tool, ToolCtx, ToolError, ToolKind, ToolOutput};
     use serde::Serialize;
     use serde_json::{Value, json};
     use std::path::PathBuf;
+    use std::sync::Arc;
     use tokio_util::sync::CancellationToken;
+
+    /// A host over a fresh temp workspace (the tempdir must outlive the host).
+    fn test_host() -> (tempfile::TempDir, Arc<Host>) {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Arc::new(Host::new(HostConfig::new(dir.path())).unwrap());
+        (dir, host)
+    }
 
     // ---- a test-local pack with real typed tools, so the framework is proven
     // deterministically regardless of how grok's real registry grows (Tasks 9-11). ----
@@ -99,7 +108,7 @@ mod tests {
         fn name(&self) -> &'static str {
             "fake"
         }
-        fn register(&self, registry: &mut Registry) {
+        fn register(&self, _host: &Arc<Host>, registry: &mut Registry) {
             registry.register("alpha", Echo);
             registry.register("beta", Echo);
         }
@@ -118,7 +127,7 @@ mod tests {
         fn name(&self) -> &'static str {
             "dup"
         }
-        fn register(&self, registry: &mut Registry) {
+        fn register(&self, _host: &Arc<Host>, registry: &mut Registry) {
             registry.register("alpha", Echo);
             registry.register("alpha", Echo); // collision → panic
         }
@@ -162,7 +171,8 @@ mod tests {
 
     #[test]
     fn pack_builds_expected_specs() {
-        let registry = FakePack.build_registry();
+        let (_dir, host) = test_host();
+        let registry = FakePack.build_registry(&host);
         assert!(registry.contains("alpha"));
         assert!(registry.contains("beta"));
         let specs = registry.specs();
@@ -176,7 +186,8 @@ mod tests {
 
     #[tokio::test]
     async fn pack_routes_to_impl() {
-        let registry = FakePack.build_registry();
+        let (_dir, host) = test_host();
+        let registry = FakePack.build_registry(&host);
         let tool_ctx = ToolCtx::new(
             PathBuf::from("/repo"),
             "c1".into(),
@@ -195,22 +206,23 @@ mod tests {
     #[test]
     #[should_panic(expected = "duplicate tool registration")]
     fn duplicate_registration_panics() {
-        let _ = DupPack.build_registry();
+        let (_dir, host) = test_host();
+        let _ = DupPack.build_registry(&host);
     }
 
-    // ---- grok scaffold ----
+    // ---- grok wiring ----
 
     #[test]
-    fn grok_scaffold_wired() {
+    fn grok_registers_real_tools_and_preamble() {
+        let (_dir, host) = test_host();
         let pack = resolve("grok").unwrap();
-        // No real tools yet (Tasks 9-11); the preamble is a single System message that
-        // branches on the headless identity.
-        assert!(pack.build_registry().names().next().is_none());
+        let registry = pack.build_registry(&host);
+        assert!(registry.contains("run_terminal_cmd"));
+        assert!(registry.contains("read_file"));
 
         let headless = pack.preamble(&ctx(true));
         assert_eq!(headless.len(), 1);
         assert_eq!(headless[0].role, Role::System);
-
         let interactive = pack.preamble(&ctx(false));
         assert_ne!(
             headless, interactive,

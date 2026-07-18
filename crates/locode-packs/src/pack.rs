@@ -1,7 +1,9 @@
 //! The harness-pack abstraction (ADR-0012): a named toolset + a base prompt.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use locode_host::Host;
 use locode_protocol::Message;
 use locode_tools::Registry;
 
@@ -34,10 +36,12 @@ pub trait Pack: Send + Sync {
     /// The `--harness` selector and the report-envelope `harness` value.
     fn name(&self) -> &'static str;
 
-    /// Register this pack's tools into `reg`, each under its harness's **real wire name**
-    /// (`Tool` has no name of its own — the name is assigned here). A duplicate name is a
-    /// wiring bug and panics inside `Registry::register`.
-    fn register(&self, registry: &mut Registry);
+    /// Register this pack's tools into `registry`, each under its harness's **real wire
+    /// name** (`Tool` has no name of its own — the name is assigned here). Tools are
+    /// constructed here holding an `Arc<Host>` (the only OS seam; `ToolCtx` is too small
+    /// to carry it). A duplicate name is a wiring bug and panics inside
+    /// `Registry::register`.
+    fn register(&self, host: &Arc<Host>, registry: &mut Registry);
 
     /// The pack's **base preamble**: the ordered, role-tagged `System`/`Developer`
     /// messages that seed the conversation (ADR-0013). Each pack maps its harness onto
@@ -46,13 +50,13 @@ pub trait Pack: Send + Sync {
     /// the real content lands in Task 13.
     fn preamble(&self, ctx: &PackContext) -> Vec<Message>;
 
-    /// Convenience: a fresh [`Registry`] holding exactly this pack's tools.
+    /// Convenience: a fresh [`Registry`] holding exactly this pack's tools, over `host`.
     ///
     /// # Panics
     /// If the pack's [`Pack::register`] assigns the same wire name twice.
-    fn build_registry(&self) -> Registry {
+    fn build_registry(&self, host: &Arc<Host>) -> Registry {
         let mut registry = Registry::new();
-        self.register(&mut registry);
+        self.register(host, &mut registry);
         registry
     }
 }

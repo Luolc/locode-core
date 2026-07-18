@@ -6,6 +6,13 @@
 
 > Faithful port of Grok Build's terminal + read tools onto our `Tool` trait, over
 > `locode-host`. Behavior P0, exact names/descriptions P1 (SPEC §Success Criteria 2).
+>
+> **Built with two changes from §§2-4 below:** (1) **No freshness store** — grok has none,
+> so the interview's "mimic grok faithfully" decision drops the §2 freshness plumbing
+> entirely (read just reads). (2) Tools reach the host via **`Pack::register(&Arc<Host>, …)`**
+> (Task 8's signature, host-threaded here), holding `Arc<Host>`. Arg field descriptions use
+> verbatim `#[schemars(description = …)]` (not `///`). The mock-provider engine run under
+> `--harness grok` is deferred to Task 14 (the facade composes engine+packs+provider).
 
 **Grok source root (all `gb/…` citations below are relative to it):**
 `coding-cli-survey/submodules/grok-build/crates/codegen/xai-grok-tools/src/implementations/grok_build/`
