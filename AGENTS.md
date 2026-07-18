@@ -88,6 +88,14 @@ Design rationale and the source study behind every decision live in the separate
   read how it does the unification before proposing our own. Ground every non-obvious
   design decision in a concrete source citation (`file:line`), and surface the "why"
   in the plan so it can be reviewed.
+- **Faithful mimicry for harness packs.** When implementing a **ported** harness pack
+  (grok, codex, claude, opencode), **faithfully reproduce that harness's real tools and
+  behavior** — names, arg schemas, caps, guardrails, quirks — even where a "better" choice
+  exists, because the whole point is an honest A/B. **Custom/best-of decisions apply only to
+  our own `locode` pack.** Example: ripgrep-for-glob is our choice for the `locode` pack,
+  but the grok pack ports grok's real `list_dir` walker (ADR-0011 amendment, ADR-0012).
+  When a repo default (an ADR) and faithfulness collide for a ported tool, faithfulness wins
+  for that pack — note it explicitly.
 - **Spec before code.** For any non-trivial change, work from `SPEC.md` and the
   task list; if a task is missing, add it to `tasks/todo.md` first. Deliver in
   thin, verifiable vertical slices — implement, test, verify, then expand.

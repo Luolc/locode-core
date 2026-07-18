@@ -180,11 +180,11 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 **Files:** `crates/locode-packs/src/{lib,pack,grok/mod}.rs`, tests
 **Scope:** M
 
-## Task 9: grok pack — `run_terminal_command` + `read_file`
-**Description:** Port Grok Build's terminal + read tools from `xai-grok-tools` onto our `Tool` trait, over the host (behavior P0, exact names/descriptions P1).
+## Task 9: grok pack — `run_terminal_cmd` + `read_file`
+**Description:** Port Grok Build's terminal + read tools from `xai-grok-tools` onto our `Tool` trait, over the host. **Faithful mimicry** (AGENTS.md): grok's real names/schemas/behavior/caps.
 
 **Acceptance criteria:**
-- [ ] `run_terminal_command` and `read_file` implement `Tool` with grok's real arg schemas/behavior; go through `locode-host` only.
+- [ ] `run_terminal_cmd` (grok's real name) and `read_file` implement `Tool` with grok's real arg schemas/behavior/caps (read: 1000-line/25k-token); go through `locode-host` only.
 - [ ] `read_file` records freshness (path+mtime) for later edits; dual output (structured `{path,lines,truncated}` + file-body prompt_text), matching grok's shaping.
 
 **Verification:**
@@ -194,33 +194,32 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 **Files:** `crates/locode-packs/src/grok/{terminal,read}.rs`, tests
 **Scope:** M
 
-## Task 10: grok pack — `write` + `search_replace` (grok's real edit)
-**Description:** Port grok's `write` + `search_replace` (exact-string edit). The edit slice — where real bugs live; replicate grok's guardrails faithfully (SPEC §Testing).
+## Task 10: grok pack — `search_replace` (grok's real edit; no standalone `write`)
+**Description:** Port grok's `search_replace` (exact-string edit **and** file creation via empty `old_string`). The edit slice — where real bugs live; replicate grok's guardrails **faithfully**. **No standalone `write` tool** — grok has none (a dedicated `write` is deferred to the OpenCode pack / our own `locode` pack).
 
 **Acceptance criteria:**
-- [ ] `write` create/overwrite via host; updates freshness.
-- [ ] `search_replace` replicates grok's real behavior: exact + unique match (soft-error with match count otherwise), read-before-edit (except new-file), mtime freshness re-check, reject no-op. Updates freshness after write.
+- [ ] `search_replace` replicates grok's **real** behavior: exact + unique match (soft-error with match count otherwise), reject no-op, and **file creation** when `old_string` is empty (`handle_new_file_creation`). Read-before-edit is grok's prompt/contract expectation — **no runtime mtime-freshness check** (grok has none; do not add one — faithful mimicry).
 
 **Verification:**
-- [ ] One unit test **per** invariant (each violation → the correct soft error); a happy-path chained edit test.
+- [ ] One unit test **per** grok invariant (each violation → grok's correct soft error); a happy-path chained edit; empty-`old_string` create-file test.
 
 **Dependencies:** Task 9
-**Files:** `crates/locode-packs/src/grok/{write,search_replace}.rs`, tests
+**Files:** `crates/locode-packs/src/grok/search_replace.rs`, tests
 **Scope:** M
 
-## Task 11: grok pack — `grep` + dir/glob (ripgrep-backed)
-**Description:** Port grok's search tools; ripgrep-backed, resolved through the host (ADR-0011). No hand-rolled walker.
+## Task 11: grok pack — `grep` (ripgrep) + `list_dir` (grok's walker)
+**Description:** Port grok's search + directory tools **faithfully** (AGENTS.md; ADR-0011 amendment). grok's `grep` is ripgrep-backed (resolved through the host); grok's directory tool is **`list_dir`, a real fs tree walker** — port it as-is, **not** an rg-glob (the rg-glob is the `locode` pack's choice, next milestone).
 
 **Acceptance criteria:**
 - [ ] `locode-host` exposes a cached `rg` resolver: `LOCODE_RG_PATH` override → host-provided bundled path → bare `rg` on PATH (invoked by name, not a cwd-relative absolute path).
-- [ ] grok's `grep` and dir/glob tools implement `Tool` over the resolved `rg` (glob via `rg --files` + filter); results respect the path jail and truncation.
-- [ ] If `rg` can't be resolved, both tools return a soft `Respond` error (no silent divergent fallback).
+- [ ] grok's `grep` implements `Tool` over the resolved `rg` with grok's real flag set + caps (5MB/40KB/1000-char/200-line, 20s timeout); if `rg` can't be resolved → soft `Respond` error. Results respect the path jail + truncation.
+- [ ] grok's `list_dir` implements `Tool` as grok's fs walker (faithful), through the host; respects the path jail + truncation.
 
 **Verification:**
-- [ ] Unit tests with a temp tree: glob finds expected paths; grep matches lines; the resolver honors `LOCODE_RG_PATH` (pointed at a stub); soft-error path when `rg` is unresolvable.
+- [ ] Unit tests with a temp tree: `list_dir` returns the expected tree; `grep` matches lines; the resolver honors `LOCODE_RG_PATH` (pointed at a stub); soft-error path when `rg` is unresolvable.
 
 **Dependencies:** Tasks 6, 7, 8
-**Files:** `crates/locode-host/src/rg.rs`, `crates/locode-packs/src/grok/{grep,glob}.rs`, tests
+**Files:** `crates/locode-host/src/rg.rs`, `crates/locode-packs/src/grok/{grep,list_dir}.rs`, tests
 **Scope:** M
 
 ### Checkpoint C — the grok pack's tools work under the mock provider; edit invariants + jail tested. Review before Phase 3.
@@ -234,12 +233,13 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 
 **Acceptance criteria:**
 - [ ] Builds the Messages request from `ConversationRequest`; parses response; preserves tool-call ids verbatim; extracts usage.
-- [ ] `cache_control` breakpoints: exactly one on last message + ≤4 on system blocks; temperature omitted when thinking is on.
+- [ ] **Tool schemas:** a shared normalization helper turns `Registry::specs()` (schemars draft-2020-12: `$defs`/`$ref`/`$schema`) into the tool `input_schema` the API accepts. **First verify** whether Anthropic (and OpenAI) accept the same derived schema (we assume yes → one shared helper, not per-wire); adjust if not.
+- [ ] `cache_control` breakpoints: exactly one on last message + ≤4 on system blocks (assert count); temperature omitted when thinking is on.
 - [ ] Two-tier retry (transport backoff+jitter honoring `Retry-After`; bounded loop-level resample); **429 surfaced** not hammered; context-overflow/quota terminal; 401 → refresh once → retry.
-- [ ] Pre-send transcript repair/dedup runs before every request; `LOCODE_BASE_URL`/`LOCODE_API_KEY` env + per-model `{base_url,api_backend,extra_headers}` record honored.
+- [ ] Pre-send `repair_pairing` runs before every request; config = the modest record `{api_schema, base_url, api_key, model}` via env (`LOCODE_API_SCHEMA`/`LOCODE_BASE_URL`/`LOCODE_API_KEY`) + `--api-schema`, designed to grow to per-model `{extra_headers, auth}`.
 
 **Verification:**
-- [ ] Tests against recorded/fixture responses (no live key in CI): request shape asserts cache-marker count; retry classifies 5xx vs 429 vs terminal; id preservation checked.
+- [ ] Tests against recorded/fixture responses (no live key in CI): request shape asserts cache-marker count; retry classifies 5xx vs 429 vs terminal; id preservation checked; the normalized tool schema matches the API's expected `input_schema` shape.
 
 **Dependencies:** Task 5
 **Files:** `crates/locode-provider/src/anthropic/*.rs`, tests/fixtures
@@ -263,12 +263,12 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 **Description:** Public facade and the minimal headless binary with strict stdout discipline (ADR-0009).
 
 **Acceptance criteria:**
-- [ ] `locode` re-exports the driving API (`Session`, harness/provider selection, report types).
-- [ ] `locode-exec`: clap flags `--prompt,--cwd,--harness(default grok),--provider(default anthropic),--max-turns(default 30),--output-format {json,text,stream-json}(default json)` (ADR-0014); `json` = the single `result` Report, `stream-json` = the JSONL `Event` stream, `text` = final message; logs on stderr; `#![deny(clippy::print_stdout)]`; exit codes per ADR-0009.
+- [ ] `locode` re-exports the driving API (`Session`, `EngineConfig`, harness/`api_schema` selection, report/event types) **and the full tool surface** (`Tool`, `Registry`, `dispatch`, `ToolCtx`, `ToolOutput`, `ToolSpec`, the pack's concrete tools) so downstream can use our tools in their own loop (SPEC Users #4).
+- [ ] `locode-exec`: clap flags `--prompt,--cwd,--harness(default grok),--api-schema(default anthropic),--max-turns(default 30),--output-format {json,text,stream-json}(default json)` (ADR-0014); `json` = the single `result` Report, `stream-json` = the JSONL `Event` stream, `text` = final message; logs on stderr; narrow `#[allow(clippy::print_stdout)]` on the report/stream writers (the workspace denies it); exit codes per ADR-0009.
 - [ ] Optional `bundle-rg` cargo feature (release-gated, ADR-0011): `build.rs` downloads the pinned static `rg` for the target triple (or copies from `LOCODE_BUNDLE_RG_PATH` for offline/CI), `include_bytes!` embeds it, runtime self-extracts once to a cache dir; resolver falls back to PATH.
 
 **Verification:**
-- [ ] `cargo run -p locode-exec -- --prompt "list and summarize this repo"` prints one parseable JSON report; stderr carries logs; a `--provider mock` mode runs in CI without a key.
+- [ ] `cargo run -p locode-exec -- --prompt "list and summarize this repo"` prints one parseable JSON report; stderr carries logs; a `--api-schema mock` mode runs in CI without a key.
 - [ ] `cargo build -p locode-exec --features bundle-rg --release` yields a binary that resolves `rg` with an empty PATH.
 
 **Dependencies:** Tasks 6, 12, 13

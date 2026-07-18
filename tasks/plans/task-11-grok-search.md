@@ -1,4 +1,11 @@
-# Task 11 — grok pack: `grep` + dir/glob (ripgrep-backed)
+# Task 11 — grok pack: `grep` (ripgrep) + `list_dir` (grok's walker)
+
+> **Resolved (user-confirmed, supersedes the framing below):** faithful mimicry wins for
+> ported packs (AGENTS.md; ADR-0011 amendment). The grok pack ships grok's **`grep`**
+> (ripgrep-backed — grok uses rg too) **+ grok's real `list_dir`** (an fs tree walker,
+> ported as-is). It does **not** ship an `rg --files` glob — that's the `locode` pack's
+> choice (next milestone). Where this plan below says "Glob via `rg --files`", read it as
+> the `locode`-pack design, not the grok pack. See `tasks/plans/README.md`.
 
 > Port grok's search tools; ripgrep-backed, resolved through the host (ADR-0011). No
 > hand-rolled walker. Soft `Respond` if `rg` is unresolvable.
