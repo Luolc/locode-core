@@ -150,21 +150,27 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 
 ## Phase 2: The grok harness pack + host
 
-## Task 7: `locode-host` side-effect seam
+## Task 7: `locode-host` side-effect seam ✅ done
 **Description:** The injectable host: path jail, shell exec with limits, fs helpers, shared truncation (ADR-0008).
 
 **Acceptance criteria:**
-- [ ] Configurable `PathPolicy` (ADR-0008 amendment): `Jailed{root}` (**default**) resolves FS-tool paths under `root` and soft-rejects `..`/absolute escapes; `Unrestricted` resolves relative paths against `cwd` and allows escapes (the `--dangerously-skip-permissions`/`--yolo` behavior). Shell tool is not path-jailed.
-- [ ] Shell exec via **`bash -lc`** (login shell — loads the user's profile/RC like grok/codex/opencode/claude; shell program is a configurable field for later shell-detection), captures stdout+stderr+exit, hard timeout (10s default, configurable), max-output-byte cap with a truncation marker. Group-kill via `nix` (SIGTERM→grace→SIGKILL); caps stay on even under `--yolo`.
-- [ ] Shared `truncate_for_model` post-process (middle-truncation, head+tail + marker) — a pure fn here; applied centrally by the engine post-dispatch (host and tools are siblings).
+- [x] Configurable `PathPolicy` (ADR-0008 amendment): `Jailed` (**default**) resolves FS-tool paths under the root and soft-rejects `..`/absolute/**symlink** escapes (hybrid lexical-normalize + canonical-ancestor check; allows not-yet-existing leaves); `Unrestricted` resolves relative against `cwd` and allows escapes (the `--dangerously-skip-permissions`/`--yolo` behavior). Shell tool is not path-jailed.
+- [x] Shell exec via **`bash -lc`** (login shell; `shell_program` + `login_shell` are configurable `HostConfig` fields for later shell-detection), captures stdout+stderr+exit, hard timeout (10s default, clamped to max), byte cap with tail-retention during read. Group-kill via `nix::killpg` (SIGTERM→grace→SIGKILL), `unsafe`-free; cooperative cancel via `CancellationToken`; a failed/timed-out/cancelled command is a *successful capture*, not an error.
+- [x] Shared `truncate_for_model` (middle-truncation, head+tail + byte marker, UTF-8-safe) — a pure fn + `MODEL_OUTPUT_BUDGET`; the engine applies it centrally post-dispatch when packs land (Task 9 wiring).
 
 **Verification:**
-- [ ] Unit tests: `Jailed` rejects `../etc/passwd` while `Unrestricted` allows it; shell timeout kills a sleeper (+ its children); output over cap is middle-truncated with marker.
+- [x] 15 unit tests: jail rejects parent/absolute/**symlink** escapes, allows in-jail + nonexistent leaves, `Unrestricted` allows escapes; shell captures stdout/stderr/exit, timeout kills a sleeper, cancellation kills a running command, output over cap truncated, null stdin doesn't hang; fs read/write/stat roundtrip + jail rejection; truncate head+tail + UTF-8 seam safety.
+
+**Design notes (as built):**
+- Concrete `Host` struct (not a trait) with `HostConfig`/`ExecLimits`; the OS-sandbox seam is a later alternative construction.
+- Capture uses **tail-retention** during read (peak memory O(cap)); the shared `truncate_for_model` (middle) runs on top centrally — belt-and-suspenders.
+- `write_file` does **not** auto-create parents (footgun); revisit for the grok `search_replace` create path (Task 10).
+- `rg` resolver reserved for Task 11 (ADR-0011). `locode-host` depends on no other `locode-*` crate (defines its own `PathError`/`ExecError`/`FsError`; the pack maps them to `ToolError::Respond`).
 
 **Dependencies:** Task 3
-**Files:** `crates/locode-host/src/{path,shell,fs,truncate}.rs`, tests
+**Files:** `crates/locode-host/src/{lib,path,shell,fs,truncate}.rs` (tests inline)
 **Scope:** M
-**Deps to add:** `nix` (Unix, signal) — safe process-group kill; dev-only `tempfile` (user-approved).
+**Deps added:** `nix` (Unix, signal+process — safe `killpg`); dev-only `tempfile`; `tokio` features (process/io-util/fs/time/rt/macros).
 
 ## Task 8: `locode-packs` — pack framework + grok pack wiring
 **Description:** The harness-pack layer (ADR-0012). A `Pack` = a named set of `Tool`s + a system prompt + registration; `--harness` selects one. No re-skin machinery — each pack holds real tools. v0 wires the grok pack.
