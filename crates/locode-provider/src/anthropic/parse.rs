@@ -69,10 +69,10 @@ pub fn response_to_completion(resp: wire::MessagesResponse) -> Result<Completion
 /// (any client-side estimate is the engine's concern, overwritten by this).
 fn map_usage(usage: &wire::MessagesUsage) -> Usage {
     Usage {
-        input_tokens: usage.input_tokens,
-        output_tokens: usage.output_tokens,
-        cache_read_tokens: usage.cache_read_input_tokens,
-        cache_creation_tokens: usage.cache_creation_input_tokens,
+        input_tokens: usage.input_tokens.unwrap_or_default(),
+        output_tokens: usage.output_tokens.unwrap_or_default(),
+        cache_read_tokens: usage.cache_read_input_tokens.unwrap_or_default(),
+        cache_creation_tokens: usage.cache_creation_input_tokens.unwrap_or_default(),
     }
 }
 

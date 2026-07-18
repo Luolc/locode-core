@@ -177,6 +177,28 @@ fn refusal_is_a_normal_completion() {
     assert_eq!(completion.stop, StopReason::Refusal);
 }
 
+/// Pins the live-observed gateway behavior: OpenRouter serving a
+/// non-Anthropic model through /v1/messages returns `null` cache counters
+/// (`"cache_creation_input_tokens": null`). A `u64` field would fail the
+/// whole response; the Option-based usage must parse it as zero.
+#[test]
+fn null_usage_counters_parse_as_zero() {
+    let resp: wire::MessagesResponse = serde_json::from_str(
+        r#"{
+            "id": "gen-x", "type": "message", "role": "assistant",
+            "content": [{"type": "text", "text": "OK."}],
+            "model": "openai/gpt-4o-mini", "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 2,
+                      "cache_creation_input_tokens": null,
+                      "cache_read_input_tokens": 0}
+        }"#,
+    )
+    .unwrap_or_else(|e| panic!("null counters must not fail the parse: {e}"));
+    let completion = response_to_completion(resp).expect("ok");
+    assert_eq!(completion.usage.input_tokens, 10);
+    assert_eq!(completion.usage.cache_creation_tokens, 0, "null → zero");
+}
+
 #[test]
 fn missing_stop_reason_never_invents_one() {
     let completion = response_to_completion(response_with_stop(None)).expect("ok");
