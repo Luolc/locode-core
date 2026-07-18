@@ -4,8 +4,8 @@ Detailed, ordered tasks for [`plan.md`](plan.md). Each clears the Definition of 
 Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 
 > **📍 Current state, deviations from plans, and open concerns: [`STATUS.md`](STATUS.md).**
-> Read it first — the merged code is the source of truth; plans/ADRs may be legacy. Tasks 1–12
-> are done (Checkpoints A/B/C + the live wire); **Task 13 (grok pack system prompt) is next.**
+> Read it first — the merged code is the source of truth; plans/ADRs may be legacy. Tasks 1–13
+> are done (Checkpoints A/B/C + the live wire + the grok prompt); **Task 14 (facade + exec) is next.**
 
 ---
 
@@ -273,15 +273,20 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 **Files:** `crates/locode-provider/src/anthropic/*.rs`, tests/fixtures
 **Scope:** L
 
-## Task 13: grok pack system prompt
+## Task 13: grok pack system prompt ✅ done
 **Description:** The grok pack's system prompt, ported from grok's real prompt (minijinja-rendered, grok-sized), with identity branched on headless (design doc §8).
 
 **Acceptance criteria:**
-- [ ] Renders grok's identity (autonomous vs interactive branch), cwd/OS/shell/date, and tool guidance referring to the grok pack's real tool names.
-- [ ] Rendered length ≈ grok-sized (short); placeholders resolve for the grok pack.
+- [x] Renders grok's identity (autonomous vs interactive branch) and tool guidance with the grok pack's real tool names. **Correction (research finding):** cwd/OS/shell/date are NOT in grok's system prompt — they ride in the first user message; `preamble()` returns `[System(rendered prompt), User(<user_info> prefix)]` using grok's own headless-minimal variant (`construct_user_message_minimal`).
+- [x] Rendered length ≈ grok-sized (short; grok's own 16 KiB soft ceiling asserted); placeholders resolve; no `${{`/`${%` tokens leak.
 
 **Verification:**
-- [ ] Snapshot test of the rendered grok prompt; headless branch toggles the identity line.
+- [x] Byte-frozen golden snapshots (headless + interactive, `UPDATE_SNAPSHOTS=1` to regenerate); headless toggles the identity line; template copy byte-pinned (length + opener + provenance sha/commit in module docs).
+
+**Design notes (as built):**
+- **Byte-exact:** `templates/prompt.md` copied verbatim from the submodule (sha256-verified; grok's `test_encrypted_templates_not_stale` proves that file == shipped bytes). Renderer = grok's own MiniJinja with the custom `${{ }}`/`${% %}` delimiters (new dep `minijinja`, grok's `make_desc_env` ported).
+- **`strip_identity` knob** on `PackContext` (user decision): default `false` = faithful ("You are Grok released by xAI."); `true` removes the identity sentence + the `<user_guide>` block from the RENDERED output only — the template copy is never edited. Pinning tests guard against a template refresh making the strip a silent no-op.
+- `user_query()` wrapper ported for Task 14 (the system prompt references the `<user_query>` tag).
 
 **Dependencies:** Task 8
 **Files:** `crates/locode-packs/src/grok/prompt.rs`, templates, tests

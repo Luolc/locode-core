@@ -5,7 +5,7 @@
 //! `--harness <name>` to its pack. v0 wires the [`GrokPack`]; other packs are the next
 //! milestone (one `match`/`static` each).
 
-mod grok;
+pub mod grok;
 mod pack;
 
 pub use grok::GrokPack;
@@ -143,6 +143,7 @@ mod tests {
             shell: "/bin/bash".into(),
             date: "2026-07-18".into(),
             headless,
+            strip_identity: false,
         }
     }
 
@@ -227,9 +228,11 @@ mod tests {
             assert!(registry.contains(tool), "grok pack registers {tool}");
         }
 
+        // Task 13: [System(rendered grok prompt), User(<user_info> prefix)].
         let headless = pack.preamble(&ctx(true));
-        assert_eq!(headless.len(), 1);
+        assert_eq!(headless.len(), 2);
         assert_eq!(headless[0].role, Role::System);
+        assert_eq!(headless[1].role, Role::User);
         let interactive = pack.preamble(&ctx(false));
         assert_ne!(
             headless, interactive,

@@ -1,4 +1,4 @@
-# Repo status & handoff — as of Task 12 (the live Anthropic wire) (2026-07-18)
+# Repo status & handoff — as of Task 13 (the grok system prompt) (2026-07-18)
 
 > **ADRs (and SPEC) are the intended source of truth and should stay trustworthy** — going
 > forward, reconcile them *before* changing code (AGENTS.md "ADR-first"). This doc exists
@@ -21,7 +21,7 @@ merged crate passes the full gate (`fmt` · `clippy --all-targets --all-features
 | `locode-provider` | done | `Provider` (`api_schema`+`complete`), `ConversationRequest`, `SamplingArgs`, `Completion`(`Vec<ContentBlock>`), `StopReason`(`#[non_exhaustive]`), `ProviderError`(exhaustive+`retryable`; `Api` retryable = 408/409/5xx), `MockProvider`, `ToolCallAssembler`, `repair_pairing`; **`AnthropicProvider`** (Task 12): wire DTOs (+`is_error`, +`RedactedThinking`), `ModelConfig`/`ApiBackend{Native,OpenRouter,Proxy}`, build (system hoist, 2-marker `cache_control` +≤4 assert, temp-omit, `reasoning_effort`→budget w/ interleaved waiver, `$schema`-stripped tool schemas), parse (verbatim ids, signatures, `Unknown` stop catch-all, empty-overflow→terminal), classify+retry (429 cap-2 surfaced, `Retry-After`, `x-should-retry:false`), client (beta mirroring, prefs injection), 401 refresh-once seam | 60 |
 | `locode-engine` | done | `Session` + the loop (4 terminals, mid-batch abort synthesis, thinking replay, `stream-json` events); `run()` **infallible** → `Report` | 10 |
 | `locode-host` | done | `Host` + `PathPolicy{Jailed,Unrestricted}`; shell `exec` (`bash -lc`, timeout, tail byte-cap, `unsafe`-free group-kill via `nix`, cancel); `run_capture` (argv); `read_dir`; `read_file`/`write_file`/`stat`; `truncate_for_model`; `rg_program` | 15 |
-| `locode-packs` | done | `Pack` (`name`/`register(&Arc<Host>,…)`/`preamble→Vec<Message>`/`build_registry`), `resolve`/`available`, `GrokPack` with 5 real tools | 23 |
+| `locode-packs` | done | `Pack` (`name`/`register(&Arc<Host>,…)`/`preamble→Vec<Message>`/`build_registry`), `resolve`/`available`, `GrokPack` with 5 real tools + **the real grok prompt** (Task 13): verbatim template copy (provenance-pinned) rendered via minijinja custom `${{ }}` syntax, `preamble = [System(prompt), User(<user_info>)]`, `strip_identity` knob (default faithful), `user_query()` for Task 14 | 34 |
 | `locode` (facade) | **SKELETON** | Task 14 | – |
 | `locode-exec` (binary) | **SKELETON** | Task 14 | – |
 
@@ -70,9 +70,14 @@ Vertex-allowed default prefs, cache-read vs cross-provider routing) and the
 ADR-0007/ADR-0013 amendments. The live smoke (`tests/anthropic_live_smoke.rs`,
 `#[ignore]`d) runs manually via direnv env against OpenRouter.
 
-Next: **Task 13 — the grok pack system prompt** (`tasks/plans/task-13-grok-prompt.md`):
-port grok's real minijinja-rendered prompt, identity branched on headless, cwd/OS/
-shell/date placeholders, tool guidance naming the grok pack's real tools; snapshot
-test. Then Task 14 (facade + exec) composes engine+packs+provider — remember
-concern #1 (`truncate_for_model` wiring) and #7 (jail root vs cwd canonicalization)
-land there.
+Task 13 is merged too: the grok pack renders its REAL prompt (byte-exact template
+copy, minijinja custom syntax) with `preamble = [System(prompt), User(<user_info>
+prefix)]` and the `strip_identity` knob (default faithful). The exec layer must wrap
+the user prompt via `grok::prompt::user_query()` (the system prompt references the
+`<user_query>` tag).
+
+Next: **Task 14 — `locode` facade + `locode-exec`** (`tasks/plans/task-14-facade-exec.md`):
+compose engine+packs+provider, clap flags, stdout discipline, exit codes, mock mode in
+CI, end-to-end run against Claude (Checkpoint D). Remember: concern #1
+(`truncate_for_model` wiring), #7 (jail root vs cwd canonicalization), a date source
+for `PackContext.date` (chrono/time — ask-first), and `LOCODE_API_SCHEMA`/`--api-schema`.

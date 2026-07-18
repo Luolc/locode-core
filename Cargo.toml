@@ -30,6 +30,9 @@ nix = { version = "0.29", features = ["signal", "process"] }
 tempfile = "3"
 # Backoff jitter for the wire's transport retry (codex retry.rs precedent).
 rand = "0.9"
+# Prompt-template rendering — grok's own renderer with its custom `${{ }}` syntax
+# (xai-grok-tools/Cargo.toml:41); the faithful choice for the grok pack (Task 13).
+minijinja = { version = "2", features = ["custom_syntax"] }
 # The one HTTP client; rustls avoids the system OpenSSL dep (SPEC, ADR-0007).
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "http2"] }
 
