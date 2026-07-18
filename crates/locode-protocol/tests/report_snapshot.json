@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "status": "completed",
+  "harness": "grok",
+  "provider": "anthropic",
+  "final_message": "Done.",
+  "structured_output": null,
+  "turns": 2,
+  "tool_calls": [
+    {
+      "id": "call_1",
+      "name": "run_terminal_command",
+      "kind": "shell",
+      "args": { "command": "echo hi" },
+      "ok": true,
+      "output": { "exit_code": 0, "truncated": false }
+    }
+  ],
+  "usage": {
+    "input_tokens": 100,
+    "output_tokens": 20,
+    "cache_read_tokens": 0,
+    "cache_creation_tokens": 0
+  },
+  "session_id": "sess-abc",
+  "error": null
+}

@@ -4,3 +4,7 @@
 # allowed in tests, where a panic is a perfectly good failure signal.
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
+
+# Proper nouns that trip `doc_markdown` (pedantic) but shouldn't be rendered as code.
+# `..` extends clippy's built-in valid-idents list rather than replacing it.
+doc-valid-idents = ["OpenAI", "OpenRouter", ".."]

@@ -44,18 +44,18 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 
 ## Phase 1: Core spine (mock provider, zero API spend)
 
-## Task 3: `locode-protocol` types + report envelope
+## Task 3: `locode-protocol` types + report envelope ✅ done
 **Description:** Pure types shared by all crates: the 4-role conversation model (ADR-0013), tool call/result, and the JSON report envelope (ADR-0009). Provider-neutral, Anthropic-shaped; no wire (de)serialization here (that lives in each `Provider` impl).
 
 **Acceptance criteria:**
-- [ ] `Conversation { messages: Vec<Message> }`; `Message { role, content: Vec<ContentBlock> }`; `Role ∈ {System, Developer, User, Assistant}` (ADR-0013).
-- [ ] `#[non_exhaustive] ContentBlock`: `Text`, `Image(ImageSource)`, `Thinking{text,signature?}`, `ToolUse{id,name,input:Value}`, `ToolResult{tool_use_id,content:Vec<ResultChunk>,is_error}`; `ResultChunk ∈ {Text, Image}`; optional per-block cache marker. Only `Text`/`ToolUse`/`ToolResult` need to be exercised in v0.
-- [ ] Report envelope with `schema_version:1`, `status`, `harness`, `provider`, `final_message`, `structured_output`, `turns`, `tool_calls[]`, `usage`, `session_id`, `error`.
-- [ ] `status ∈ {completed,max_turns,model_error,error}` serializes to the exact strings in ADR-0009.
+- [x] `Conversation { messages: Vec<Message> }`; `Message { role, content: Vec<ContentBlock> }`; `Role ∈ {System, Developer, User, Assistant}` (ADR-0013).
+- [x] `#[non_exhaustive] ContentBlock`: `Text`, `Image(ImageSource)`, `Thinking{text,signature?}`, `ToolUse{id,name,input:Value}`, `ToolResult{tool_use_id,content:Vec<ResultChunk>,is_error}`; `ResultChunk ∈ {Text, Image}`. Only `Text`/`ToolUse`/`ToolResult` exercised in v0. (Per-block cache placement deferred to the Anthropic wire via `CacheHint` — ADR-0007/Task 12 — not baked into the block types.)
+- [x] Report envelope with `schema_version:1`, `status`, `harness`, `provider`, `final_message`, `structured_output`, `turns`, `tool_calls[]`, `usage`, `session_id`, `error`.
+- [x] `status ∈ {completed,max_turns,model_error,error}` serializes to the exact strings in ADR-0009.
 
 **Verification:**
-- [ ] Golden test: a fixed report serializes to a committed JSON snapshot (freezes the envelope shape).
-- [ ] Round-trip test: a `Conversation` covering all four roles + `ToolUse`/`ToolResult` pairing serializes/deserializes losslessly (native serde, not a wire format).
+- [x] Golden test: a fixed report serializes to a committed JSON snapshot (freezes the envelope shape).
+- [x] Round-trip test: a `Conversation` covering all four roles + `ToolUse`/`ToolResult` pairing serializes/deserializes losslessly (native serde, not a wire format).
 
 **Dependencies:** Task 1
 **Files:** `crates/locode-protocol/src/*.rs`, `crates/locode-protocol/tests/envelope_golden.rs`
