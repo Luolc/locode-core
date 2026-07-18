@@ -48,7 +48,7 @@ Build bottom-up; slice vertically so each checkpoint leaves a working, tested sy
 - [x] Task 3: `locode-protocol` — conversation model (4-role, ADR-0013), tool call/result, report envelope + golden test
 - [x] Task 3b: streaming event protocol types (`Event` + `reconstruct_conversation`) — the `stream-json` foundation (ADR-0014)
 - [x] Task 4: `locode-tools` — `Tool` trait, `ToolKind`, `ToolError`, `ToolCtx`, `ToolOutput`, `DynTool` erasure, registry (typed + `register_dyn` MCP seam) + `dispatch` door
-- [ ] Task 5: `locode-provider` — `Provider` trait, `ConversationRequest`, `Completion`, `MockProvider` (scripted tool_calls) + partial-JSON assembly helper
+- [x] Task 5: `locode-provider` — `Provider` trait (`api_schema`+`complete`), `ConversationRequest`, `SamplingArgs`, `Completion` (normalized `Vec<ContentBlock>`, thinking preserved), `ProviderError` (exhaustive+`retryable`), `MockProvider` (scripted) + `ToolCallAssembler` partial-JSON helper
 - [ ] Task 6: `locode-engine` — the loop + `Session` API; terminal states, transcript repair/dedup, max-turns, abort synthesis; **emits the `stream-json` `Event`s** (ADR-0014); unit-tested end-to-end with mock provider + trivial tools
 
 **Checkpoint B:** the full loop runs to every terminal state under `MockProvider` with zero network — the core is proven.

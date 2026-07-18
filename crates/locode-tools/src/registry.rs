@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use locode_protocol::{ContentBlock, ResultChunk, ToolCallRecord};
+use locode_protocol::{ContentBlock, ResultChunk, ToolCallRecord, ToolSpec};
 use serde_json::Value;
 
 use crate::ctx::ToolCtx;
@@ -93,18 +93,6 @@ impl<T: Tool> DynTool for TypedTool<T> {
             prompt_text,
         })
     }
-}
-
-/// A neutral tool spec (name + description + args schema) for a pack/provider to
-/// map onto its wire format (e.g. Anthropic's `{name, description, input_schema}`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolSpec {
-    /// The wire (model-facing) name — the registry key.
-    pub name: String,
-    /// The tool description.
-    pub description: String,
-    /// The derived JSON Schema for the tool's arguments.
-    pub parameters: Value,
 }
 
 /// The outcome of one [`Registry::dispatch`]: both the history and report views,

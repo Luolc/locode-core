@@ -212,6 +212,26 @@ pub struct Usage {
     pub cache_creation_tokens: u64,
 }
 
+// ================================= Tool spec =================================
+
+/// A provider-neutral tool spec: name + description + args JSON Schema.
+///
+/// This is the wire-agnostic representation a harness pack produces (from a
+/// `Registry`) and a `Provider` wire maps onto its own tool format (e.g. Anthropic's
+/// `{name, description, input_schema}` vs OpenAI's `{type:"function", function:{…}}`).
+/// It lives in `locode-protocol` because both `locode-tools` (which builds it) and
+/// `locode-provider` (which consumes it via `ConversationRequest`) need it, and the
+/// dependency graph forbids `provider → tools`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolSpec {
+    /// The model-facing wire name (the harness pack's name for the tool).
+    pub name: String,
+    /// The tool description offered to the model.
+    pub description: String,
+    /// The JSON Schema for the tool's arguments, derived from the arg type.
+    pub parameters: Value,
+}
+
 // ========================= Streaming events (stream-json) =========================
 
 /// One event in the `stream-json` trajectory (one JSON object per line).

@@ -75,6 +75,19 @@ Design rationale and the source study behind every decision live in the separate
 
 ## Working agreement
 
+- **Read the source before planning — every time.** This project is a distilled
+  re-implementation of four studied harnesses, so **planning is a research task, not
+  a from-memory task.** Before designing *any* task (not just the first), re-read
+  the relevant `SPEC.md`/ADRs/`tasks/` **and go back to the actual harness source
+  in the `coding-cli-survey` submodules** (`claude-code`, `codex`, `grok-build`,
+  `opencode`) — plus the survey write-ups. Do this again and again as the design
+  takes shape; do not trust memory or a single earlier pass. For each reference,
+  study **why they do it, why they *don't* do the obvious alternative, and how the
+  harnesses differ** — then distil the best practice. **Grok Build is the primary
+  model for how to *unify* multiple providers/wires/tools behind one abstraction**;
+  read how it does the unification before proposing our own. Ground every non-obvious
+  design decision in a concrete source citation (`file:line`), and surface the "why"
+  in the plan so it can be reviewed.
 - **Spec before code.** For any non-trivial change, work from `SPEC.md` and the
   task list; if a task is missing, add it to `tasks/todo.md` first. Deliver in
   thin, verifiable vertical slices — implement, test, verify, then expand.
