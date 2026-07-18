@@ -2,7 +2,7 @@
 //!
 //! Every side effect funnels through the [`Host`]: a path jail, shell execution with a
 //! timeout + output cap, jailed filesystem helpers, and the shared
-//! [`truncate_for_model`] post-process. Tools never call `std::fs`/`Command` directly —
+//! post-processes. Tools never call `std::fs`/`Command` directly —
 //! they go through a `Host`. This crate is a *sibling* of `locode-tools`, so it defines
 //! its own plain error types; the harness pack (which depends on both) maps them to
 //! `ToolError::Respond`.
@@ -11,13 +11,11 @@ mod fs;
 mod path;
 mod rg;
 mod shell;
-mod truncate;
 
 pub use fs::{DirEntry, FileRead, FileStat, FsError};
 pub use path::PathError;
 pub use rg::rg_program;
 pub use shell::{ExecError, ExecOutput, ExecRequest};
-pub use truncate::{MODEL_OUTPUT_BUDGET, truncate_for_model};
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -77,8 +75,6 @@ pub struct HostConfig {
     /// Run the shell as a login shell (`-lc`, loads the user's profile/RC — matches all
     /// four studied harnesses) rather than `-c`. Default `true`.
     pub login_shell: bool,
-    /// Byte budget for [`truncate_for_model`] (default [`MODEL_OUTPUT_BUDGET`]).
-    pub model_output_budget: usize,
 }
 
 impl HostConfig {
@@ -90,7 +86,6 @@ impl HostConfig {
             exec: ExecLimits::default(),
             shell_program: "bash".to_string(),
             login_shell: true,
-            model_output_budget: MODEL_OUTPUT_BUDGET,
         }
     }
 }
@@ -104,7 +99,6 @@ pub struct Host {
     pub(crate) limits: ExecLimits,
     pub(crate) shell_program: String,
     pub(crate) login_shell: bool,
-    pub(crate) model_output_budget: usize,
 }
 
 impl Host {
@@ -124,7 +118,6 @@ impl Host {
             limits: config.exec,
             shell_program: config.shell_program,
             login_shell: config.login_shell,
-            model_output_budget: config.model_output_budget,
         })
     }
 
@@ -144,12 +137,6 @@ impl Host {
     #[must_use]
     pub fn limits(&self) -> &ExecLimits {
         &self.limits
-    }
-
-    /// The byte budget for [`truncate_for_model`].
-    #[must_use]
-    pub fn model_output_budget(&self) -> usize {
-        self.model_output_budget
     }
 }
 

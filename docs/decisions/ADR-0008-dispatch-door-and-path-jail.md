@@ -50,3 +50,16 @@ shell's existing reach. (2) The shell's **timeout + output caps stay on** even u
 - The path jail + shell caps give a small, safe minimal agent without a permission UI.
 - Arbitrary-shell risk is bounded by timeout/byte caps and the jail; first-class FS tools (not a shell-only surface) keep the privilege surface smaller.
 - The jail is default-on but skippable (`--dangerously-skip-permissions`/`--yolo`), so a trusting caller gets the harnesses' full-access behavior without a code change.
+
+## Amendment (2026-07-18): shared truncation applies at the dispatch door
+
+`truncate_for_model` (the shared middle-truncation post-process) moved from
+`locode-host` — where nothing consumed it — into `locode-tools`, applied
+centrally inside `Registry::dispatch` when the `tool_result` is built (both
+success and error payloads). Rationale: the byte budget is a property of the
+**model-facing boundary**, not of OS access, and the dispatch door is the one
+place every result passes through — no tool can flood the model regardless of
+its own caps, and the engine needs no `locode-host` dependency (resolving the
+Task-12 handoff's open concern #1, option "at the door" over "in the engine"
+or "facade wraps the registry"). `HostConfig.model_output_budget` (never read)
+was removed.

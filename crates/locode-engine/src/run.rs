@@ -153,9 +153,10 @@ impl Session {
                 self.config.workspace_root.clone(),
                 self.cancel.clone(),
             );
+            // The shared model-facing truncation applies inside `dispatch`
+            // itself (the dispatch door, ADR-0008 amendment 2026-07-18) — the
+            // result arriving here is already bounded.
             let dispatched = self.registry.dispatch(&name, input, &ctx).await;
-            // TODO(Task 7/9): once `locode-host` lands, apply the shared
-            // `truncate_for_model` to `dispatched.tool_result` here, before append.
             results.push(dispatched.tool_result);
             acc.tool_calls.push(dispatched.record);
             if let Some(message) = dispatched.fatal {

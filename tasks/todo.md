@@ -292,23 +292,23 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 **Files:** `crates/locode-packs/src/grok/prompt.rs`, templates, tests
 **Scope:** S
 
-## Task 14: `locode` facade + `locode-exec` minimal binary
+## Task 14: `locode` facade + `locode-exec` minimal binary ✅ done (bundle-rg deferred)
 **Description:** Public facade and the minimal headless binary with strict stdout discipline (ADR-0009).
 
 **Acceptance criteria:**
-- [ ] `locode` re-exports the driving API (`Session`, `EngineConfig`, harness/`api_schema` selection, report/event types) **and the full tool surface** (`Tool`, `Registry`, `dispatch`, `ToolCtx`, `ToolOutput`, `ToolSpec`, the pack's concrete tools) so downstream can use our tools in their own loop (SPEC Users #4).
-- [ ] `locode-exec`: the prompt is a **positional argument** (user decision, 2026-07-18 — mirrors the field convention: Claude Code's `-p/--print` is a *mode* flag with the prompt positional, `codex exec "…"` likewise; locode-exec is always headless so no mode flag at all; absent positional or `-` → read stdin). clap flags `--cwd,--harness(default grok),--api-schema(default anthropic),--max-turns(optional; **default unlimited** — ADR-0005 amendment: no studied harness caps turns by default),--output-format {json,text,stream-json}(default json),--dangerously-skip-permissions(alias --yolo)` (ADR-0014, ADR-0008 amendment); `--dangerously-skip-permissions`/`--yolo` sets `PathPolicy::Unrestricted` (default `Jailed`); `json` = the single `result` Report, `stream-json` = the JSONL `Event` stream, `text` = final message; logs on stderr; narrow `#[allow(clippy::print_stdout)]` on the report/stream writers (the workspace denies it); exit codes per ADR-0009.
-- [ ] Optional `bundle-rg` cargo feature (release-gated, ADR-0011): `build.rs` downloads the pinned static `rg` for the target triple (or copies from `LOCODE_BUNDLE_RG_PATH` for offline/CI), `include_bytes!` embeds it, runtime self-extracts once to a cache dir; resolver falls back to PATH.
+- [x] `locode` re-exports the driving API (`Session`, `EngineConfig`, harness/`api_schema` selection, report/event types) **and the full tool surface** (`Tool`, `Registry`, `dispatch`, `ToolCtx`, `ToolOutput`, `ToolSpec`, the pack's concrete tools) so downstream can use our tools in their own loop (SPEC Users #4).
+- [x] `locode-exec`: the prompt is a **positional argument** (user decision, 2026-07-18 — mirrors the field convention: Claude Code's `-p/--print` is a *mode* flag with the prompt positional, `codex exec "…"` likewise; locode-exec is always headless so no mode flag at all; absent positional or `-` → read stdin). clap flags `--cwd,--harness(default grok),--api-schema(default anthropic),--max-turns(optional; **default unlimited** — ADR-0005 amendment: no studied harness caps turns by default),--output-format {json,text,stream-json}(default json),--dangerously-skip-permissions(alias --yolo)` (ADR-0014, ADR-0008 amendment); `--dangerously-skip-permissions`/`--yolo` sets `PathPolicy::Unrestricted` (default `Jailed`); `json` = the single `result` Report, `stream-json` = the JSONL `Event` stream, `text` = final message; logs on stderr; narrow `#[allow(clippy::print_stdout)]` on the report/stream writers (the workspace denies it); exit codes per ADR-0009.
+- [ ] **DEFERRED** (packaging; PATH/`LOCODE_RG_PATH` resolution works today): optional `bundle-rg` cargo feature (release-gated, ADR-0011): `build.rs` downloads the pinned static `rg` for the target triple (or copies from `LOCODE_BUNDLE_RG_PATH` for offline/CI), `include_bytes!` embeds it, runtime self-extracts once to a cache dir; resolver falls back to PATH.
 
 **Verification:**
-- [ ] `cargo run -p locode-exec -- "list and summarize this repo"` prints one parseable JSON report; stderr carries logs; a `--api-schema mock` mode runs in CI without a key.
-- [ ] `cargo build -p locode-exec --features bundle-rg --release` yields a binary that resolves `rg` with an empty PATH.
+- [x] `cargo run -p locode-exec -- "list and summarize this repo"` prints one parseable JSON report; stderr carries logs; a `--api-schema mock` mode runs in CI without a key. (9 CLI integration tests + live Checkpoint D run.)
+- [ ] (deferred with `bundle-rg`) `cargo build -p locode-exec --features bundle-rg --release` yields a binary that resolves `rg` with an empty PATH.
 
 **Dependencies:** Tasks 6, 12, 13
 **Files:** `crates/locode/src/lib.rs`, `crates/locode-exec/src/main.rs`, `crates/locode-exec/build.rs`, tests
 **Scope:** M (L with `bundle-rg`)
 
-### Checkpoint D — end-to-end run against Claude prints one JSON report. **v0 success criteria met.** Review.
+### Checkpoint D — end-to-end run against Claude prints one JSON report. **v0 success criteria met.** ✅ reached (2026-07-18: live run via OpenRouter — 4 turns, 6 grok tool calls, cache hits, exit 0, one JSON report).
 
 ---
 

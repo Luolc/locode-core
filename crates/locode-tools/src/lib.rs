@@ -14,12 +14,14 @@ mod ctx;
 mod error;
 mod registry;
 mod tool;
+mod truncate;
 
 pub use ctx::ToolCtx;
 pub use error::ToolError;
 pub use locode_protocol::ToolSpec;
 pub use registry::{Dispatched, DynTool, Registry, ToolRunResult};
 pub use tool::{Tool, ToolKind, ToolOutput};
+pub use truncate::{MODEL_OUTPUT_BUDGET, truncate_for_model};
 
 #[cfg(test)]
 mod tests {
