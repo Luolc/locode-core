@@ -11,9 +11,13 @@
 
 pub mod build;
 pub mod config;
+pub mod error;
 pub mod parse;
+pub mod retry;
 pub mod wire;
 
 pub use build::{build_request, count_cache_controls, normalize_input_schema};
 pub use config::{ApiBackend, AuthScheme, DeveloperRendering, ModelConfig, ReasoningEncoding};
+pub use error::{HttpFailure, classify, parse_retry_after};
 pub use parse::response_to_completion;
+pub use retry::{RetryPolicy, backoff, run_with_retry};

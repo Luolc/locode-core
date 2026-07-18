@@ -28,6 +28,10 @@ tokio = { version = "1" }
 nix = { version = "0.29", features = ["signal", "process"] }
 # Real temp workspace trees for host/jail tests (dev-only).
 tempfile = "3"
+# Backoff jitter for the wire's transport retry (codex retry.rs precedent).
+rand = "0.9"
+# The one HTTP client; rustls avoids the system OpenSSL dep (SPEC, ADR-0007).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "http2"] }
 
 # Strict-from-empty: these are enabled now, while the crates are empty, so we never pay
 # the churn of adding lints after code exists. See ADR-0010.
