@@ -1,9 +1,11 @@
 # Repo status & handoff — as of Task 11 / Checkpoint C (2026-07-18)
 
-> **The merged code is the only source of truth for current state.** Plans, ADRs, and the
-> design doc may be legacy/outdated — that's fine. This file + the code reconcile them.
-> When a plan/ADR disagrees with the code, the code wins; this doc records the deltas.
-> Written before a fresh session for **Task 12** (the Anthropic wire).
+> **ADRs (and SPEC) are the intended source of truth and should stay trustworthy** — going
+> forward, reconcile them *before* changing code (AGENTS.md "ADR-first"). This doc exists
+> because earlier in development some decisions changed in code first, leaving ADR-vs-code
+> drift; those ADRs have now been amended (0002/0003/0007/0008/0009/0011). Where any
+> residual gap remains, **the merged code is the tie-breaker for current state**, and this
+> file records the deltas. Written before a fresh session for **Task 12** (the Anthropic wire).
 
 ## Where we are
 
