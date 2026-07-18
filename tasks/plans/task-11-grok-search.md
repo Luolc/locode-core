@@ -13,8 +13,9 @@
 **Grok source root (`gb/…`):**
 `coding-cli-survey/submodules/grok-build/crates/codegen/xai-grok-tools/src/implementations/grok_build/`
 
-**locode target files:** `crates/locode-host/src/rg.rs` (resolver),
-`crates/locode-packs/src/grok/{grep.rs, glob.rs}`.
+**locode target files:** `crates/locode-host/src/rg.rs` (resolver) + a process runner,
+`crates/locode-packs/src/grok/{grep.rs, list_dir.rs}` (`grep` = rg; `list_dir` = grok's
+self-implemented fs walk — **no `glob` tool** in the grok pack).
 
 ---
 

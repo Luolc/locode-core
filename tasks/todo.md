@@ -207,17 +207,19 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 **Files:** `crates/locode-packs/src/grok/{mod,terminal,read}.rs`; `pack.rs` (host-threaded `register`). Deps moved to non-dev: `async-trait`/`schemars`/`serde`; dev `tempfile`.
 **Scope:** M
 
-## Task 10: grok pack — `search_replace` (grok's real edit; no standalone `write`)
-**Description:** Port grok's `search_replace` (exact-string edit **and** file creation via empty `old_string`). The edit slice — where real bugs live; replicate grok's guardrails **faithfully**. **No standalone `write` tool** — grok has none (a dedicated `write` is deferred to the OpenCode pack / our own `locode` pack).
+## Task 10: grok pack — `search_replace` (grok's real edit; no standalone `write`) ✅ done
+**Description:** Port grok's `search_replace` (exact-string edit **and** file creation via empty `old_string`). The edit slice — where real bugs live; replicate grok's guardrails **faithfully**. **No standalone `write` tool** — grok has none (verified: no `write` module in `implementations/grok_build/`).
 
 **Acceptance criteria:**
-- [ ] `search_replace` replicates grok's **real** behavior: exact + unique match (soft-error with match count otherwise), reject no-op, and **file creation** when `old_string` is empty (`handle_new_file_creation`). Read-before-edit is grok's prompt/contract expectation — **no runtime mtime-freshness check** (grok has none; do not add one — faithful mimicry).
+- [x] `search_replace` replicates grok's **real** behavior: `old==new` → soft "same string"; **empty `old_string` → create the file** (`handle_new_file_creation`; refuses to clobber a non-empty existing file); not-found → soft "use read_file"; multiple matches without `replace_all` → soft "found multiple times"; `replace_all` replaces all; unique match → replace one. Verbatim grok `#[schemars(description)]`. **No runtime mtime-freshness check** (grok has none — faithful mimicry).
 
 **Verification:**
-- [ ] One unit test **per** grok invariant (each violation → grok's correct soft error); a happy-path chained edit; empty-`old_string` create-file test.
+- [x] 6 unit tests (via `dispatch`): create-on-empty-`old_string`, unique edit, no-op soft error, not-found soft error, multiple-matches soft error, `replace_all`.
+
+**Design notes:** exact (byte) matching in v0 — grok's Unicode-normalization matching is a deferred faithfulness detail. Failure cases map to `ToolError::Respond` (is_error), functionally equivalent to grok's `Ok(SearchReplaceOutput::X)` guidance outputs.
 
 **Dependencies:** Task 9
-**Files:** `crates/locode-packs/src/grok/search_replace.rs`, tests
+**Files:** `crates/locode-packs/src/grok/search_replace.rs` (tests in `grok/mod.rs`)
 **Scope:** M
 
 ## Task 11: grok pack — `grep` (ripgrep) + `list_dir` (grok's walker)

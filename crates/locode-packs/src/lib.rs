@@ -219,6 +219,7 @@ mod tests {
         let registry = pack.build_registry(&host);
         assert!(registry.contains("run_terminal_cmd"));
         assert!(registry.contains("read_file"));
+        assert!(registry.contains("search_replace"));
 
         let headless = pack.preamble(&ctx(true));
         assert_eq!(headless.len(), 1);
