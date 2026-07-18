@@ -154,16 +154,17 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 **Description:** The injectable host: path jail, shell exec with limits, fs helpers, shared truncation (ADR-0008).
 
 **Acceptance criteria:**
-- [ ] Path resolution under `workspace_root`; `..`/absolute escapes rejected with a soft error.
-- [ ] Shell exec (`bash -lc`/`sh -c`) captures stdout+stderr+exit, hard timeout, max-output-byte cap with a truncation marker.
-- [ ] Shared `truncate_for_model` post-process applied to tool output before model re-entry.
+- [ ] Configurable `PathPolicy` (ADR-0008 amendment): `Jailed{root}` (**default**) resolves FS-tool paths under `root` and soft-rejects `..`/absolute escapes; `Unrestricted` resolves relative paths against `cwd` and allows escapes (the `--dangerously-skip-permissions`/`--yolo` behavior). Shell tool is not path-jailed.
+- [ ] Shell exec via **`bash -lc`** (login shell — loads the user's profile/RC like grok/codex/opencode/claude; shell program is a configurable field for later shell-detection), captures stdout+stderr+exit, hard timeout (10s default, configurable), max-output-byte cap with a truncation marker. Group-kill via `nix` (SIGTERM→grace→SIGKILL); caps stay on even under `--yolo`.
+- [ ] Shared `truncate_for_model` post-process (middle-truncation, head+tail + marker) — a pure fn here; applied centrally by the engine post-dispatch (host and tools are siblings).
 
 **Verification:**
-- [ ] Unit tests: jail rejects `../etc/passwd`; shell timeout kills a sleeper; output over cap is truncated with marker.
+- [ ] Unit tests: `Jailed` rejects `../etc/passwd` while `Unrestricted` allows it; shell timeout kills a sleeper (+ its children); output over cap is middle-truncated with marker.
 
 **Dependencies:** Task 3
 **Files:** `crates/locode-host/src/{path,shell,fs,truncate}.rs`, tests
 **Scope:** M
+**Deps to add:** `nix` (Unix, signal) — safe process-group kill; dev-only `tempfile` (user-approved).
 
 ## Task 8: `locode-packs` — pack framework + grok pack wiring
 **Description:** The harness-pack layer (ADR-0012). A `Pack` = a named set of `Tool`s + a system prompt + registration; `--harness` selects one. No re-skin machinery — each pack holds real tools. v0 wires the grok pack.
@@ -264,7 +265,7 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 
 **Acceptance criteria:**
 - [ ] `locode` re-exports the driving API (`Session`, `EngineConfig`, harness/`api_schema` selection, report/event types) **and the full tool surface** (`Tool`, `Registry`, `dispatch`, `ToolCtx`, `ToolOutput`, `ToolSpec`, the pack's concrete tools) so downstream can use our tools in their own loop (SPEC Users #4).
-- [ ] `locode-exec`: clap flags `--prompt,--cwd,--harness(default grok),--api-schema(default anthropic),--max-turns(default 30),--output-format {json,text,stream-json}(default json)` (ADR-0014); `json` = the single `result` Report, `stream-json` = the JSONL `Event` stream, `text` = final message; logs on stderr; narrow `#[allow(clippy::print_stdout)]` on the report/stream writers (the workspace denies it); exit codes per ADR-0009.
+- [ ] `locode-exec`: clap flags `--prompt,--cwd,--harness(default grok),--api-schema(default anthropic),--max-turns(default 30),--output-format {json,text,stream-json}(default json),--dangerously-skip-permissions(alias --yolo)` (ADR-0014, ADR-0008 amendment); `--dangerously-skip-permissions`/`--yolo` sets `PathPolicy::Unrestricted` (default `Jailed`); `json` = the single `result` Report, `stream-json` = the JSONL `Event` stream, `text` = final message; logs on stderr; narrow `#[allow(clippy::print_stdout)]` on the report/stream writers (the workspace denies it); exit codes per ADR-0009.
 - [ ] Optional `bundle-rg` cargo feature (release-gated, ADR-0011): `build.rs` downloads the pinned static `rg` for the target triple (or copies from `LOCODE_BUNDLE_RG_PATH` for offline/CI), `include_bytes!` embeds it, runtime self-extracts once to a cache dir; resolver falls back to PATH.
 
 **Verification:**
