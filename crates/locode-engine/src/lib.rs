@@ -109,7 +109,7 @@ mod tests {
             harness: "grok".into(),
             api_schema: "mock".into(),
             model: "mock-1".into(),
-            max_turns: 30,
+            max_turns: None,
             resample_retries: 2,
             resample_backoff: Duration::ZERO, // no real sleeps in tests
             ..EngineConfig::default()
@@ -179,7 +179,7 @@ mod tests {
     async fn hits_max_turns_after_dispatch() {
         // Always asks for a tool → never completes; ceiling of 2.
         let mut cfg = config();
-        cfg.max_turns = 2;
+        cfg.max_turns = Some(2);
         let (mut s, _e) = session_with(
             vec![
                 Ok(tool_turn("c1", "echo")),

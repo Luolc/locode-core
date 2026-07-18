@@ -278,8 +278,10 @@ pub enum Event {
         model: String,
         /// The working directory.
         cwd: String,
-        /// The max-turns ceiling.
-        max_turns: u32,
+        /// The max-turns ceiling; absent = unlimited (the default — ADR-0005
+        /// amendment 2026-07-18).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_turns: Option<u32>,
         /// The base `System` + `Developer` messages (prompt + capabilities).
         preamble: Vec<Message>,
         /// The tool specs offered to the model (name + JSON schema), as JSON values.
@@ -478,7 +480,7 @@ mod tests {
                 api_schema: "anthropic".into(),
                 model: "claude-opus-4-8".into(),
                 cwd: "/repo".into(),
-                max_turns: 30,
+                max_turns: Some(30),
                 preamble: vec![system.clone(), developer.clone()],
                 tools: vec![json!({ "name": "run_terminal_command" })],
             },

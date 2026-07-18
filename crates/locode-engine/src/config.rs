@@ -20,8 +20,12 @@ pub struct EngineConfig {
     pub cwd: PathBuf,
     /// The path-jail root (ADR-0008), handed to each `ToolCtx`.
     pub workspace_root: PathBuf,
-    /// The max sample→dispatch turns before terminating with `MaxTurns` (ADR-0005).
-    pub max_turns: u32,
+    /// The max sample→dispatch turns before terminating with `MaxTurns`
+    /// (ADR-0005 amendment 2026-07-18). **`None` (the default) = unlimited** —
+    /// every studied harness defaults to no cap (Claude Code's `maxTurns?` is
+    /// enforced only when set; grok's `max_turns: Option<u32>` defaults `None`;
+    /// codex has no turn cap at all).
+    pub max_turns: Option<u32>,
     /// Bounded loop-level resample budget on retryable provider errors (ADR-0007).
     pub resample_retries: u32,
     /// Base backoff between resamples; the nth retry waits `base * n`. Set to zero
@@ -42,7 +46,7 @@ impl Default for EngineConfig {
             model: String::new(),
             cwd: PathBuf::from("."),
             workspace_root: PathBuf::from("."),
-            max_turns: 30,
+            max_turns: None,
             resample_retries: 2,
             resample_backoff: Duration::from_millis(500),
             sampling_args: SamplingArgs::default(),
