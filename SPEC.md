@@ -21,7 +21,7 @@ These are the assumptions this spec is built on. Correct any that are wrong befo
 
 Build the **headless engine of a coding agent**: a production-grade, robust Rust core library that owns the classic *sample → dispatch → append → re-sample* loop, exposes a typed tool registry (shell + filesystem + search) whose JSON schemas are derived from the arg types, organized into a selectable **harness pack** (a faithful per-harness toolset), talks to a model through a **provider trait** with one wire implementation, and returns a single structured result — with **no TUI and no interactive permission prompts**.
 
-**Users:** (1) the future `locode-app` (TUI + features) as a library consumer driving the engine programmatically; (2) researchers running headless A/B comparisons of harness packs and provider wires; (3) `locode-exec` as a thin reference consumer.
+**Users:** (1) the future `locode-app` (TUI + features) as a library consumer driving the engine programmatically; (2) researchers running headless A/B comparisons of harness packs and provider wires; (3) `locode-exec` as a thin reference consumer; (4) downstream consumers who want **just the tools** — the pack's tool implementations are a reusable library that can be dropped into *their own* harness loop, without using our engine (the `locode` facade re-exports the tool surface for this).
 
 **Success looks like:** a caller can drive one agent session to completion against Claude, under the `grok` harness pack, with the engine emitting exactly one machine-readable JSON report — and every architectural extension point (more harness packs, more wires, apply_patch, sandbox, MCP, streaming, compaction) is a seam, not a rewrite.
 
@@ -127,10 +127,10 @@ Conventions: `kind()` is a classification tag for cross-pack A/B alignment — n
 ## Success Criteria (v0)
 
 1. `locode-engine` runs a full session (sample → dispatch → append → terminal) against Claude via the Anthropic Messages wire, driven as a library API.
-2. The `grok` pack's tools — `run_terminal_command`, `read_file`, `write`, `search_replace`, `grep`, and its dir/glob tool — ported faithfully from `xai-grok-tools` (behavior P0, names/descriptions P1), schemas derived from arg types, selected via `--harness grok`.
-3. All four `edit` invariants enforced; path jail rejects `..` escapes; shell honors a hard timeout + output byte cap with a truncation marker.
+2. The `grok` pack's tools — `run_terminal_cmd`, `read_file`, `search_replace`, `grep`, and `list_dir` — ported **faithfully** from `xai-grok-tools` (real names + behavior; **no standalone `write`** — grok creates files via `search_replace` with an empty `old_string`; **`list_dir` is grok's fs walker**, not an rg-glob — ADR-0011 amendment), schemas derived from arg types, selected via `--harness grok`.
+3. The grok pack enforces grok's **real `search_replace` guardrails**: exact + unique match (soft error with match count otherwise) and reject-no-op at runtime; read-before-edit is grok's prompt/contract expectation (grok does **not** do a runtime mtime-freshness check, so neither do we — faithful mimicry). Path jail rejects `..` escapes; shell honors a hard timeout + output byte cap with a truncation marker.
 4. Every tool failure is a soft `tool_result{is_error}`; a pre-send pass guarantees transcript validity (no dangling/duplicate tool results); an explicit `max_turns` ceiling terminates cleanly.
-5. `locode-exec` emits **exactly one** JSON report on stdout (stamping `harness` + `provider`), all diagnostics on stderr, exit 0 on clean terminal state / non-zero on fatal.
+5. `locode-exec` emits **exactly one** JSON report on stdout (stamping `harness` + `api_schema`), all diagnostics on stderr, exit 0 on clean terminal state / non-zero on fatal.
 6. The mandatory CI triangle is green; the loop is covered by mock-provider unit tests.
 7. Extension seams exist but are unimplemented: additional harness packs (`codex`/`claude`/`opencode`/`locode`), `apply_patch` (JSON-string framing), a second `Provider` wire, parallel tools, compaction, sandbox, MCP.
 
@@ -138,11 +138,11 @@ Conventions: `kind()` is a classification tag for cross-pack A/B alignment — n
 
 Carried from the design doc §12, minus what we've now decided (wire = Anthropic; v0 harness = the `grok` pack per ADR-0012; workspace layout; in-repo minimal binary; search = ripgrep per ADR-0011). Still genuinely undecided:
 
-1. **Edit strictness** — exact-match-only in v0, or adopt one or two of OpenCode's tolerant replacers early? (Default: exact-only.)
+1. ~~**Edit strictness**~~ — **Resolved (faithful mimicry):** the grok pack reproduces grok's real `search_replace` — exact + unique match + reject-no-op at runtime, read-before-edit via contract, **no** runtime mtime-freshness store (grok has none). Tolerant replacers are an OpenCode-pack concern; exact-string is grok's model.
 2. **When to add `apply_patch`** — with the `codex` pack (next milestone), delivered as a JSON-string patch arg on the Anthropic wire (freeform-grammar delivery deferred to a Responses wire).
-3. **Schema-constrained task answers** (`--json-schema`) — native `response_format` first with a `StructuredOutput`-tool fallback; envelope-only for v0. Needed when?
+3. **Schema-constrained task answers** (`--json-schema`) — native `response_format` first with a `StructuredOutput`-tool fallback; **envelope-only for v0 (deferred, confirmed).** Also open: verifying whether Anthropic and OpenAI accept the *same* derived JSON Schema (we assume yes → a single shared normalization helper, not per-wire); needs a verification pass before the wire relies on it.
 4. **Session durability** — when do ephemeral runs need JSONL transcript persistence?
-5. **`Cargo.lock` + facade surface** — how much does `locode` re-export vs. keep crate-private for the future `locode-app`?
+5. ~~**facade surface**~~ — **Resolved:** `locode` re-exports the driving API (`Session`, `EngineConfig`, report/event types, provider + pack selection) **and the full tool surface** (`Tool`, `Registry`, `dispatch`, `ToolCtx`, `ToolOutput`, `ToolSpec`, and the pack's concrete tools). A **first-class goal**: downstream consumers can use our tools inside *their own* harness loop without our engine (see Users #4). Widen further as `locode-app` needs.
 
 ## Decisions of record
 

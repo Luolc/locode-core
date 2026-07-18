@@ -50,4 +50,35 @@ Two kinds live here:
   when implementing other harness packs. Applies at Task 10.
 - **Faithfully mimic Grok Build** for the grok pack tools' behavior/details — this
   governs the edit-invariant question (implement grok's real `search_replace`
-  semantics). Applies at Tasks 9–11; confirm the exact #1/#3 treatment at Task 10.
+  semantics). Applies at Tasks 9–11.
+
+## Interview decisions (2026-07-18)
+
+A working-through of the plans' open questions. Full context in the git history; the
+load-bearing outcomes:
+
+- **Pack faithfulness is a rule** (AGENTS.md): ported packs mimic their harness's real
+  tools; custom choices apply only to our own `locode` pack. Consequence: the grok pack
+  ships `list_dir` (grok's fs walker), **not** an rg-glob — ADR-0011's rg-glob is scoped to
+  the `locode` pack (ADR-0011 amendment).
+- **Edit invariants (grok pack): mimic grok** — runtime #2 (exact+unique) + #4 (reject
+  no-op); #1 read-before-edit via contract; **no #3 mtime store** (grok has none). SPEC
+  success-criterion 3 reworded.
+- **`repair_pairing` stays in `locode-provider`; `reconstruct_conversation` stays in
+  `locode-protocol`.** No `locode-transcript` crate.
+- **Dispatch-door policy / OS sandbox → deferred post-v0.**
+- **v0 scope holds:** structured-output/`--json-schema`, cost/`total_cost_usd`, streaming,
+  parallel dispatch all deferred.
+- **Facade goal:** `locode` re-exports the driving API **and the full tool surface** so
+  downstream can use our tools in *their own* loop (SPEC Users #4).
+- **Wire config (Task 12/14):** a modest extensible record `{api_schema, base_url, api_key,
+  model}` (env + `--api-schema`), growable to per-model `{extra_headers, auth}`.
+- **Tool schema:** assume APIs share one JSON Schema → keep `specs()` + a shared
+  normalization helper; **verify Anthropic/OpenAI compatibility** before the wire relies
+  on it (SPEC Open Q3).
+- **Lints:** keep clippy `pedantic`; **added workspace `print_stdout`/`print_stderr`
+  deny** (exec allows narrowly).
+- **Host:** `nix` + dev-`tempfile` approved; shell `bash -lc` + configurable-shell seam;
+  10s timeout (configurable); middle-truncation with marker.
+- **grok prompt:** cwd/OS/shell/date as a `Role::Developer` message (keeps the
+  system-prompt cache boundary).

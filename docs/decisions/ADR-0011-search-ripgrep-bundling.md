@@ -69,11 +69,26 @@ Studied bundling mechanisms (verified against the survey submodules):
   notarized bundle. The host resolver abstracts both, so this stays a packaging choice,
   not a code fork.
 
+## Amendment (2026-07-18): scope — pack faithfulness wins for ported tools
+Clarifying the boundary between "search uses ripgrep" and ADR-0012's faithful-per-harness
+packs (user decision):
+- **The ripgrep-for-`Glob` / no-walker rule governs the search tool and our *own*
+  `locode` best-of pack — not the ported harness packs.** When we port a studied harness,
+  we **faithfully mimic its real tools** (ADR-0012); custom substitutions apply only to the
+  `locode` pack.
+- **Grok pack:** grok's directory tool is **`list_dir`** (a hand-rolled fs tree walker), so
+  the grok pack ports `list_dir` **as-is** — it is *not* replaced by an `rg --files` glob.
+  Grok's **`grep` is itself ripgrep-backed**, so it stays on the resolved `rg` (faithful
+  *and* consistent with this ADR). There is no separate `glob` tool in the grok pack.
+- The host `rg` resolver + bundling below are unchanged and available to any tool (any
+  pack's `grep`, or the `locode` pack's glob) that wants `rg`.
+
 ## Consequences
 - **Resolves SPEC Open Question #2** and supersedes the prior "rg if on PATH, else
   walk" search default (SPEC/plan).
-- **Task 11 simplifies:** `Grep`/`Glob` call the host resolver; there is no walker to
-  build or test. Missing `rg` yields a clear soft error.
+- **Task 11 (grok pack):** ships grok's real `grep` (rg-backed) + `list_dir` (walker),
+  ported faithfully; the rg-glob lives with the `locode` pack (next milestone). Missing
+  `rg` yields a clear soft error from the `grep` tool.
 - The "`rg` absent" risk is mitigated by bundling; dev/CI resolve via PATH or the
   `bundle-rg` feature.
 - **Licensing:** ripgrep is MIT/Unlicense — freely redistributable; carry its license
