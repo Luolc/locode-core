@@ -18,7 +18,7 @@ Read these before starting implementation work — they are the source of truth 
 what we are building and in what order:
 
 - [`SPEC.md`](SPEC.md) — objective, crate layout, tool contract, testing, boundaries, success criteria.
-- [`docs/decisions/`](docs/decisions/) — ADRs: the load-bearing decisions and the alternatives rejected. **Don't re-litigate an accepted ADR; if a decision needs to change, write a new ADR that supersedes it.**
+- [`docs/decisions/`](docs/decisions/) — ADRs: the load-bearing decisions and the alternatives rejected. **The ADRs are the source of truth and must stay trustworthy — reconcile them *before* the code (see "ADR-first" in the Working agreement).**
 - [`tasks/plan.md`](tasks/plan.md) + [`tasks/todo.md`](tasks/todo.md) — phased build order and the current task list.
 
 Design rationale and the source study behind every decision live in the separate
@@ -96,6 +96,14 @@ Design rationale and the source study behind every decision live in the separate
   but the grok pack ports grok's real `list_dir` walker (ADR-0011 amendment, ADR-0012).
   When a repo default (an ADR) and faithfulness collide for a ported tool, faithfulness wins
   for that pack — note it explicitly.
+- **ADR-first: keep the ADRs authoritative — reconcile them *before* changing code.**
+  When a new finding or the user's latest instruction conflicts with an accepted ADR,
+  do **not** just change the code (that is exactly what causes ADR-vs-code drift). Instead,
+  in the **same change**: **minor** delta → amend/add a dated note to the ADR; **large**
+  delta → write a **new ADR that supersedes** the old one; then make the code edit. A
+  reader must be able to trust an ADR without checking the code. (If drift is discovered
+  after the fact, reconcile the ADR in the fix — don't leave a "code is truth, ADR is
+  legacy" gap.) The same holds for `SPEC.md`.
 - **Spec before code.** For any non-trivial change, work from `SPEC.md` and the
   task list; if a task is missing, add it to `tasks/todo.md` first. Deliver in
   thin, verifiable vertical slices — implement, test, verify, then expand.
