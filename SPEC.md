@@ -70,7 +70,7 @@ docs/decisions/          → ADRs
 SPEC.md                  → this file
 tasks/                   → plan.md + todo.md (Phase 2/3 output)
 crates/
-├── locode-protocol/     → history model, tool call/result, report envelope (pure types, no I/O)
+├── locode-protocol/     → conversation model (4-role, ADR-0013), tool call/result, report envelope (pure types, no I/O)
 ├── locode-tools/        → Tool trait + registry + dispatch + shared primitives (framework; host-agnostic)
 ├── locode-packs/        → harness packs (faithful per-harness toolsets); one module per harness
 ├── locode-provider/     → Provider trait + API-agnostic ConversationRequest + Anthropic wire impl
@@ -155,6 +155,7 @@ Carried from the design doc §12, minus what we've now decided (wire = Anthropic
 | [0005](docs/decisions/ADR-0005-agent-loop.md) | Sample→dispatch→append loop; non-streaming, serial-first; explicit max-turns |
 | [0006](docs/decisions/ADR-0006-dialects-and-edit-encoding.md) | ~~Dialect packs over one registry~~ (superseded by 0012) |
 | [0012](docs/decisions/ADR-0012-harness-packs.md) | Harness packs — faithful per-harness toolsets; `grok` pack first |
+| [0013](docs/decisions/ADR-0013-conversation-protocol.md) | Conversation protocol — 4-role, Anthropic-shaped content blocks |
 | [0007](docs/decisions/ADR-0007-provider-trait.md) | `Provider` trait over API-agnostic request; Anthropic Messages wire first |
 | [0008](docs/decisions/ADR-0008-dispatch-door-and-path-jail.md) | One dispatch door + workspace path jail as v0 security posture |
 | [0009](docs/decisions/ADR-0009-headless-io-contract.md) | Single JSON report on stdout; diagnostics on stderr |

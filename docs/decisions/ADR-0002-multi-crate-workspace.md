@@ -14,7 +14,7 @@ Use a Cargo workspace of small `locode-*` crates. `locode-core` names the **work
 
 | Crate | Role |
 |---|---|
-| `locode-protocol` | history model, tool call/result, report envelope (pure types, no I/O) |
+| `locode-protocol` | conversation model (4-role, ADR-0013), tool call/result, report envelope (pure types, no I/O) |
 | `locode-tools` | canonical `Tool` trait + registry + 6 tool impls (host-agnostic contracts) |
 | `locode-dialects` | dialect packs (name/param/desc overrides + `EditEncoding`) over `locode-tools` |
 | `locode-provider` | `Provider` trait + API-agnostic `ConversationRequest` + Anthropic wire impl |
