@@ -1,5 +1,9 @@
 # Task 9 — grok pack: `run_terminal_cmd` + `read_file`
 
+> **Resolved (user-confirmed):** use grok's real tool name **`run_terminal_cmd`** (the
+> SPEC/todo `run_terminal_command` was a voice-input artifact, not a real discrepancy);
+> faithfully mimic Grok Build's actual behavior/details. See `tasks/plans/README.md`.
+
 > Faithful port of Grok Build's terminal + read tools onto our `Tool` trait, over
 > `locode-host`. Behavior P0, exact names/descriptions P1 (SPEC §Success Criteria 2).
 

@@ -1,5 +1,12 @@
 # Task 12 — `locode-provider` Anthropic Messages wire (the one live `Provider`)
 
+> **Resolved since writing:** the Task-5 provider surface is now shipped, closing several
+> §8 open questions — `ConversationRequest` has **no `system` field** (the wire hoists
+> leading System messages); `Completion` carries `Vec<ContentBlock>` (thinking preserved);
+> `StopReason` is `#[non_exhaustive]` + `Unknown(String)`; `repair_pairing` lives in
+> `locode-provider` (the wire calls it before send); the wire-identity field is
+> `api_schema`. See `tasks/plans/README.md`. Sections below predate these.
+
 > Implementation plan, written **before** code. Correctness of caching / retry /
 > id-pairing / thinking-replay is the point of this task; everything else is
 > plumbing. Cites harness source under

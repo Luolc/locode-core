@@ -1,28 +1,33 @@
 # Per-task implementation plans
 
-Detailed, **source-grounded** pre-implementation plans for the remaining v0 tasks
-(6–14), one file per task. Each was written by re-reading the actual harness source
-in the `coding-cli-survey` submodules (per the AGENTS.md "read the source before
-planning" rule) and cites concrete `file:line`. They expand [`../todo.md`](../todo.md)
-from a checklist into a reviewable design.
+Detailed, **source-grounded** plans, one file per task. Each was written by re-reading
+the actual harness source in the `coding-cli-survey` submodules (per the AGENTS.md "read
+the source before planning" rule) and cites concrete `file:line`. They expand
+[`../todo.md`](../todo.md) from a checklist into a reviewable design.
 
-> **Status: drafts for review.** These capture recommendations and a set of *open
-> questions* that need sign-off before implementation. They are not the final word —
-> decisions get confirmed with the user, then folded into the task as it is built.
-> Where a plan predates a merged crate, its "open questions" may already be resolved
-> (see below).
+Two kinds live here:
+- **Retrospective (tasks 1, 3, 3b, 4, 5)** — written *after* the code merged, documenting
+  what is built and **why**, grounded in source, with exhaustive open-questions sections
+  as an interview surface. (The CI/`justfile` task 2 is intentionally not covered.)
+- **Pre-implementation (tasks 6–14)** — written *before* code. Task 6 is now built (see
+  its banner); 7–14 are still forward-looking drafts with open questions to sign off.
 
-| Plan | Task |
-|---|---|
-| [task-06-engine-loop.md](task-06-engine-loop.md) | `locode-engine` — the sample→dispatch→append loop + `Session` |
-| [task-07-host.md](task-07-host.md) | `locode-host` — path jail, shell exec (timeout/caps), truncation |
-| [task-08-packs.md](task-08-packs.md) | `locode-packs` — pack framework + grok pack wiring |
-| [task-09-grok-read-terminal.md](task-09-grok-read-terminal.md) | grok `run_terminal_cmd` + `read_file` |
-| [task-10-grok-edit.md](task-10-grok-edit.md) | grok `write` + `search_replace` (edit invariants) |
-| [task-11-grok-search.md](task-11-grok-search.md) | grok `grep` + `glob` (ripgrep-backed) |
-| [task-12-anthropic-wire.md](task-12-anthropic-wire.md) | Anthropic Messages wire (the live `Provider`) |
-| [task-13-grok-prompt.md](task-13-grok-prompt.md) | grok pack system prompt (minijinja) |
-| [task-14-facade-exec.md](task-14-facade-exec.md) | `locode` facade + `locode-exec` binary |
+| Plan | Task | Kind |
+|---|---|---|
+| [task-01-workspace-scaffold.md](task-01-workspace-scaffold.md) | Cargo workspace + crate boundaries + toolchain/lints | retrospective |
+| [task-03-protocol-conversation-report.md](task-03-protocol-conversation-report.md) | `locode-protocol` — conversation model + report envelope | retrospective |
+| [task-03b-streaming-events.md](task-03b-streaming-events.md) | `locode-protocol` — `stream-json` events + reconstruction | retrospective |
+| [task-04-tools-contract-registry.md](task-04-tools-contract-registry.md) | `locode-tools` — `Tool` contract + registry + dispatch | retrospective |
+| [task-05-provider-mock.md](task-05-provider-mock.md) | `locode-provider` — trait + `Completion` + mock + repair | retrospective |
+| [task-06-engine-loop.md](task-06-engine-loop.md) | `locode-engine` — the sample→dispatch→append loop + `Session` | built |
+| [task-07-host.md](task-07-host.md) | `locode-host` — path jail, shell exec (timeout/caps), truncation | draft |
+| [task-08-packs.md](task-08-packs.md) | `locode-packs` — pack framework + grok pack wiring | draft |
+| [task-09-grok-read-terminal.md](task-09-grok-read-terminal.md) | grok `run_terminal_cmd` + `read_file` | draft |
+| [task-10-grok-edit.md](task-10-grok-edit.md) | grok `search_replace` (edit invariants; no standalone `write`) | draft |
+| [task-11-grok-search.md](task-11-grok-search.md) | grok `grep` + `glob` (ripgrep-backed) | draft |
+| [task-12-anthropic-wire.md](task-12-anthropic-wire.md) | Anthropic Messages wire (the live `Provider`) | draft |
+| [task-13-grok-prompt.md](task-13-grok-prompt.md) | grok pack system prompt (minijinja) | draft |
+| [task-14-facade-exec.md](task-14-facade-exec.md) | `locode` facade + `locode-exec` binary | draft |
 
 ## Already resolved since these were written
 
