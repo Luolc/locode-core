@@ -13,9 +13,9 @@ readme.workspace = true
 workspace = true
 
 [dependencies]
-locode-protocol = { path = "../locode-protocol" }
-locode-tools = { path = "../locode-tools" }
-locode-provider = { path = "../locode-provider" }
+locode-protocol = { workspace = true }
+locode-tools = { workspace = true }
+locode-provider = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["time"] }
 tokio-util = { workspace = true }

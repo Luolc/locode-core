@@ -3,10 +3,10 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.0.0"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.97"
-publish = false
+publish = true
 license = "Apache-2.0"
 repository = "https://github.com/Luolc/locode-core"
 # Inherited path — cargo resolves it relative to the workspace root, so every
@@ -15,6 +15,16 @@ readme = "README.md"
 
 # Shared dependency versions (referenced from crates via `<dep>.workspace = true`).
 [workspace.dependencies]
+# Internal crates: path for local builds, version for the published manifests
+# (cargo strips `path` on publish, so a version is mandatory). Kept here so a
+# release bumps every cross-crate requirement in one place.
+locode-protocol = { path = "crates/locode-protocol", version = "0.1.0" }
+locode-tools = { path = "crates/locode-tools", version = "0.1.0" }
+locode-packs = { path = "crates/locode-packs", version = "0.1.0" }
+locode-provider = { path = "crates/locode-provider", version = "0.1.0" }
+locode-host = { path = "crates/locode-host", version = "0.1.0" }
+locode-engine = { path = "crates/locode-engine", version = "0.1.0" }
+locode = { path = "crates/locode", version = "0.1.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Async, object-safe tool traits (native `async fn` in traits isn't dyn-safe yet);

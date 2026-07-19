@@ -13,9 +13,9 @@ readme.workspace = true
 workspace = true
 
 [dependencies]
-locode-protocol = { path = "../locode-protocol" }
-locode-tools = { path = "../locode-tools" }
-locode-packs = { path = "../locode-packs" }
-locode-provider = { path = "../locode-provider" }
-locode-host = { path = "../locode-host" }
-locode-engine = { path = "../locode-engine" }
+locode-protocol = { workspace = true }
+locode-tools = { workspace = true }
+locode-packs = { workspace = true }
+locode-provider = { workspace = true }
+locode-host = { workspace = true }
+locode-engine = { workspace = true }
