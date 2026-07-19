@@ -69,14 +69,34 @@ v0 is done — every crate is real, the binary runs end-to-end against Claude
 deferred: `bundle-rg` packaging (ADR-0011), streaming, compaction, parallel
 dispatch, OS sandbox, MCP, `--json-schema` (see `tasks/todo.md` Deferred).
 
-Next (reprioritized 2026-07-18, twice): **Task 18 — OpenAI Responses wire FIRST**
-(stateless `store:false`; drives BOTH OpenAI models — incl. the freeform+grammar
-`apply_patch` codex needs — and xAI grok models with function tools +
-`encrypted_content` reasoning, all verified live through OpenRouter's beta
-`/v1/responses`; xAI rejects `custom` tools, an OpenAI-only feature), then
-**Task 17 — OpenAI Chat Completions wire** (broadest lowest-common-denominator
-schema), then **Task 15 — packs** (deferred; codex pack is blocked on Task 18).
-Task 16 was removed — A/B runs are plain binary usage. Read the
-fidelity-boundary open concern (#9 above) before planning Task 15: packs
-reproduce tools + prompts + static preamble; loop-adjacent behaviors stay on
-the shared engine until A/B evidence forces the ADR.
+Next (reprioritized 2026-07-18; **plans written 2026-07-19**): implementation
+order **Task 18 → Task 17 → Task 19 → Task 20**, each with a full
+source-grounded plan doc (read the plan + its open questions before starting):
+
+1. **Task 18 — OpenAI Responses wire** —
+   [`plans/task-18-openai-responses-wire.md`](plans/task-18-openai-responses-wire.md).
+   Stateless `store:false`; drives BOTH OpenAI models (incl. the freeform+grammar
+   `apply_patch` codex needs) and xAI grok models (function tools +
+   `encrypted_content` reasoning replay) — all verified live through OpenRouter's
+   beta `/v1/responses` (plan §0 probe log; xAI 422s `custom` tools → degradation
+   knob). Owns the ask-first `ToolSpec`/`ToolInputFormat` protocol change and the
+   shared-transport hoist (`locode-provider::http`).
+2. **Task 17 — OpenAI Chat Completions wire** —
+   [`plans/task-17-openai-chat-wire.md`](plans/task-17-openai-chat-wire.md).
+   Broadest lowest-common-denominator schema; consumes Task 18's shared layers;
+   reasoning capture-only (the deliberate control wire).
+3. **Task 19 — codex pack** —
+   [`plans/task-19-codex-pack.md`](plans/task-19-codex-pack.md). `shell_command` +
+   freeform `apply_patch` (shared parser module) + `update_plan`; native delivery
+   via Task 18, `{input: string}` degradation elsewhere.
+4. **Task 20 — claude pack** —
+   [`plans/task-20-claude-pack.md`](plans/task-20-claude-pack.md). Six core tools
+   (`Bash`/`Read`/`Edit`/`Write`/`Glob`/`Grep`) with the read-before-edit
+   freshness gate + the static system prompt; wire-independent.
+
+Task 16 was removed — A/B runs are plain binary usage. Task 15 is re-scoped to
+the remaining packs (opencode + our own `locode`). The fidelity boundary
+(concern #9 above) governed both pack plans: packs reproduce tools + prompts +
+static preamble; loop-adjacent behaviors (TodoWrite reminders, CLAUDE.md/
+AGENTS.md injection, git-status snapshots) stay on the shared engine until A/B
+evidence forces the ADR — each plan lists its resulting exclusions explicitly.
