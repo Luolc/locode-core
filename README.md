@@ -19,7 +19,9 @@ tools into their own agent loop without using our engine.
 ## Quick start
 
 ```sh
-export LOCODE_API_KEY=…
+export LOCODE_API_KEY=…      # required (except with --api-schema mock)
+export LOCODE_BASE_URL=…     # optional: provider endpoint override
+export LOCODE_MODEL=…        # optional: model id override
 
 # One task, headless: one JSON report on stdout, diagnostics on stderr.
 cargo run -p locode-exec -- "summarize this repo" --harness grok
@@ -29,6 +31,13 @@ Select the provider wire with `--api-schema` (`anthropic` | `openai-responses`
 | `mock`, where `mock` runs keyless) and the stdout artifact with
 `--output-format` (`json` | `stream-json` | `text`). See
 `cargo run -p locode-exec -- --help` for the full surface.
+
+`LOCODE_BASE_URL` defaults to the wire's native endpoint
+(`https://api.anthropic.com` for `anthropic`, `https://api.openai.com` for
+`openai-responses`); point it at any compatible gateway (e.g. OpenRouter) to
+reach other providers over the same schema. `LOCODE_MODEL` defaults to
+`claude-sonnet-5` on the Anthropic wire and `gpt-5-mini` on the OpenAI
+Responses wire, and `LOCODE_API_KEY` must match whichever endpoint you target.
 
 To build and test everything:
 
