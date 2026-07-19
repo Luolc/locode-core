@@ -69,12 +69,13 @@ v0 is done — every crate is real, the binary runs end-to-end against Claude
 deferred: `bundle-rg` packaging (ADR-0011), streaming, compaction, parallel
 dispatch, OS sandbox, MCP, `--json-schema` (see `tasks/todo.md` Deferred).
 
-Next (reprioritized 2026-07-18): **Task 17 — OpenAI Chat Completions wire**
-(broadest schema; test non-Anthropic models without OpenRouter conversion in
-the path), then **Task 18 — OpenAI Responses wire** (stateless `store:false`;
-required for codex's freeform+grammar `apply_patch`, verified live through
-OpenRouter's beta `/v1/responses`; also grok build's own backend for xAI
-models), then **Task 15 — packs** (deferred; codex pack is blocked on Task 18).
+Next (reprioritized 2026-07-18, twice): **Task 18 — OpenAI Responses wire FIRST**
+(stateless `store:false`; drives BOTH OpenAI models — incl. the freeform+grammar
+`apply_patch` codex needs — and xAI grok models with function tools +
+`encrypted_content` reasoning, all verified live through OpenRouter's beta
+`/v1/responses`; xAI rejects `custom` tools, an OpenAI-only feature), then
+**Task 17 — OpenAI Chat Completions wire** (broadest lowest-common-denominator
+schema), then **Task 15 — packs** (deferred; codex pack is blocked on Task 18).
 Task 16 was removed — A/B runs are plain binary usage. Read the
 fidelity-boundary open concern (#9 above) before planning Task 15: packs
 reproduce tools + prompts + static preamble; loop-adjacent behaviors stay on
