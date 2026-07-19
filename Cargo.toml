@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.97"
 publish = true
@@ -18,13 +18,13 @@ readme = "README.md"
 # Internal crates: path for local builds, version for the published manifests
 # (cargo strips `path` on publish, so a version is mandatory). Kept here so a
 # release bumps every cross-crate requirement in one place.
-locode-protocol = { path = "crates/locode-protocol", version = "0.1.0" }
-locode-tools = { path = "crates/locode-tools", version = "0.1.0" }
-locode-packs = { path = "crates/locode-packs", version = "0.1.0" }
-locode-provider = { path = "crates/locode-provider", version = "0.1.0" }
-locode-host = { path = "crates/locode-host", version = "0.1.0" }
-locode-engine = { path = "crates/locode-engine", version = "0.1.0" }
-locode-core = { path = "crates/locode-core", version = "0.1.0" }
+locode-protocol = { path = "crates/locode-protocol", version = "0.1.1" }
+locode-tools = { path = "crates/locode-tools", version = "0.1.1" }
+locode-packs = { path = "crates/locode-packs", version = "0.1.1" }
+locode-provider = { path = "crates/locode-provider", version = "0.1.1" }
+locode-host = { path = "crates/locode-host", version = "0.1.1" }
+locode-engine = { path = "crates/locode-engine", version = "0.1.1" }
+locode-core = { path = "crates/locode-core", version = "0.1.1" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Async, object-safe tool traits (native `async fn` in traits isn't dyn-safe yet);
@@ -60,7 +60,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 assert_cmd = "2"
 predicates = "3"
 # The one HTTP client; rustls avoids the system OpenSSL dep (SPEC, ADR-0007).
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "http2"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "http2"] }
 
 # Strict-from-empty: these are enabled now, while the crates are empty, so we never pay
 # the churn of adding lints after code exists. See ADR-0010.
