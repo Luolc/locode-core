@@ -69,9 +69,11 @@ v0 is done — every crate is real, the binary runs end-to-end against Claude
 deferred: `bundle-rg` packaging (ADR-0011), streaming, compaction, parallel
 dispatch, OS sandbox, MCP, `--json-schema` (see `tasks/todo.md` Deferred).
 
-Next (reprioritized 2026-07-18; **plans written 2026-07-19**): implementation
-order **Task 18 → Task 17 → Task 19 → Task 20**, each with a full
-source-grounded plan doc (read the plan + its open questions before starting):
+Next (reprioritized 2026-07-18/19; **plans written 2026-07-19**): implementation
+order **Task 18 → Task 19 → Task 20**; **Task 17 (Chat Completions) is DEFERRED**
+(Responses covers GPT + Grok natively — enough for the native-pair evals; its plan
+stays on file). Each task has a full source-grounded plan doc (read the plan + its
+addenda before starting):
 
 1. **Task 18 — OpenAI Responses wire** —
    [`plans/task-18-openai-responses-wire.md`](plans/task-18-openai-responses-wire.md).
@@ -81,10 +83,9 @@ source-grounded plan doc (read the plan + its open questions before starting):
    beta `/v1/responses` (plan §0 probe log; xAI 422s `custom` tools → degradation
    knob). Owns the ask-first `ToolSpec`/`ToolInputFormat` protocol change and the
    shared-transport hoist (`locode-provider::http`).
-2. **Task 17 — OpenAI Chat Completions wire** —
+2. *(deferred)* **Task 17 — OpenAI Chat Completions wire** —
    [`plans/task-17-openai-chat-wire.md`](plans/task-17-openai-chat-wire.md).
-   Broadest lowest-common-denominator schema; consumes Task 18's shared layers;
-   reasoning capture-only (the deliberate control wire).
+   Revisit when a target model/provider only speaks chat completions.
 3. **Task 19 — codex pack** —
    [`plans/task-19-codex-pack.md`](plans/task-19-codex-pack.md). `shell_command` +
    freeform `apply_patch` (shared parser module) + `update_plan`; native delivery
