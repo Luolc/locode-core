@@ -7,6 +7,11 @@ version = "0.0.0"
 edition = "2024"
 rust-version = "1.97"
 publish = false
+license = "Apache-2.0"
+repository = "https://github.com/Luolc/locode-core"
+# Inherited path — cargo resolves it relative to the workspace root, so every
+# crate's crates.io page renders the shared root README.
+readme = "README.md"
 
 # Shared dependency versions (referenced from crates via `<dep>.workspace = true`).
 [workspace.dependencies]

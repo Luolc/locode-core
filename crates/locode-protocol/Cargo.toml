@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+description = "Conversation model, tool call/result types, and the report envelope of the locode coding agent - pure types, no I/O"
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
 
 [lints]
 workspace = true
