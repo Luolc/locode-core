@@ -347,23 +347,25 @@ good ad-hoc exercise, not a tracked deliverable.
 
 **Acceptance criteria (sketch — plan the task from source before starting):**
 - [ ] Build/parse: messages (system role native), JSON function tools (shared schema normalization reused), tool_call ids verbatim, usage mapping; `reasoning_effort` → the OpenAI `reasoning_effort`/`reasoning` param per current API.
-- [ ] Hoist the transport-retry + error-classification machinery (`RetryPolicy`/`run_with_retry`/`HttpFailure`/`classify`) out of the `anthropic` module into a shared `locode-provider` layer; both wires consume it (grok/codex both share one retry core).
+- [ ] Consume the shared transport-retry/error-classification layer hoisted in Task 18.
 - [ ] Config: reuse `ModelConfig`-style record; OpenRouter/native/proxy backend handling per this wire's conventions (always Bearer for OpenAI-family).
 - [ ] Fixture tests mirroring the anthropic wire's suite + canned-server provider tests; `--api-schema openai-chat` in `locode-exec`.
 
-**Dependencies:** Task 12 (patterns), Task 5 (trait)
+**Dependencies:** Task 18 (shared retry layer)
 **Scope:** L
 
-## Task 18: OpenAI Responses wire
+## Task 18: OpenAI Responses wire — NEXT (prioritized over Task 17, user decision 2026-07-18)
 **Description:** The third `Provider`: `api_schema = "openai-responses"`, `POST {base_url}/v1/responses`, **stateless** (`store: false` always — codex and grok both run it that way; OpenRouter's beta *rejects* stateful requests). Required for faithful codex: codex is Responses-only and `apply_patch` is a **custom/freeform tool with a Lark grammar** — verified live through OpenRouter (`custom_tool_call` round-trips). Also grok build's own backend for xAI models (encrypted reasoning replay, ZDR).
 
 **Acceptance criteria (sketch — plan from source; needs an ADR-0003/ToolSpec design decision):**
 - [ ] `ToolSpec` grows a variant/kind for freeform/custom tools (name + description + grammar) alongside JSON-schema function tools — the protocol change that unblocks codex's `apply_patch` (ask-first: protocol shape).
 - [ ] Build/parse: `input` item list, function + custom tool calls, `reasoning` items with `encrypted_content` replay (the Responses analog of thinking signatures), usage mapping.
 - [ ] Stateless discipline: `store: false` on every request; `previous_response_id` never used (OpenRouter rejects it; grok sends store=false for ZDR).
-- [ ] Shared retry/classify layer from Task 17; fixture + canned-server tests; `--api-schema openai-responses` in `locode-exec`.
+- [ ] Hoist the transport-retry + error-classification machinery (`RetryPolicy`/`run_with_retry`/`HttpFailure`/`classify`) out of the `anthropic` module into a shared `locode-provider` layer (Task 17 consumes it too).
+- [ ] xAI-model support verified in the live smoke: function tools + `encrypted_content` reasoning replay through OpenRouter `/v1/responses` (custom tools are OpenAI-only — xAI 422s the `custom` variant; the codex pack's non-OpenAI fallback is a Task 15 concern).
+- [ ] Fixture + canned-server tests; `--api-schema openai-responses` in `locode-exec`.
 
-**Dependencies:** Task 17 (shared retry layer)
+**Dependencies:** Task 12 (patterns), Task 5 (trait)
 **Scope:** L
 
 ---
