@@ -3,7 +3,7 @@
 //! stream reconstruction, stderr discipline, and exit codes.
 
 use assert_cmd::Command;
-use locode::{Event, Report, Status, reconstruct_conversation};
+use locode_core::{Event, Report, Status, reconstruct_conversation};
 use predicates::prelude::*;
 
 fn exec() -> Command {

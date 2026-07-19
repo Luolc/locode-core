@@ -57,5 +57,5 @@ cargo test --workspace
 | `locode-provider` | `Provider` trait, API-agnostic request type, and the wire implementations |
 | `locode-host` | Filesystem/shell/path-jail seam — every side effect goes through here |
 | `locode-engine` | The sample→dispatch→append loop and the `Session` driving API |
-| `locode` | Facade: re-exports the driving API and the full tool surface |
+| `locode-core` | Facade: re-exports the driving API and the full tool surface |
 | `locode-exec` | Minimal headless binary — exactly one JSON report on stdout |

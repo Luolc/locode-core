@@ -5,7 +5,7 @@ use std::io::Read;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use locode::{
+use locode_core::{
     AnthropicProvider, CacheHint, Completion, ContentBlock, EngineConfig, EventSink, FnSink, Host,
     HostConfig, MockProvider, NullSink, OpenAiResponsesProvider, PackContext, PathPolicy, Provider,
     SamplingArgs, Session, StopReason, Usage, grok,
@@ -48,7 +48,7 @@ pub async fn run(cli: Cli) -> Result<ExitCode, PreRunError> {
     let host = Arc::new(Host::new(host_config)?);
 
     // ---- 3. Pack: tools + preamble (system prompt + <user_info> prefix). ----
-    let pack = locode::resolve(cli.harness.as_str())?;
+    let pack = locode_core::resolve(cli.harness.as_str())?;
     let registry = pack.build_registry(&host);
     let pack_ctx = PackContext {
         cwd: cwd.clone(),
