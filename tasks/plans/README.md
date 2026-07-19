@@ -9,8 +9,10 @@ Two kinds live here:
 - **Retrospective (tasks 1, 3, 3b, 4, 5)** — written *after* the code merged, documenting
   what is built and **why**, grounded in source, with exhaustive open-questions sections
   as an interview surface. (The CI/`justfile` task 2 is intentionally not covered.)
-- **Pre-implementation (tasks 6–14)** — written *before* code. Task 6 is now built (see
-  its banner); 7–14 are still forward-looking drafts with open questions to sign off.
+- **Pre-implementation (tasks 6–14, 17–20)** — written *before* code. Tasks 6–14 are now
+  built (v0 complete, Checkpoint D); **17–20 are the next-milestone drafts** (written
+  2026-07-19), with open-questions sections awaiting sign-off. Implementation order:
+  **18 → 17 → 19 → 20** (see `../todo.md` banner).
 
 | Plan | Task | Kind |
 |---|---|---|
@@ -28,6 +30,10 @@ Two kinds live here:
 | [task-12-anthropic-wire.md](task-12-anthropic-wire.md) | Anthropic Messages wire (the live `Provider`) | draft |
 | [task-13-grok-prompt.md](task-13-grok-prompt.md) | grok pack system prompt (minijinja) | draft |
 | [task-14-facade-exec.md](task-14-facade-exec.md) | `locode` facade + `locode-exec` binary | draft |
+| [task-18-openai-responses-wire.md](task-18-openai-responses-wire.md) | OpenAI Responses wire (`openai-responses`; stateless, freeform tools, encrypted-reasoning replay, transport hoist) | draft — **next** |
+| [task-17-openai-chat-wire.md](task-17-openai-chat-wire.md) | OpenAI Chat Completions wire (`openai-chat`; LCD/control wire) | draft |
+| [task-19-codex-pack.md](task-19-codex-pack.md) | codex pack (`shell_command` + freeform `apply_patch` + `update_plan` + prompt) | draft |
+| [task-20-claude-pack.md](task-20-claude-pack.md) | claude pack (Bash/Read/Edit/Write/Glob/Grep + freshness gate + prompt) | draft |
 
 ## Already resolved since these were written
 

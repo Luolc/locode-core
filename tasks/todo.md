@@ -4,8 +4,18 @@ Detailed, ordered tasks for [`plan.md`](plan.md). Each clears the Definition of 
 Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 
 > **📍 Current state, deviations from plans, and open concerns: [`STATUS.md`](STATUS.md).**
-> Read it first — the merged code is the source of truth; plans/ADRs may be legacy. Tasks 1–13
-> are done (Checkpoints A/B/C + the live wire + the grok prompt); **Task 14 (facade + exec) is next.**
+> Read it first — the merged code is the source of truth; plans/ADRs may be legacy. Tasks 1–14
+> are done (**v0 complete**, Checkpoint D reached 2026-07-18).
+>
+> **Next milestone — implementation order (user decision 2026-07-18/19):**
+> **Task 18 (OpenAI Responses wire) → Task 17 (OpenAI Chat wire) → Task 19 (codex pack)
+> → Task 20 (claude pack).** Detailed source-grounded plans exist for all four:
+> [`plans/task-18-openai-responses-wire.md`](plans/task-18-openai-responses-wire.md) ·
+> [`plans/task-17-openai-chat-wire.md`](plans/task-17-openai-chat-wire.md) ·
+> [`plans/task-19-codex-pack.md`](plans/task-19-codex-pack.md) ·
+> [`plans/task-20-claude-pack.md`](plans/task-20-claude-pack.md) — read the plan (and its
+> open questions) before starting each task. Task 15 is now only the remaining packs
+> (opencode + our own `locode`).
 
 ---
 
@@ -314,24 +324,24 @@ Sizes: XS=1 file · S=1–2 · M=3–5 · L=5–8 (break down if larger).
 
 ## Next milestone (post-v0): more harness packs → first A/B
 
-## Task 15: additional packs (`codex` / `claude` / `opencode`) + `locode` — DEFERRED after Tasks 17/18
-> Deferred (user decision, 2026-07-18): the OpenAI wires come first. The `codex` pack is
-> **blocked on Task 18** anyway — codex is Responses-API-only (`WireApi { Responses }`,
-> chat_completions.rs deleted) and `apply_patch` is a freeform/custom tool with a Lark
-> grammar, a Responses-only feature.
-**Description:** Faithful ports of the other studied harnesses' real toolsets, plus our own `locode` best-of pack (grok-build-style snake_case naming). Real per-harness implementations, not re-skins (ADR-0012). The `codex` pack introduces `apply_patch` (JSON-string framing on the Anthropic wire).
+## Task 15: remaining packs (`opencode` + our own `locode`) — LATER (after Tasks 19/20)
+> Re-scoped (2026-07-19): the `codex` and `claude` packs graduated to their own planned
+> tasks (**Task 19** and **Task 20** below, with full plan docs). What remains here is the
+> `opencode` faithful port and our own `locode` best-of pack (grok-build-style snake_case
+> naming; ADR-0011's rg-glob is scoped to the `locode` pack). Plan these from source when
+> their turn comes (AGENTS.md: planning is a research task).
 
-**Acceptance criteria:**
+**Acceptance criteria (sketch):**
 - [ ] Each pack registers its harness's real tools (names, schemas, descriptions, behavior) and system prompt; selectable via `--harness`.
 - [ ] Tools carry `ToolKind` tags so comparable tools align across packs.
-- [ ] `codex` pack: `apply_patch` via a shared parser, delivered as a JSON string arg.
+- [ ] `locode` pack: our opinionated best-of toolset (rg-backed glob per ADR-0011, apply_patch reuse decision, etc.) — a design deliverable, not a port.
 
 **Verification:**
 - [ ] Per-pack unit tests: real tool specs + behavior; `--harness <pack>` routes to that pack's impls.
 
-**Dependencies:** Task 8 (+ Task 12 for live runs)
-**Files:** `crates/locode-packs/src/{codex,claude,opencode,locode}/…`, shared `apply_patch` parser, tests
-**Scope:** L (multiple packs — split per pack when implementing)
+**Dependencies:** Task 8 (+ Tasks 19/20 precedents; Task 19's shared `apply_patch` parser if opencode/locode reuse it)
+**Files:** `crates/locode-packs/src/{opencode,locode}/…`, tests
+**Scope:** L (split per pack when implementing)
 
 ## ~~Task 16: first A/B run~~ — REMOVED (user decision, 2026-07-18)
 A/B runs are just usage of the binary once multiple packs/wires exist — no explicit task
@@ -342,35 +352,68 @@ good ad-hoc exercise, not a tracked deliverable.
 
 ---
 
-## Task 17: OpenAI Chat Completions wire
-**Description:** The second live `Provider` (ADR-0007's planned order): `api_schema = "openai-chat"`, `POST {base_url}/v1/chat/completions`. The **broadest-supported schema** — OpenRouter's default surface for every model/provider (no translation layer in the path), grok's `ApiBackend` default. Motivated by testing non-Anthropic models WITHOUT OpenRouter's Messages/Responses conversion in the path (user decision, 2026-07-18).
+## Task 17: OpenAI Chat Completions wire — **planned: [`plans/task-17-openai-chat-wire.md`](plans/task-17-openai-chat-wire.md)**
+**Description:** The Chat Completions `Provider`: `api_schema = "openai-chat"`, `POST {base_url}/v1/chat/completions`, non-streaming, always-Bearer. The **broadest lowest-common-denominator schema** — OpenRouter's default surface for every model/provider (no translation layer in the path), grok's `ApiBackend` default. Motivated by testing non-Anthropic models WITHOUT OpenRouter's Messages/Responses conversion in the path (user decision, 2026-07-18). Deliberately the "reasoning-blind" control wire — reasoning replay only exists on Task 18's wire.
 
-**Acceptance criteria (sketch — plan the task from source before starting):**
-- [ ] Build/parse: messages (system role native), JSON function tools (shared schema normalization reused), tool_call ids verbatim, usage mapping; `reasoning_effort` → the OpenAI `reasoning_effort`/`reasoning` param per current API.
-- [ ] Consume the shared transport-retry/error-classification layer hoisted in Task 18.
-- [ ] Config: reuse `ModelConfig`-style record; OpenRouter/native/proxy backend handling per this wire's conventions (always Bearer for OpenAI-family).
-- [ ] Fixture tests mirroring the anthropic wire's suite + canned-server provider tests; `--api-schema openai-chat` in `locode-exec`.
+**Acceptance criteria (distilled from the plan — resolve its §9 open questions first):**
+- [ ] Build per ADR-0013's OpenAI table: System → `role:"system"`; Developer → `role:"developer"` (default; `SystemReminder` fallback knob mirrors the Anthropic rendering); assistant `Text`+`ToolUse` blocks grouped into ONE message (`content` + `tool_calls[]`, ids verbatim, `arguments` stringified); `ToolResult` → consecutive `role:"tool"` messages (`tool_call_id`) directly after the calling turn.
+- [ ] **Nested** tool defs `{type:"function", function:{…}}` (vs Responses' flat shape); freeform `ToolSpec`s always degrade via the shared `{input: string}` helper; `max_completion_tokens` default with a legacy `max_tokens` knob; `reasoning_effort` mapped (`None` → omitted).
+- [ ] Parse: `choices[0]`; invalid tool-call `arguments` kept as `Value::String` (soft-error path, no silent `{}`); `refusal` → `Text` + `StopReason::Refusal`; finish_reason table with `Unknown` catch-all; usage incl. `cached_tokens`/`cache_write_tokens`.
+- [ ] Reasoning **capture-only**: OpenRouter `message.reasoning` / xAI-style `reasoning_content` → `Thinking{signature: None}`; thinking never replayed on this wire (documented A/B caveat).
+- [ ] Consumes Task 18's shared `http` transport + `openai/` config/classify (429-`insufficient_quota`/402 → `Quota`); OpenRouter `provider` prefs injected.
+- [ ] Fixture + canned-`TcpListener` tests per plan §6; `--api-schema openai-chat` in `locode-exec`; manual `#[ignore]` live smoke (OpenAI + one non-OpenAI model via OpenRouter).
 
-**Dependencies:** Task 18 (shared retry layer)
+**Dependencies:** Task 18 (shared transport layer + `openai/` module + degradation helper)
 **Scope:** L
 
-## Task 18: OpenAI Responses wire — NEXT (prioritized over Task 17, user decision 2026-07-18)
-**Description:** The third `Provider`: `api_schema = "openai-responses"`, `POST {base_url}/v1/responses`, **stateless** (`store: false` always — codex and grok both run it that way; OpenRouter's beta *rejects* stateful requests). Required for faithful codex: codex is Responses-only and `apply_patch` is a **custom/freeform tool with a Lark grammar** — verified live through OpenRouter (`custom_tool_call` round-trips). Also grok build's own backend for xAI models (encrypted reasoning replay, ZDR).
+## Task 19: codex harness pack — **planned: [`plans/task-19-codex-pack.md`](plans/task-19-codex-pack.md)**
+**Description:** Faithful port of Codex CLI's stock headless toolset + base prompt as `--harness codex` (ADR-0012; fidelity boundary per STATUS #9). Codex is the minimal-tool extreme of the A/B bed: **no read/grep/glob/write tools** — the shell is the read path, all edits go through `apply_patch`. Native delivery needs Task 18 (freeform custom tool + Lark grammar, OpenAI-models-only); runs everywhere else via the `{input: string}` JSON degradation.
 
-**Acceptance criteria (sketch — plan from source; needs an ADR-0003/ToolSpec design decision):**
-- [ ] `ToolSpec` grows a variant/kind for freeform/custom tools (name + description + grammar) alongside JSON-schema function tools — the protocol change that unblocks codex's `apply_patch` (ask-first: protocol shape).
-- [ ] Build/parse: `input` item list, function + custom tool calls, `reasoning` items with `encrypted_content` replay (the Responses analog of thinking signatures), usage mapping.
-- [ ] Stateless discipline: `store: false` on every request; `previous_response_id` never used (OpenRouter rejects it; grok sends store=false for ZDR).
-- [ ] Hoist the transport-retry + error-classification machinery (`RetryPolicy`/`run_with_retry`/`HttpFailure`/`classify`) out of the `anthropic` module into a shared `locode-provider` layer (Task 17 consumes it too).
-- [ ] xAI-model support verified in the live smoke: function tools + `encrypted_content` reasoning replay through OpenRouter `/v1/responses` (custom tools are OpenAI-only — xAI 422s the `custom` variant; the codex pack's non-OpenAI fallback is a Task 15 concern).
-- [ ] Fixture + canned-server tests; `--api-schema openai-responses` in `locode-exec`.
+**Acceptance criteria (distilled from the plan — resolve its §9 open questions first):**
+- [ ] Three tools with verbatim names/schemas/descriptions (`deny_unknown_fields`): `shell_command` (10s default timeout; codex's `Exit code:`/`Wall time:` output framing; timeout → exit 124 + "command timed out after…"), `apply_patch` (freeform `input_format()`; untagged Args decoding both raw text and `{"input": …}`), `update_plan` (≤1 `in_progress` guard; in-memory plan state, no reminder machinery).
+- [ ] Shared `locode-packs::apply_patch` parser module ported from the `apply-patch` crate: verbatim markers, lenient-only mode incl. heredoc tolerance, `Hunk`/`UpdateFileChunk`, 4-level fuzzy `seek_sequence` (exact → rstrip → strip → Unicode normalize; EOF bias), move support; apply is validate-all-then-write over the Host (jail applies; all failures soft).
+- [ ] Prompt: verbatim provenance-pinned copy of codex's default `prompt.md` (the compiled default; per-model catalog variants deferred); `apply_patch_tool_instructions.md` block per the plan's Q2 resolution; `strip_identity` knob; preamble = `[System(prompt…), User(<environment_context>…)]` (codex's placement; System lands in Responses `instructions`).
+- [ ] Tests per plan §6: parser suite, dispatch-level tool behavior, spec/schema goldens (freeform + degraded), template byte-pins, preamble snapshots, one canned-server codex-pack-through-responses-wire round-trip.
+
+**Dependencies:** Task 8 (pack framework), Task 18 (freeform ToolSpec + native delivery); runs degraded on Tasks 12/17 wires
+**Files:** `crates/locode-packs/src/{apply_patch,codex}/…`, templates, tests
+**Scope:** L
+
+## Task 20: claude harness pack — **planned: [`plans/task-20-claude-pack.md`](plans/task-20-claude-pack.md)**
+**Description:** Faithful port of Claude Code's headless-relevant toolset + static system prompt as `--harness claude` (ADR-0012; fidelity boundary per STATUS #9 — TodoWrite/Task/reminder machinery excluded). No wire dependency: all tools are JSON function tools; Claude Code's native wire IS our Task-12 Anthropic wire.
+
+**Acceptance criteria (distilled from the plan — resolve its §9 open questions first):**
+- [ ] Six tools under Claude Code's exact names `Bash`/`Read`/`Edit`/`Write`/`Glob`/`Grep` — full `ToolKind` width vs grok's 5 — with verbatim zod `.describe()` strings (`#[schemars(description)]`), `z.strictObject` mirrored as `deny_unknown_fields`, and long tool descriptions as provenance-pinned `descriptions/*.md` files.
+- [ ] Claude Code's real caps/guardrails: Bash 120s default/600s max/30k output cap; Read 2000-line window + `cat -n` framing; Edit uniqueness + `old!=new` + `replace_all`; Grep = full rg passthrough surface (`output_mode`, `-A/-B/-C/-n/-i`, `type`, `glob`, `head_limit` 250, `multiline`) with 20k cap; Glob mtime-sorted, 100-file cap (via `rg --files -g`).
+- [ ] The **read-before-edit + modified-since-read gate** (`ClaudeSessionState` shared by Read/Edit/Write) — Claude Code's signature guardrail, deliberately divergent from grok's no-freshness design.
+- [ ] Static prompt: verbatim section constants (identity prefix branch: headless → Agent-SDK line, interactive → "You are Claude Code…"; sections rendered for OUR tool pool), runtime-shaped `# Environment` block from `PackContext`; preamble = `[System(prompt), User(<system-reminder> currentDate block)]`; reminder machinery/CLAUDE.md/git-status excluded per plan (open questions Q3/Q4); `strip_identity` knob.
+- [ ] Tests per plan §6: schema goldens per tool, description byte-pins, prompt snapshots (both identity branches), freshness-gate behavior suite, dispatch-level tool tests.
+
+**Dependencies:** Task 8 (pack framework); any wire for live runs
+**Files:** `crates/locode-packs/src/claude/…`, descriptions, snapshots, tests
+**Scope:** L
+
+## Task 18: OpenAI Responses wire — NEXT · **planned: [`plans/task-18-openai-responses-wire.md`](plans/task-18-openai-responses-wire.md)**
+**Description:** The OpenAI Responses `Provider`: `api_schema = "openai-responses"`, `POST {base_url}/v1/responses`, non-streaming, always-Bearer, **stateless** (`store: false` always — codex and grok both run it that way; OpenRouter's beta *rejects* stateful requests). Required for faithful codex (Responses-only; freeform+Lark `apply_patch`) and grok build's own backend for xAI models (encrypted reasoning replay, ZDR). Verified live through OpenRouter (custom-grammar tools, `instructions`, `provider` prefs, xAI encrypted reasoning — plan §0 probe log).
+
+**Acceptance criteria (distilled from the plan — resolve its §9 open questions first, esp. Q3 reasoning-replay encoding):**
+- [ ] **`ToolSpec` protocol change (ask-first)**: `parameters` → `input: ToolInputFormat { JsonSchema{parameters} | Freeform{syntax, definition} }`; defaulted `input_format()` on `Tool`/`DynTool`; ADR-0003 amendment text from plan §8.1 applied.
+- [ ] Build: System → `instructions` hoist (default; `InputMessage` knob), Developer → `role:"developer"` item, `ToolResult` → `function_call_output` (order-preserving explosion), `ToolUse` → `function_call`/`custom_tool_call` (`call_id` verbatim, no item `id`), FLAT function-tool shape + `{type:"custom", format:{grammar,lark}}`, `store:false` + `include:["reasoning.encrypted_content"]` on every request, `previous_response_id` never serialized.
+- [ ] Reasoning replay **whole-item-opaque**: `reasoning` output items round-trip byte-preserved (unknown fields included) via `Thinking{text: summary concat, signature: Some(item JSON)}`; replayed in block position minus `status`; ADR-0013 amendment per plan §8.2.
+- [ ] Parse: output-array iteration with `#[serde(other)]` tolerance; custom calls + invalid function args → `Value::String` (soft-error path); usage mapping incl. `cached_tokens` + `cache_write_tokens`; `status`/`incomplete_details` → stop mapping; in-body `status:"failed"` classified like grok (retryable 500 for `server_error`).
+- [ ] **Transport hoist**: `RetryPolicy`/`run_with_retry`(generic)/`backoff`/`HttpFailure`/`parse_retry_after`/`normalize_input_schema` move to shared `locode-provider::http`; the anthropic suite passes unchanged; OpenAI-family `classify` in `openai/` (429-`insufficient_quota` and OpenRouter 402 → `Quota`; numeric-code error bodies).
+- [ ] Config: `OpenAiModelConfig` (Bearer always; `OpenAiBackend::{Native,OpenRouter,Proxy}` detection; `custom_tools_supported` degradation knob for xAI; OpenRouter `provider` prefs injection; same `LOCODE_*` env story).
+- [ ] Fixture + canned-`TcpListener` tests per plan §6; `--api-schema openai-responses` in `locode-exec`; manual `#[ignore]` live smoke: gpt-5-mini grammar-tool round-trip + x-ai/grok-4.5 encrypted-reasoning replay + cache proof.
 
 **Dependencies:** Task 12 (patterns), Task 5 (trait)
 **Scope:** L
 
 ---
 
-## Deferred (reserved seams, not v0)
-freeform-grammar `apply_patch` (OpenAI Responses wire) · OpenAI Chat Completions wire · parallel tool
-batches (RwLock read/write) · compaction · OS sandbox · MCP · streaming events · `--json-schema`
-answers · JSONL session durability · multi-platform `rg` bundle matrix + macOS notarization/sidecar (packaging, ADR-0011).
+## Deferred (reserved seams, not scheduled)
+parallel tool batches (RwLock read/write) · compaction · OS sandbox · MCP · streaming events
+(SSE seams reserved in each wire plan) · `--json-schema` answers · JSONL session durability ·
+multi-platform `rg` bundle matrix + macOS notarization/sidecar (packaging, ADR-0011) ·
+pack session-start file context (AGENTS.md/CLAUDE.md loading — plans 19 Q4 / 20 Q3) ·
+codex unified exec (PTY) / `view_image` / hosted `web_search` · Claude Code
+TodoWrite/Task/WebFetch/WebSearch/NotebookEdit (plan 20 §1) · per-model codex prompt variants.
