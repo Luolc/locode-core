@@ -21,40 +21,8 @@
 use std::time::Duration;
 
 use super::wire::ErrorBody;
+pub use crate::http::{HttpFailure, parse_retry_after};
 use crate::provider::ProviderError;
-
-/// A classified HTTP failure plus the retry-control signals that ride beside
-/// the error taxonomy (the `x-should-retry` override and `Retry-After`).
-#[derive(Debug)]
-pub struct HttpFailure {
-    /// The classified error.
-    pub error: ProviderError,
-    /// `x-should-retry: false` was sent — forces terminal (a `true` never
-    /// forces a retry; it is ignored at construction).
-    pub force_terminal: bool,
-    /// Parsed `Retry-After` delay (integer seconds only; HTTP-dates → `None`).
-    pub retry_after: Option<Duration>,
-}
-
-impl HttpFailure {
-    /// A transport-layer failure (no HTTP status).
-    pub fn transport(message: impl Into<String>) -> Self {
-        Self {
-            error: ProviderError::Transport(message.into()),
-            force_terminal: false,
-            retry_after: None,
-        }
-    }
-
-    /// A terminal decode failure.
-    pub fn decode(message: impl Into<String>) -> Self {
-        Self {
-            error: ProviderError::Decode(message.into()),
-            force_terminal: false,
-            retry_after: None,
-        }
-    }
-}
 
 /// Classify an HTTP error response (plan §4.6 table).
 #[must_use]
@@ -104,14 +72,6 @@ pub fn classify(
         force_terminal: x_should_retry == Some(false),
         retry_after,
     }
-}
-
-/// Parse a `Retry-After` header value: integer delta-seconds only, capped by
-/// the caller's policy. HTTP-date forms → `None` (fall back to exp backoff) —
-/// grok's simplification (`client.rs:76-80`).
-#[must_use]
-pub fn parse_retry_after(value: &str) -> Option<Duration> {
-    value.trim().parse::<u64>().ok().map(Duration::from_secs)
 }
 
 #[cfg(test)]

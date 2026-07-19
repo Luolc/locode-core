@@ -8,6 +8,7 @@ use locode_protocol::{ContentBlock, ImageSource, ResultChunk, Role};
 
 use super::config::{DeveloperRendering, ModelConfig, ReasoningEncoding};
 use super::wire;
+pub use crate::http::normalize_input_schema;
 use crate::request::{CacheHint, ConversationRequest, ReasoningEffort};
 
 /// Build the Messages request from the neutral request + per-model config.
@@ -103,20 +104,6 @@ pub fn build_request(req: &ConversationRequest, cfg: &ModelConfig) -> wire::Mess
         "cache_control marker count {markers} exceeds Anthropic's hard cap of 4"
     );
     built
-}
-
-/// Normalize a schemars-derived schema into the `input_schema` the API accepts.
-///
-/// Per the Task-12 spike: our flat `Args` structs emit **no** `$defs`/`$ref`
-/// (generation inlines subschemas at the source, grok-style), so normalization
-/// reduces to stripping the top-level `$schema` meta-annotation. Shared across
-/// future wires — hoist out of `anthropic` when a second wire lands.
-#[must_use]
-pub fn normalize_input_schema(mut schema: serde_json::Value) -> serde_json::Value {
-    if let Some(obj) = schema.as_object_mut() {
-        obj.remove("$schema");
-    }
-    schema
 }
 
 /// Map the role-tagged protocol stream into (`system` blocks, wire messages):

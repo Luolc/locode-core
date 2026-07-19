@@ -6,26 +6,12 @@
 //! comma-joined `anthropic-beta` list when non-empty — **mirrored to
 //! `x-anthropic-beta` for OpenRouter** (plan §9.2) — and any extra headers.
 
-use std::time::Duration;
-
 use super::config::{ApiBackend, AuthScheme, ModelConfig};
-use super::error::{HttpFailure, classify, parse_retry_after};
+use super::error::classify;
 use super::parse::response_to_completion;
 use super::wire;
 use crate::completion::Completion;
-use crate::provider::ProviderError;
-
-/// Build the reqwest client with the wire's timeouts.
-///
-/// Non-streaming thinking turns can run minutes, so the total timeout is
-/// generous (10 min); the connect timeout stays tight (30 s).
-pub(crate) fn build_http_client() -> Result<reqwest::Client, ProviderError> {
-    reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(30))
-        .timeout(Duration::from_mins(10))
-        .build()
-        .map_err(|e| ProviderError::Transport(format!("client construction: {e}")))
-}
+use crate::http::{HttpFailure, parse_retry_after};
 
 /// Assemble the header pairs for one request (pure; unit-tested).
 pub(crate) fn build_header_pairs(cfg: &ModelConfig, auth: &AuthScheme) -> Vec<(String, String)> {

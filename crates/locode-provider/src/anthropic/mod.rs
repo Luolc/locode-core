@@ -60,7 +60,7 @@ impl AnthropicProvider {
     /// [`ProviderError::Transport`] when the HTTP client cannot be constructed.
     pub fn new(config: ModelConfig) -> Result<Self, ProviderError> {
         Ok(Self {
-            http: client::build_http_client()?,
+            http: crate::http::build_http_client()?,
             auth: Mutex::new(config.auth.clone()),
             config,
             retry: RetryPolicy::default(),
