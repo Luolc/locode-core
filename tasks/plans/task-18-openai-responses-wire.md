@@ -1037,3 +1037,14 @@ SWE-bench-style, orchestration/sandboxing/scoring external. Implications adopted
 one unified trace schema (A.1), honest per-wire usage reporting (A.2), and a new
 small task: graceful SIGTERM in `locode-exec` (cancel → synthesized paired
 transcript → report still emitted) so timed-out eval runs yield failure-case data.
+
+### A.5 §9 resolutions (user interview, 2026-07-19) — all open questions closed
+
+| § | Question | Resolution |
+|---|---|---|
+| Q1 | Default model | **Default `openai/gpt-5-mini`** (convenience default, mirroring the Anthropic wire; `LOCODE_MODEL` overrides). |
+| Q2 | `reasoning.summary` | **`"auto"` by default** — trace readability is a primary research activity; without it OpenAI reasoning summaries are often empty and `Reasoning.text` goes blank. Config knob to omit for score-only benchmark runs. |
+| Q3 | Reasoning replay encoding | Superseded by **A.1** (unified `Reasoning` block — user's design). |
+| Q4 | `prompt_cache_key` | **Wire the session id through now** (codex's behavior; the facade passes `EngineConfig.session_id` into provider config). Probe P6 (2026-07-19): `prompt_cache_key` sent with `x-ai/grok-4.5` via OpenRouter `/v1/responses` → `completed`, no error — safe to send unconditionally. |
+| Q5 | xAI custom-tool degradation | **Manual config flag** (`custom_tools_supported = false`), no model-id sniffing (heuristics rot; cross-pair runs want the tool encoding as an explicit recorded variable). Misconfiguration surfaces the API's own 422. |
+| Q6 | `Event::Init.tools` shape change | **Approved without a version bump** — no external stream consumers exist yet; the window closes when swe-lab ports, which argues for landing step 0 promptly. |
