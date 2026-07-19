@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use locode_protocol::{ContentBlock, ResultChunk, ToolCallRecord, ToolSpec};
+use locode_protocol::{ContentBlock, ResultChunk, ToolCallRecord, ToolInputFormat, ToolSpec};
 use serde_json::Value;
 
 use crate::ctx::ToolCtx;
@@ -51,6 +51,16 @@ pub trait DynTool: Send + Sync {
     fn description(&self) -> &str;
     /// The JSON Schema for this tool's arguments.
     fn parameters_schema(&self) -> Value;
+    /// How the tool's input is specified to the model (ADR-0003 amendment
+    /// 2026-07-19). Defaults to the derived JSON schema; a freeform tool
+    /// (raw-text args constrained by a grammar, e.g. codex `apply_patch`)
+    /// overrides this — and still rides the one dispatch door with
+    /// `Value::String` args.
+    fn input_format(&self) -> ToolInputFormat {
+        ToolInputFormat::JsonSchema {
+            parameters: self.parameters_schema(),
+        }
+    }
     /// Decode raw JSON args, run, and re-serialize into both result faces.
     ///
     /// # Errors
@@ -78,6 +88,10 @@ impl<T: Tool> DynTool for TypedTool<T> {
 
     fn parameters_schema(&self) -> Value {
         self.0.parameters_schema()
+    }
+
+    fn input_format(&self) -> ToolInputFormat {
+        self.0.input_format()
     }
 
     async fn call(&self, ctx: &ToolCtx, raw_args: Value) -> Result<ToolRunResult, ToolError> {
@@ -167,7 +181,7 @@ impl Registry {
             .map(|(name, tool)| ToolSpec {
                 name: name.clone(),
                 description: tool.description().to_owned(),
-                parameters: tool.parameters_schema(),
+                input: tool.input_format(),
             })
             .collect()
     }

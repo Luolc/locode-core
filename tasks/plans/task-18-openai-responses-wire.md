@@ -1048,3 +1048,58 @@ transcript → report still emitted) so timed-out eval runs yield failure-case d
 | Q4 | `prompt_cache_key` | **Wire the session id through now** (codex's behavior; the facade passes `EngineConfig.session_id` into provider config). Probe P6 (2026-07-19): `prompt_cache_key` sent with `x-ai/grok-4.5` via OpenRouter `/v1/responses` → `completed`, no error — safe to send unconditionally. |
 | Q5 | xAI custom-tool degradation | **Manual config flag** (`custom_tools_supported = false`), no model-id sniffing (heuristics rot; cross-pair runs want the tool encoding as an explicit recorded variable). Misconfiguration surfaces the API's own 422. |
 | Q6 | `Event::Init.tools` shape change | **Approved without a version bump** — no external stream consumers exist yet; the window closes when swe-lab ports, which argues for landing step 0 promptly. |
+
+### A.6 Post-implementation concerns & tricky parts (2026-07-19 — LOCKED FOR REVIEW)
+
+Written after the full implementation + live smokes, per the user's request:
+"after doing all your end-to-end smoke tests, re-highlight all those remaining
+concerns … lock that into the plan for me to check and revisit later."
+
+**Resolved during implementation (for the record):**
+- Truncation labeling: `Report.stop_reason` shipped; the engine resamples
+  empty completions (reasoning-only truncation) and errors when persistent —
+  never a silent `Completed` (ADR-0005/0009 amendments).
+- Trailing-reasoning replay guard implemented + unit-tested (the replay-400
+  class); the engine's empty-resample makes it near-unreachable in practice.
+- Freeform dispatch normalization **live-proven both ways**: gpt-5-mini native
+  `custom_tool_call` and grok-4.5 degraded `{"input": string}` both reach the
+  tool as the identical `Value::String` (smokes 2 and 3).
+- Two OpenRouter beta quirks found live and fixed: (1) `require_parameters:
+  true` + `tools` → guaranteed 404 on `/v1/responses` (param registry gap) —
+  dropped from this wire's default prefs; (2) a summary-only `reasoning`
+  object reads as "reasoning disabled" → 400 — summary now rides only
+  alongside an effort.
+
+**REMAINING — check/revisit these:**
+1. **OpenRouter `/v1/responses` is beta and demonstrably shifting** (two
+   quirks above were found in one afternoon). Discipline: any new request
+   parameter must pass the dual-model smoke (one OpenAI, one xAI run) before
+   shipping; re-run the smokes before every eval campaign.
+2. **The `require_parameters` protection is gone on this wire** — a provider
+   silently dropping `tools`/`reasoning` would now go undetected by routing.
+   Mitigation: the smokes assert observable effects (reasoning items present,
+   tool calls made, cache reads). Residual risk accepted, documented.
+3. **swe-lab must read `stop_reason`, not just `status`**: a truncated
+   response WITH partial text is still `status: completed` +
+   `stop_reason: "max_tokens"` — treating that run as a success would poison
+   evals. This is a documented contract for the swe-lab port.
+4. **Usage semantics are provider-defined**: `cache_creation` is never
+   reported on this family (honest `null`); xAI's `cache_read` comes in
+   chunky granules (128/1024 observed) unlike Anthropic's exact counts;
+   `reasoning_tokens` is not comparable across vendors. Don't chart them
+   cross-vendor.
+5. **Trace/cost weight**: replayed encrypted reasoning inflates input tokens
+   (grok e2e run: 19.7k input over 4 turns, 13.4k cached). Prompt caching
+   mitigates cost; swe-lab storage will notice trace size.
+6. **`custom_tools_supported` is a manual flag** — running a freeform-tool
+   pack (codex, Task 19) against xAI without flipping it will 422. The exec
+   exposes no CLI flag yet; Task 19 should decide the ergonomics
+   (per-run config file? `--custom-tools=off`?).
+7. **`strict: false` everywhere**: schemars-derived schemas don't satisfy
+   strict mode's all-required rule. Strict function tools (better arg
+   fidelity on OpenAI models) are a future refinement with a schema-generation
+   change attached.
+8. **xAI's Responses dialect is its own** (`format: "xai-responses-v1"`):
+   future drift between xAI and OpenAI Responses lands on this one wire. The
+   whole-item-opaque design absorbs unknown fields; the `format` tag in every
+   stored payload gives forensics if replay ever breaks.

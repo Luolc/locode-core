@@ -44,3 +44,13 @@ default**; the `MaxTurns` terminal fires only when a caller sets a ceiling
 event shape; changed before any binary emits the stream). The "engine never
 hangs" consequence now holds via the other terminals plus caller interrupts —
 the same posture as the studied harnesses.
+
+## Amendment (2026-07-19): empty completions are resampled, never `Completed`
+
+A completion with no text and no tool calls (e.g. a reasoning-only turn
+truncated by `max_output_tokens`) is **resampled** on the existing bounded
+loop-level budget, and becomes `ModelError` when persistent — grok's `is_empty`
+rule; codex has no special handling (checked: its `Incomplete` status is never
+branched on). Labeling such turns `Completed` would silently poison eval data.
+The report also now carries `stop_reason` (ADR-0009 amendment) so truncation is
+visible to the eval pipeline.

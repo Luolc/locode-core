@@ -60,7 +60,7 @@ impl AnthropicProvider {
     /// [`ProviderError::Transport`] when the HTTP client cannot be constructed.
     pub fn new(config: ModelConfig) -> Result<Self, ProviderError> {
         Ok(Self {
-            http: client::build_http_client()?,
+            http: crate::http::build_http_client()?,
             auth: Mutex::new(config.auth.clone()),
             config,
             retry: RetryPolicy::default(),
@@ -140,6 +140,19 @@ impl Provider for AnthropicProvider {
     }
 
     async fn complete(&self, request: &ConversationRequest) -> Result<Completion, ProviderError> {
+        // 0. This wire has fixed effort mappings on the Budget encoding — an
+        //    unknown tier has no principled budget; reject clearly pre-send
+        //    (never silently clamp).
+        if let Some(crate::request::ReasoningEffort::Other(tier)) =
+            &request.sampling_args.reasoning_effort
+            && self.config.reasoning_encoding == config::ReasoningEncoding::Budget
+        {
+            return Err(ProviderError::Config(format!(
+                "unknown reasoning-effort tier {tier:?} has no budget mapping on the \
+                 anthropic wire (Budget encoding)"
+            )));
+        }
+
         // 1. Defensive transcript repair on a clone — a request must never
         //    leave this crate with a dangling tool_use or duplicate tool_result,
         //    regardless of who called it (ADR-0004; the engine runs the same

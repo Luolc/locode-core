@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use locode::{
     AnthropicProvider, CacheHint, Completion, ContentBlock, EngineConfig, EventSink, FnSink, Host,
-    HostConfig, MockProvider, NullSink, PackContext, PathPolicy, Provider, SamplingArgs, Session,
-    StopReason, Usage, grok,
+    HostConfig, MockProvider, NullSink, OpenAiResponsesProvider, PackContext, PathPolicy, Provider,
+    SamplingArgs, Session, StopReason, Usage, grok,
 };
 
 use crate::cli::{ApiSchema, Cli, Harness, OutputFormat};
@@ -67,10 +67,20 @@ pub async fn run(cli: Cli) -> Result<ExitCode, PreRunError> {
     };
 
     // ---- 4. Provider: fail BEFORE driving the loop on missing config. ----
+    let session_id = new_session_id();
     let (provider, model): (Arc<dyn Provider>, String) = match cli.api_schema {
         ApiSchema::Anthropic => {
             let provider = AnthropicProvider::from_env()
                 .map_err(|e| PreRunError(format!("anthropic wire: {e}")))?;
+            let model = provider.config().model.clone();
+            (Arc::new(provider), model)
+        }
+        ApiSchema::OpenAiResponses => {
+            let mut provider = OpenAiResponsesProvider::from_env()
+                .map_err(|e| PreRunError(format!("openai-responses wire: {e}")))?;
+            // Cache-routing hint = the session id (codex's rule; plan §A.5 Q4 —
+            // probe-verified harmless for xAI models).
+            provider.config_mut().prompt_cache_key = Some(session_id.clone());
             let model = provider.config().model.clone();
             (Arc::new(provider), model)
         }
@@ -79,7 +89,7 @@ pub async fn run(cli: Cli) -> Result<ExitCode, PreRunError> {
 
     // ---- 5. Engine config + event sink per output mode. ----
     let config = EngineConfig {
-        session_id: session_id(),
+        session_id,
         harness: cli.harness.as_str().to_string(),
         api_schema: provider.api_schema().to_string(),
         model,
@@ -142,7 +152,7 @@ fn mock_provider() -> MockProvider {
 }
 
 /// A unique-enough session id for a headless run (no uuid dep in v0).
-fn session_id() -> String {
+fn new_session_id() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis());

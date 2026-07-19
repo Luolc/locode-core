@@ -55,8 +55,18 @@ impl Default for SamplingArgs {
 ///
 /// Grok Build proves this shape: one neutral enum with per-backend mappings
 /// (`to_messages_api()` → Anthropic budget, `to_responses_api()` → OpenAI effort).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Tiers fragment per vendor/model generation (OpenAI `none…xhigh`, codex
+/// `minimal…xhigh`, grok stores per-model allowed-effort lists), so the ladder
+/// covers the observed union and `Other` passes vendor-specific strings
+/// through verbatim (ADR-0007 amendment 2026-07-19). Wires surface the API's
+/// own error on unsupported tiers — never silently clamp (silent clamping
+/// would corrupt eval comparisons).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ReasoningEffort {
+    /// Explicitly send the wire's "none" (distinct from omitting the param —
+    /// `SamplingArgs.reasoning_effort: None` omits it entirely).
+    None,
     /// Minimal reasoning.
     Minimal,
     /// Low reasoning effort.
@@ -65,6 +75,11 @@ pub enum ReasoningEffort {
     Medium,
     /// High reasoning effort.
     High,
+    /// Extra-high reasoning effort.
+    XHigh,
+    /// A vendor/model-specific tier, passed through verbatim by wires that
+    /// take effort strings; wires with fixed mappings soft-reject it.
+    Other(String),
 }
 
 /// Where the wire should place prompt-cache breakpoints (ADR-0007).

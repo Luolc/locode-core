@@ -18,8 +18,9 @@
 
 // ---- protocol: conversation, report envelope, stream events ----
 pub use locode_protocol::{
-    ContentBlock, Conversation, Event, ImageSource, Message, Report, ResultChunk, Role, Status,
-    ToolCallRecord, ToolSpec, Usage, reconstruct_conversation,
+    ContentBlock, Conversation, Event, GrammarSyntax, ImageSource, Message, ReasoningFormat,
+    Report, ResultChunk, Role, Status, ToolCallRecord, ToolInputFormat, ToolSpec, Usage,
+    reconstruct_conversation,
 };
 
 // ---- engine: the driving API ----
@@ -31,8 +32,9 @@ pub use locode_provider::anthropic::{
     RetryPolicy,
 };
 pub use locode_provider::{
-    AnthropicProvider, CacheHint, Completion, ConversationRequest, MockProvider, Provider,
-    ProviderError, ReasoningEffort, SamplingArgs, StopReason,
+    AnthropicProvider, CacheHint, Completion, ConversationRequest, MockProvider, OpenAiBackend,
+    OpenAiModelConfig, OpenAiResponsesProvider, Provider, ProviderError, ReasoningEffort,
+    SamplingArgs, StopReason, SystemPlacement,
 };
 
 // ---- packs: harness selection ----

@@ -25,3 +25,18 @@ Illustrative envelope: `{ schema_version, status, harness, api_schema, final_mes
 - Any caller can parse one JSON blob and know the run's full outcome.
 - A stray `println!` in `locode-exec` fails the build.
 - `harness`/`api_schema` in the envelope make A/B comparison mechanical; `schema_version` protects consumers against format drift.
+
+## Amendment (2026-07-19): `stop_reason` + honest usage counters
+
+Two envelope deltas, landed together before any external consumer exists
+(swe-lab has not ported yet; `schema_version` stays 1 as the envelope's shape
+is still pre-adoption):
+
+- **`stop_reason: Option<String>`** — the final completion's neutral stop
+  reason (`"end_turn"`, `"max_tokens"`, …), so an eval pipeline distinguishes
+  "model finished" from "model got truncated" without re-reading the trace.
+- **Usage counters become `Option<u64>`** (`cache_read_tokens`,
+  `cache_creation_tokens`, new `reasoning_tokens`): `Some(0)` ≠ `None` —
+  "reported as zero" vs "this wire does not report the counter". Zero-as-N/A
+  was rejected (user decision); summation treats `None` as identity, so a run
+  total is `null` only when no turn ever reported the counter.

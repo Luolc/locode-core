@@ -36,14 +36,21 @@ pub fn response_to_completion(resp: wire::MessagesResponse) -> Result<Completion
                 thinking,
                 signature,
             } => {
-                content.push(ContentBlock::Thinking {
+                content.push(ContentBlock::Reasoning {
+                    format: locode_protocol::ReasoningFormat::Anthropic,
                     text: thinking,
                     signature: Some(signature),
+                    payload: None,
                 });
             }
             // Encrypted thinking is kept opaquely for verbatim replay.
             wire::ContentBlock::RedactedThinking { data } => {
-                content.push(ContentBlock::RedactedThinking { data });
+                content.push(ContentBlock::Reasoning {
+                    format: locode_protocol::ReasoningFormat::AnthropicRedacted,
+                    text: String::new(),
+                    signature: None,
+                    payload: Some(serde_json::Value::String(data)),
+                });
             }
             // Unexpected in an assistant response → ignore (grok does the same).
             wire::ContentBlock::Image { .. } | wire::ContentBlock::ToolResult { .. } => {}
@@ -71,8 +78,12 @@ fn map_usage(usage: &wire::MessagesUsage) -> Usage {
     Usage {
         input_tokens: usage.input_tokens.unwrap_or_default(),
         output_tokens: usage.output_tokens.unwrap_or_default(),
-        cache_read_tokens: usage.cache_read_input_tokens.unwrap_or_default(),
-        cache_creation_tokens: usage.cache_creation_input_tokens.unwrap_or_default(),
+        // Option-through: None = the wire/gateway did not report the counter
+        // (ADR-0009 amendment — Some(0) is a real zero, None is N/A).
+        cache_read_tokens: usage.cache_read_input_tokens,
+        cache_creation_tokens: usage.cache_creation_input_tokens,
+        // Anthropic folds thinking tokens into output_tokens — never reported.
+        reasoning_tokens: None,
     }
 }
 

@@ -2,7 +2,7 @@
 //! thinking-signature round-trip (incl. the interleaved fixture), usage mapping,
 //! stop-reason mapping, context-overflow folding.
 
-use locode_protocol::{ContentBlock, Message, Role};
+use locode_protocol::{ContentBlock, Message, ReasoningFormat, Role};
 use locode_provider::anthropic::wire;
 use locode_provider::anthropic::{ModelConfig, build_request, response_to_completion};
 use locode_provider::{CacheHint, ConversationRequest, ProviderError, SamplingArgs, StopReason};
@@ -38,8 +38,8 @@ fn usage_maps_all_four_fields() {
     let completion = response_to_completion(fixture("tool_use_response.json")).expect("parses");
     assert_eq!(completion.usage.input_tokens, 1024);
     assert_eq!(completion.usage.output_tokens, 76);
-    assert_eq!(completion.usage.cache_creation_tokens, 900);
-    assert_eq!(completion.usage.cache_read_tokens, 0);
+    assert_eq!(completion.usage.cache_creation_tokens, Some(900));
+    assert_eq!(completion.usage.cache_read_tokens, Some(0));
 }
 
 /// The load-bearing test (plan §6/§9.3): an interleaved
@@ -55,19 +55,20 @@ fn interleaved_thinking_signatures_round_trip_through_build() {
     assert_eq!(completion.content.len(), 5);
     assert!(matches!(
         &completion.content[3],
-        ContentBlock::RedactedThinking { data } if data == "EncryptedOpaquePayload=="
+        ContentBlock::Reasoning { format: ReasoningFormat::AnthropicRedacted, payload: Some(p), .. }
+            if p.as_str() == Some("EncryptedOpaquePayload==")
     ));
     assert!(matches!(
         &completion.content[0],
-        ContentBlock::Thinking { signature: Some(sig), .. }
+        ContentBlock::Reasoning { signature: Some(sig), .. }
             if sig.starts_with("EqQBCgIYAhIM1gbcDa9GJwZA")
     ));
     assert!(matches!(
         &completion.content[2],
-        ContentBlock::Thinking { signature: Some(sig), .. }
+        ContentBlock::Reasoning { signature: Some(sig), .. }
             if sig == "EqQBCgIYAhIMSecondSignature999AbCdEfGh"
     ));
-    assert_eq!(completion.usage.cache_read_tokens, 1800);
+    assert_eq!(completion.usage.cache_read_tokens, Some(1800));
 
     // Replay: append the completion as an assistant turn and rebuild.
     let req = ConversationRequest {
@@ -180,7 +181,7 @@ fn refusal_is_a_normal_completion() {
 /// Pins the live-observed gateway behavior: OpenRouter serving a
 /// non-Anthropic model through /v1/messages returns `null` cache counters
 /// (`"cache_creation_input_tokens": null`). A `u64` field would fail the
-/// whole response; the Option-based usage must parse it as zero.
+/// whole response; the Option-based usage carries it as `None` (not reported).
 #[test]
 fn null_usage_counters_parse_as_zero() {
     let resp: wire::MessagesResponse = serde_json::from_str(
@@ -196,7 +197,10 @@ fn null_usage_counters_parse_as_zero() {
     .unwrap_or_else(|e| panic!("null counters must not fail the parse: {e}"));
     let completion = response_to_completion(resp).expect("ok");
     assert_eq!(completion.usage.input_tokens, 10);
-    assert_eq!(completion.usage.cache_creation_tokens, 0, "null → zero");
+    assert_eq!(
+        completion.usage.cache_creation_tokens, None,
+        "null → not reported (the honest N/A, not a fake zero)"
+    );
 }
 
 #[test]

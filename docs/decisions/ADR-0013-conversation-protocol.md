@@ -124,3 +124,23 @@ RedactedThinking { data: String },
 Carried opaquely end-to-end: the wire parses it into the block, the engine
 appends it with the rest of the assistant content, and the wire re-emits it
 untouched on the next request. No other crate interprets `data`.
+
+## Amendment (2026-07-19): unified `Reasoning` block (supersedes the `RedactedThinking` amendment)
+
+`ContentBlock::Thinking` and `ContentBlock::RedactedThinking` are replaced by one
+block, designed in the Task-18 plan review (user's design):
+
+```rust
+Reasoning { format: ReasoningFormat, text: String,
+            signature: Option<String>, payload: Option<Value> }
+enum ReasoningFormat { Anthropic, AnthropicRedacted, OpenAiResponses, TextOnly }
+```
+
+`format` selects the replay contract (values echo the `api_schema` strings):
+`anthropic` = full `text` + `signature` validator; `anthropic_redacted` =
+encrypted `payload`; `openai_responses` = summary in `text`, the WHOLE Responses
+reasoning item opaquely in `payload` (replayed verbatim — gateways add fields
+nobody models); `text_only` = capture-only, never replayed. Each wire's build
+replays only its own format(s) and drops foreign formats (a session never
+crosses wires). Rationale: one reasoning shape in every trace/report for eval
+tooling, with semantics explicit instead of inferred from field shapes.

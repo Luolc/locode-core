@@ -24,9 +24,11 @@ fn sample_report() -> Report {
         usage: Usage {
             input_tokens: 100,
             output_tokens: 20,
-            cache_read_tokens: 0,
-            cache_creation_tokens: 0,
+            cache_read_tokens: Some(0),
+            cache_creation_tokens: None,
+            reasoning_tokens: None,
         },
+        stop_reason: Some("end_turn".into()),
         session_id: "sess-abc".to_string(),
         error: None,
     }

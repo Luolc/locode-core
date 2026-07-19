@@ -26,7 +26,8 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use locode_protocol::{
-        ContentBlock, Conversation, Event, Role, Status, Usage, reconstruct_conversation,
+        ContentBlock, Conversation, Event, ReasoningFormat, Role, Status, Usage,
+        reconstruct_conversation,
     };
     use locode_provider::{Completion, MockProvider, ProviderError, StopReason};
     use locode_tools::{Registry, Tool, ToolCtx, ToolError, ToolKind, ToolOutput};
@@ -245,6 +246,59 @@ mod tests {
         assert!(!report.tool_calls[0].ok);
     }
 
+    /// An empty completion (no text, no tool calls — e.g. a reasoning-only
+    /// turn truncated by `max_output_tokens`) is resampled, not labeled
+    /// Completed (ADR-0005 amendment 2026-07-19; grok's `is_empty` rule).
+    #[tokio::test]
+    async fn empty_completion_resamples_then_succeeds() {
+        let empty = Completion {
+            content: vec![ContentBlock::Reasoning {
+                format: ReasoningFormat::Anthropic,
+                text: "thinking only".into(),
+                signature: Some("sig".into()),
+                payload: None,
+            }],
+            usage: Usage::default(),
+            stop: StopReason::MaxTokens,
+        };
+        let (mut session, _events) = session_with(
+            vec![Ok(empty), Ok(text_turn("recovered"))],
+            echo_registry(),
+            config(),
+        );
+        let report = session.run_text("go").await;
+        assert_eq!(report.status, Status::Completed);
+        assert_eq!(report.final_message.as_deref(), Some("recovered"));
+        assert_eq!(report.stop_reason.as_deref(), Some("end_turn"));
+    }
+
+    #[tokio::test]
+    async fn persistent_empty_completions_are_model_error() {
+        let empty = || Completion {
+            content: vec![],
+            usage: Usage::default(),
+            stop: StopReason::MaxTokens,
+        };
+        // resample_retries = 2 → initial + 2 resamples, all empty → ModelError.
+        let (mut session, _events) = session_with(
+            vec![Ok(empty()), Ok(empty()), Ok(empty())],
+            echo_registry(),
+            config(),
+        );
+        let report = session.run_text("go").await;
+        assert_eq!(report.status, Status::ModelError);
+        assert!(
+            report
+                .error
+                .as_deref()
+                .unwrap_or("")
+                .contains("empty completion"),
+            "error names the cause: {:?}",
+            report.error
+        );
+        assert_eq!(report.stop_reason, None, "no completion was accepted");
+    }
+
     // ---- transcript hygiene ----
 
     #[tokio::test]
@@ -303,9 +357,11 @@ mod tests {
     async fn thinking_block_is_appended_verbatim() {
         let completion = Completion {
             content: vec![
-                ContentBlock::Thinking {
+                ContentBlock::Reasoning {
+                    format: ReasoningFormat::Anthropic,
                     text: "reasoning".into(),
                     signature: Some("sig-xyz".into()),
+                    payload: None,
                 },
                 ContentBlock::Text {
                     text: "answer".into(),
@@ -324,7 +380,7 @@ mod tests {
                 message.content.iter().any(|b| {
                     matches!(
                         b,
-                        ContentBlock::Thinking { signature: Some(sig), .. } if sig == "sig-xyz"
+                        ContentBlock::Reasoning { signature: Some(sig), .. } if sig == "sig-xyz"
                     )
                 })
             }

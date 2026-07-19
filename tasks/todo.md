@@ -396,7 +396,7 @@ good ad-hoc exercise, not a tracked deliverable.
 **Files:** `crates/locode-packs/src/claude/…`, descriptions, snapshots, tests
 **Scope:** L
 
-## Task 18: OpenAI Responses wire — NEXT · **planned: [`plans/task-18-openai-responses-wire.md`](plans/task-18-openai-responses-wire.md)**
+## Task 18: OpenAI Responses wire ✅ done (2026-07-19) · **planned: [`plans/task-18-openai-responses-wire.md`](plans/task-18-openai-responses-wire.md)**
 > **Review decisions folded in (2026-07-19, plan addendum):** step 0 is a protocol migration —
 > unified `Reasoning{format, text, signature, payload}` block (+`ReasoningFormat`) replacing
 > `Thinking`/`RedactedThinking`; `Usage` counters become `Option<u64>` (+`reasoning_tokens`);
@@ -405,13 +405,13 @@ good ad-hoc exercise, not a tracked deliverable.
 **Description:** The OpenAI Responses `Provider`: `api_schema = "openai-responses"`, `POST {base_url}/v1/responses`, non-streaming, always-Bearer, **stateless** (`store: false` always — codex and grok both run it that way; OpenRouter's beta *rejects* stateful requests). Required for faithful codex (Responses-only; freeform+Lark `apply_patch`) and grok build's own backend for xAI models (encrypted reasoning replay, ZDR). Verified live through OpenRouter (custom-grammar tools, `instructions`, `provider` prefs, xAI encrypted reasoning — plan §0 probe log).
 
 **Acceptance criteria (distilled from the plan — resolve its §9 open questions first, esp. Q3 reasoning-replay encoding):**
-- [ ] **`ToolSpec` protocol change (ask-first)**: `parameters` → `input: ToolInputFormat { JsonSchema{parameters} | Freeform{syntax, definition} }`; defaulted `input_format()` on `Tool`/`DynTool`; ADR-0003 amendment text from plan §8.1 applied.
-- [ ] Build: System → `instructions` hoist (default; `InputMessage` knob), Developer → `role:"developer"` item, `ToolResult` → `function_call_output` (order-preserving explosion), `ToolUse` → `function_call`/`custom_tool_call` (`call_id` verbatim, no item `id`), FLAT function-tool shape + `{type:"custom", format:{grammar,lark}}`, `store:false` + `include:["reasoning.encrypted_content"]` on every request, `previous_response_id` never serialized.
-- [ ] Reasoning replay **whole-item-opaque**: `reasoning` output items round-trip byte-preserved (unknown fields included) via `Thinking{text: summary concat, signature: Some(item JSON)}`; replayed in block position minus `status`; ADR-0013 amendment per plan §8.2.
-- [ ] Parse: output-array iteration with `#[serde(other)]` tolerance; custom calls + invalid function args → `Value::String` (soft-error path); usage mapping incl. `cached_tokens` + `cache_write_tokens`; `status`/`incomplete_details` → stop mapping; in-body `status:"failed"` classified like grok (retryable 500 for `server_error`).
-- [ ] **Transport hoist**: `RetryPolicy`/`run_with_retry`(generic)/`backoff`/`HttpFailure`/`parse_retry_after`/`normalize_input_schema` move to shared `locode-provider::http`; the anthropic suite passes unchanged; OpenAI-family `classify` in `openai/` (429-`insufficient_quota` and OpenRouter 402 → `Quota`; numeric-code error bodies).
-- [ ] Config: `OpenAiModelConfig` (Bearer always; `OpenAiBackend::{Native,OpenRouter,Proxy}` detection; `custom_tools_supported` degradation knob for xAI; OpenRouter `provider` prefs injection; same `LOCODE_*` env story).
-- [ ] Fixture + canned-`TcpListener` tests per plan §6; `--api-schema openai-responses` in `locode-exec`; manual `#[ignore]` live smoke: gpt-5-mini grammar-tool round-trip + x-ai/grok-4.5 encrypted-reasoning replay + cache proof.
+- [x] **`ToolSpec` protocol change (ask-first)**: `parameters` → `input: ToolInputFormat { JsonSchema{parameters} | Freeform{syntax, definition} }`; defaulted `input_format()` on `Tool`/`DynTool`; ADR-0003 amendment text from plan §8.1 applied.
+- [x] Build: System → `instructions` hoist (default; `InputMessage` knob), Developer → `role:"developer"` item, `ToolResult` → `function_call_output` (order-preserving explosion), `ToolUse` → `function_call`/`custom_tool_call` (`call_id` verbatim, no item `id`), FLAT function-tool shape + `{type:"custom", format:{grammar,lark}}`, `store:false` + `include:["reasoning.encrypted_content"]` on every request, `previous_response_id` never serialized.
+- [x] Reasoning replay **whole-item-opaque**: `reasoning` output items round-trip byte-preserved (unknown fields included) via `Thinking{text: summary concat, signature: Some(item JSON)}`; replayed in block position minus `status`; ADR-0013 amendment per plan §8.2.
+- [x] Parse: output-array iteration with `#[serde(other)]` tolerance; custom calls + invalid function args → `Value::String` (soft-error path); usage mapping incl. `cached_tokens` + `cache_write_tokens`; `status`/`incomplete_details` → stop mapping; in-body `status:"failed"` classified like grok (retryable 500 for `server_error`).
+- [x] **Transport hoist**: `RetryPolicy`/`run_with_retry`(generic)/`backoff`/`HttpFailure`/`parse_retry_after`/`normalize_input_schema` move to shared `locode-provider::http`; the anthropic suite passes unchanged; OpenAI-family `classify` in `openai/` (429-`insufficient_quota` and OpenRouter 402 → `Quota`; numeric-code error bodies).
+- [x] Config: `OpenAiModelConfig` (Bearer always; `OpenAiBackend::{Native,OpenRouter,Proxy}` detection; `custom_tools_supported` degradation knob for xAI; OpenRouter `provider` prefs injection; same `LOCODE_*` env story).
+- [x] Fixture + canned-`TcpListener` tests per plan §6; `--api-schema openai-responses` in `locode-exec`; manual `#[ignore]` live smoke: gpt-5-mini grammar-tool round-trip + x-ai/grok-4.5 encrypted-reasoning replay + cache proof.
 
 **Dependencies:** Task 12 (patterns), Task 5 (trait)
 **Scope:** L
@@ -426,11 +426,11 @@ and still emit the report (partial turns/usage) before exiting — so timed-out 
 yield failure-case traces instead of nothing.
 
 **Acceptance criteria:**
-- [ ] SIGTERM during a run → exit with the normal artifact on stdout (`json`: one report with
+- [x] SIGTERM during a run → exit with the normal artifact on stdout (`json`: one report with
   a non-`completed` status; `stream-json`: the stream stays valid JSONL ending in `result`);
   transcript validity holds (every `tool_use` paired).
-- [ ] SIGTERM before the run starts → clean exit 1, nothing on stdout.
-- [ ] Integration test drives the binary, sends SIGTERM mid-run (slow mock tool), asserts the
+- [x] SIGTERM before the run starts → clean exit 1, nothing on stdout.
+- [x] Integration test drives the binary, sends SIGTERM mid-run (slow mock tool), asserts the
   report parses.
 
 **Dependencies:** Task 14

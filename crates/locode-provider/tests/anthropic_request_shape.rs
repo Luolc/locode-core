@@ -2,7 +2,9 @@
 //! count, system hoist, Developer rendering, temp-omit, effort mapping, verbatim
 //! ids, `is_error` serialization, schema normalization, OpenRouter prefs.
 
-use locode_protocol::{ContentBlock, Message, ResultChunk, Role, ToolSpec};
+use locode_protocol::{
+    ContentBlock, Message, ReasoningFormat, ResultChunk, Role, ToolInputFormat, ToolSpec,
+};
 use locode_provider::anthropic::{
     ApiBackend, DeveloperRendering, ModelConfig, ReasoningEncoding, build_request,
     count_cache_controls, normalize_input_schema,
@@ -240,9 +242,11 @@ fn tool_use_ids_round_trip_verbatim() {
         msg(
             Role::Assistant,
             vec![
-                ContentBlock::Thinking {
+                ContentBlock::Reasoning {
+                    format: ReasoningFormat::Anthropic,
                     text: "let me check".into(),
                     signature: Some("sig-xyz".into()),
+                    payload: None,
                 },
                 ContentBlock::ToolUse {
                     id: "toolu_01AbCdEf".into(),
@@ -280,9 +284,11 @@ fn unsigned_thinking_is_dropped_on_send() {
     let req = base_request(vec![msg(
         Role::Assistant,
         vec![
-            ContentBlock::Thinking {
+            ContentBlock::Reasoning {
+                format: ReasoningFormat::Anthropic,
                 text: "unsigned".into(),
                 signature: None,
+                payload: None,
             },
             text("visible"),
         ],
@@ -335,13 +341,15 @@ fn tool_schema_is_normalized() {
     req.tools = vec![ToolSpec {
         name: "read_file".into(),
         description: "Read a file.".into(),
-        parameters: json!({
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "type": "object",
-            "title": "ReadFileArgs",
-            "properties": {"target_file": {"type": "string"}},
-            "required": ["target_file"]
-        }),
+        input: ToolInputFormat::JsonSchema {
+            parameters: json!({
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "title": "ReadFileArgs",
+                "properties": {"target_file": {"type": "string"}},
+                "required": ["target_file"]
+            }),
+        },
     }];
     let built = build_request(&req, &native_cfg());
     let json = serde_json::to_value(&built).unwrap();

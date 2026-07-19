@@ -74,21 +74,26 @@ pub enum ContentBlock {
         /// Where the image bytes come from.
         source: ImageSource,
     },
-    /// Assistant reasoning (extended thinking).
-    Thinking {
-        /// The reasoning text.
-        text: String,
-        /// Opaque provider signature required to replay the thinking block, if any.
-        signature: Option<String>,
-    },
-    /// Assistant reasoning the provider encrypted (Anthropic `redacted_thinking`).
+    /// Assistant reasoning, unified across wires (ADR-0013 amendment
+    /// 2026-07-19; replaces the earlier `Thinking`/`RedactedThinking` pair).
     ///
-    /// Carried opaquely and **replayed verbatim** exactly like signed thinking —
-    /// dropping it from a thinking + tool-use turn invalidates the replay.
-    /// (Observed live on the Anthropic wire during the Task-12 smoke test.)
-    RedactedThinking {
-        /// The provider's encrypted payload, replayed untouched.
-        data: String,
+    /// [`ReasoningFormat`] selects the replay contract; each wire's build
+    /// replays only its own format(s) and **drops foreign formats** (a session
+    /// never crosses wires, so nothing is lost).
+    Reasoning {
+        /// Which encoding/replay contract this data follows.
+        format: ReasoningFormat,
+        /// Human-readable reasoning: the full text (`anthropic`), empty
+        /// (`anthropic_redacted`), the summary (`openai_responses`), or the
+        /// captured text (`text_only`).
+        text: String,
+        /// Anthropic's validator over `text` (`anthropic` format only).
+        signature: Option<String>,
+        /// The wire's opaque replay payload, replayed verbatim and never
+        /// interpreted: the whole Responses reasoning item
+        /// (`openai_responses`) or Anthropic's redacted-thinking data
+        /// (`anthropic_redacted`).
+        payload: Option<Value>,
     },
     /// A tool call emitted by the assistant.
     ToolUse {
@@ -144,6 +149,28 @@ pub enum ImageSource {
     },
 }
 
+/// The encoding/replay contract of a [`ContentBlock::Reasoning`] block.
+///
+/// Named after the wire's own vocabulary (Responses reasoning items tag
+/// themselves `format: "openai-responses-v1"`). Serialized values deliberately
+/// echo the `api_schema` strings so a trace reader maps block → wire at a
+/// glance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ReasoningFormat {
+    /// Anthropic extended thinking: full `text` + `signature` validator.
+    Anthropic,
+    /// Anthropic `redacted_thinking`: encrypted `payload`, empty `text`.
+    AnthropicRedacted,
+    /// OpenAI Responses reasoning item: summary in `text`, the WHOLE item in
+    /// `payload` (id + summary + `encrypted_content` + `format` + future fields).
+    OpenAiResponses,
+    /// Capture-only reasoning with no replay contract (e.g. Chat Completions
+    /// gateway extensions). Never replayed by any wire.
+    TextOnly,
+}
+
 // ============================== Report envelope ==============================
 
 /// The single JSON document `locode-exec` prints to stdout (ADR-0009).
@@ -173,6 +200,12 @@ pub struct Report {
     pub usage: Usage,
     /// The session identifier.
     pub session_id: String,
+    /// The final model stop reason (`"end_turn"`, `"max_tokens"`, …), when a
+    /// completion was received (ADR-0009 amendment 2026-07-19): lets an eval
+    /// pipeline distinguish "model finished" from "model got truncated"
+    /// without re-reading the trace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
     /// A fatal error message, if the run ended in `status == error`/`model_error`.
     pub error: Option<String>,
 }
@@ -216,10 +249,26 @@ pub struct Usage {
     pub input_tokens: u64,
     /// Output (completion) tokens.
     pub output_tokens: u64,
-    /// Tokens served from the prompt cache.
-    pub cache_read_tokens: u64,
-    /// Tokens written to the prompt cache.
-    pub cache_creation_tokens: u64,
+    /// Tokens served from the prompt cache. **`None` = this wire/provider does
+    /// not report the counter; `Some(0)` = reported as zero** (a real signal:
+    /// no cache hit). ADR-0009 amendment 2026-07-19 — zero-as-N/A rejected.
+    pub cache_read_tokens: Option<u64>,
+    /// Tokens written to the prompt cache (`None` on wires that never report
+    /// writes, e.g. the OpenAI family).
+    pub cache_creation_tokens: Option<u64>,
+    /// Reasoning/thinking tokens (`None` on wires that fold them into
+    /// `output_tokens`, e.g. Anthropic).
+    pub reasoning_tokens: Option<u64>,
+}
+
+/// `Some+Some` sums; `None` is the identity — a run total is `None` only if no
+/// turn ever reported the counter.
+fn add_opt(a: Option<u64>, b: Option<u64>) -> Option<u64> {
+    match (a, b) {
+        (Some(x), Some(y)) => Some(x + y),
+        (Some(x), None) | (None, Some(x)) => Some(x),
+        (None, None) => None,
+    }
 }
 
 impl std::ops::AddAssign for Usage {
@@ -227,8 +276,9 @@ impl std::ops::AddAssign for Usage {
     fn add_assign(&mut self, rhs: Self) {
         self.input_tokens += rhs.input_tokens;
         self.output_tokens += rhs.output_tokens;
-        self.cache_read_tokens += rhs.cache_read_tokens;
-        self.cache_creation_tokens += rhs.cache_creation_tokens;
+        self.cache_read_tokens = add_opt(self.cache_read_tokens, rhs.cache_read_tokens);
+        self.cache_creation_tokens = add_opt(self.cache_creation_tokens, rhs.cache_creation_tokens);
+        self.reasoning_tokens = add_opt(self.reasoning_tokens, rhs.reasoning_tokens);
     }
 }
 
@@ -242,14 +292,48 @@ impl std::ops::AddAssign for Usage {
 /// It lives in `locode-protocol` because both `locode-tools` (which builds it) and
 /// `locode-provider` (which consumes it via `ConversationRequest`) need it, and the
 /// dependency graph forbids `provider → tools`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolSpec {
     /// The model-facing wire name (the harness pack's name for the tool).
     pub name: String,
     /// The tool description offered to the model.
     pub description: String,
-    /// The JSON Schema for the tool's arguments, derived from the arg type.
-    pub parameters: Value,
+    /// How the tool's input is specified to the model (ADR-0003 amendment
+    /// 2026-07-19; replaces the bare `parameters: Value`).
+    pub input: ToolInputFormat,
+}
+
+/// How a tool's input is specified: a JSON-schema function tool, or a freeform
+/// tool whose raw-text input is constrained by a server-side grammar (OpenAI
+/// Responses `custom` tools — codex's `apply_patch`). Exactly one of the two —
+/// an enum, not optional fields, so invalid states are unrepresentable.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ToolInputFormat {
+    /// A JSON-schema function tool (every tool today).
+    JsonSchema {
+        /// The derived JSON Schema for the tool's arguments.
+        parameters: Value,
+    },
+    /// A freeform tool: raw text constrained by a grammar. On wires without
+    /// custom-tool support it degrades to a `{"input": string}` function tool;
+    /// the raw text reaches the tool identically either way.
+    Freeform {
+        /// The grammar language.
+        syntax: GrammarSyntax,
+        /// The grammar source, verbatim.
+        definition: String,
+    },
+}
+
+/// The grammar language of a [`ToolInputFormat::Freeform`] tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GrammarSyntax {
+    /// A Lark grammar (codex `apply_patch.lark`).
+    Lark,
+    /// A regular expression.
+    Regex,
 }
 
 // ========================= Streaming events (stream-json) =========================
@@ -428,6 +512,7 @@ mod tests {
             tool_calls: vec![],
             usage: Usage::default(),
             session_id: "sess-1".into(),
+            stop_reason: None,
             error: None,
         }
     }

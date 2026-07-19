@@ -11,7 +11,9 @@
 pub mod anthropic;
 mod assemble;
 mod completion;
+pub mod http;
 mod mock;
+pub mod openai;
 mod provider;
 mod repair;
 mod request;
@@ -19,7 +21,10 @@ mod request;
 pub use anthropic::{AnthropicProvider, AuthRefresh};
 pub use assemble::{AssembleError, ToolCallAssembler};
 pub use completion::{Completion, StopReason};
+pub use http::{HttpFailure, RetryPolicy};
 pub use mock::MockProvider;
+pub use openai::responses::OpenAiResponsesProvider;
+pub use openai::{OpenAiBackend, OpenAiModelConfig, SystemPlacement};
 pub use provider::{Provider, ProviderError};
 pub use repair::{RepairStats, repair_pairing};
 pub use request::{CacheHint, ConversationRequest, ReasoningEffort, SamplingArgs};
@@ -27,7 +32,7 @@ pub use request::{CacheHint, ConversationRequest, ReasoningEffort, SamplingArgs}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use locode_protocol::{ContentBlock, Message, Role, Usage};
+    use locode_protocol::{ContentBlock, Message, ReasoningFormat, Role, Usage};
     use serde_json::json;
 
     fn text_completion(text: &str) -> Completion {
@@ -139,9 +144,11 @@ mod tests {
         // engine can replay it (ADR-0013).
         let completion = Completion {
             content: vec![
-                ContentBlock::Thinking {
+                ContentBlock::Reasoning {
+                    format: ReasoningFormat::Anthropic,
                     text: "let me think".into(),
                     signature: Some("sig-abc".into()),
+                    payload: None,
                 },
                 ContentBlock::Text {
                     text: "answer".into(),
@@ -153,7 +160,7 @@ mod tests {
         assert_eq!(completion.text().as_deref(), Some("answer"));
         assert!(matches!(
             completion.content.first(),
-            Some(ContentBlock::Thinking { signature: Some(sig), .. }) if sig == "sig-abc"
+            Some(ContentBlock::Reasoning { signature: Some(sig), .. }) if sig == "sig-abc"
         ));
     }
 

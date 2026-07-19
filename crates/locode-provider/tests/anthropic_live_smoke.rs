@@ -17,7 +17,9 @@
 
 use std::fmt::Write as _;
 
-use locode_protocol::{ContentBlock, Message, ResultChunk, Role, ToolSpec};
+use locode_protocol::{
+    ContentBlock, Message, ReasoningFormat, ResultChunk, Role, ToolInputFormat, ToolSpec,
+};
 use locode_provider::anthropic::{AnthropicProvider, ModelConfig};
 use locode_provider::{
     CacheHint, ConversationRequest, Provider, ProviderError, ReasoningEffort, SamplingArgs,
@@ -29,13 +31,15 @@ fn word_length_tool() -> ToolSpec {
         description:
             "Count the letters in a word. Always use this tool when asked for a word's length."
                 .into(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "word": {"type": "string", "description": "The word to measure."}
-            },
-            "required": ["word"]
-        }),
+        input: ToolInputFormat::JsonSchema {
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "word": {"type": "string", "description": "The word to measure."}
+                },
+                "required": ["word"]
+            }),
+        },
     }
 }
 
@@ -104,7 +108,7 @@ async fn live_interleaved_thinking_tool_round_trip() {
     let thinking_blocks = completion1
         .content
         .iter()
-        .filter(|b| matches!(b, ContentBlock::Thinking { .. }))
+        .filter(|b| matches!(b, ContentBlock::Reasoning { .. }))
         .count();
     assert!(
         thinking_blocks >= 1,
@@ -115,7 +119,7 @@ async fn live_interleaved_thinking_tool_round_trip() {
     let signed = completion1
         .content
         .iter()
-        .all(|b| !matches!(b, ContentBlock::Thinking { signature, .. } if signature.is_none()));
+        .all(|b| !matches!(b, ContentBlock::Reasoning { format: ReasoningFormat::Anthropic, signature, .. } if signature.is_none()));
     assert!(signed, "every thinking block must carry a signature");
     assert!(
         completion1.has_tool_calls(),
@@ -190,7 +194,7 @@ async fn live_interleaved_thinking_tool_round_trip() {
     //      (creation-only on turn 2 = a different backend instance re-wrote it —
     //      which the test-local `only: ["anthropic"]` pin exists to prevent). ----
     assert!(
-        completion2.usage.cache_read_tokens > 0,
+        completion2.usage.cache_read_tokens.unwrap_or(0) > 0,
         "turn 2 did not hit the prompt cache: {:?}",
         completion2.usage
     );

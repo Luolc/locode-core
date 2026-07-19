@@ -74,6 +74,10 @@ pub enum ProviderError {
     /// The response could not be parsed into a [`Completion`]. Terminal.
     #[error("failed to decode provider response: {0}")]
     Decode(String),
+    /// The request configuration is invalid for this wire (e.g. an unknown
+    /// reasoning-effort tier on a fixed-mapping wire). Terminal, pre-send.
+    #[error("invalid configuration: {0}")]
+    Config(String),
 }
 
 impl ProviderError {
@@ -91,7 +95,8 @@ impl ProviderError {
             ProviderError::ContextOverflow
             | ProviderError::Quota
             | ProviderError::Auth(_)
-            | ProviderError::Decode(_) => false,
+            | ProviderError::Decode(_)
+            | ProviderError::Config(_) => false,
         }
     }
 }
