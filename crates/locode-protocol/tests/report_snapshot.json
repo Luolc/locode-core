@@ -11,17 +11,24 @@
       "id": "call_1",
       "name": "run_terminal_command",
       "kind": "shell",
-      "args": { "command": "echo hi" },
+      "args": {
+        "command": "echo hi"
+      },
       "ok": true,
-      "output": { "exit_code": 0, "truncated": false }
+      "output": {
+        "exit_code": 0,
+        "truncated": false
+      }
     }
   ],
   "usage": {
     "input_tokens": 100,
     "output_tokens": 20,
     "cache_read_tokens": 0,
-    "cache_creation_tokens": 0
+    "cache_creation_tokens": null,
+    "reasoning_tokens": null
   },
   "session_id": "sess-abc",
-  "error": null
+  "error": null,
+  "stop_reason": "end_turn"
 }

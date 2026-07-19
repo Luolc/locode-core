@@ -26,3 +26,16 @@ Define one `Tool` trait with associated `Args` (`DeserializeOwned + JsonSchema`)
 - Adding a tool = define `Args`/`Output` types + `run`; the schema follows for free.
 - The report envelope and the model context are independent renderings of one call — the key property for a JSON-output agent.
 - A god-object context (Claude's ~40-field `ToolUseContext`) is explicitly avoided.
+
+## Amendment (2026-07-19): `ToolSpec.input` formats (freeform/custom tools)
+
+`ToolSpec.parameters: Value` becomes `input: ToolInputFormat` —
+`JsonSchema { parameters }` (every tool today) or `Freeform { syntax, definition }`
+(raw-text input constrained by a server-side grammar: OpenAI Responses `custom`
+tools, codex's `apply_patch`). `Tool`/`DynTool` gain a **defaulted**
+`input_format()` (returns the derived JSON schema), so no existing tool changes.
+A freeform tool still implements the typed contract with `Args` decodable from a
+JSON string — `Value::String` args ride the one dispatch door unchanged
+(ADR-0008 intact). On wires without custom-tool support, a freeform spec
+degrades to a `{"input": string}` function tool with the same name; the raw
+text reaches the tool identically either way, keeping traces aligned.

@@ -61,7 +61,21 @@ pub fn build_request(req: &ConversationRequest, cfg: &ModelConfig) -> wire::Mess
         .map(|spec| wire::ToolParam {
             name: spec.name.clone(),
             description: Some(spec.description.clone()),
-            input_schema: normalize_input_schema(spec.parameters.clone()),
+            input_schema: match &spec.input {
+                locode_protocol::ToolInputFormat::JsonSchema { parameters } => {
+                    normalize_input_schema(parameters.clone())
+                }
+                // Freeform degradation: this wire has no custom tools — render
+                // the historical {"input": string} function framing (ADR-0012;
+                // the raw text reaches the tool identically, task-18 plan §4.6).
+                locode_protocol::ToolInputFormat::Freeform { .. } => serde_json::json!({
+                    "type": "object",
+                    "properties": {"input": {"type": "string",
+                        "description": "The entire raw text input."}},
+                    "required": ["input"],
+                    "additionalProperties": false
+                }),
+            },
         })
         .collect();
 
@@ -224,13 +238,16 @@ fn map_assistant_blocks(blocks: &[ContentBlock]) -> Vec<wire::ContentBlock> {
                 text: text.clone(),
                 cache_control: None,
             }),
-            // Thinking replay: re-send with the SAME signature, in place, so it
-            // stays contiguous with the tool_use that follows (plan §4.2). A
-            // missing signature would 400 — drop the block instead (should not
-            // occur for genuine Anthropic thinking).
-            ContentBlock::Thinking {
+            // Reasoning replay (ADR-0013 unified block): this wire replays its
+            // OWN formats — signed thinking (same signature, in place, so it
+            // stays contiguous with the tool_use that follows) and redacted
+            // thinking (payload verbatim). Foreign formats (openai_responses,
+            // text_only) are dropped: a session never crosses wires.
+            ContentBlock::Reasoning {
+                format: locode_protocol::ReasoningFormat::Anthropic,
                 text,
                 signature: Some(signature),
+                ..
             } => {
                 if !text.is_empty() || !signature.is_empty() {
                     out.push(wire::ContentBlock::Thinking {
@@ -239,10 +256,16 @@ fn map_assistant_blocks(blocks: &[ContentBlock]) -> Vec<wire::ContentBlock> {
                     });
                 }
             }
-            // Encrypted thinking replays verbatim, in place, like signed
-            // thinking (observed live during the Task-12 smoke).
-            ContentBlock::RedactedThinking { data } => {
-                out.push(wire::ContentBlock::RedactedThinking { data: data.clone() });
+            ContentBlock::Reasoning {
+                format: locode_protocol::ReasoningFormat::AnthropicRedacted,
+                payload: Some(payload),
+                ..
+            } => {
+                if let Some(data) = payload.as_str() {
+                    out.push(wire::ContentBlock::RedactedThinking {
+                        data: data.to_owned(),
+                    });
+                }
             }
             ContentBlock::ToolUse { id, name, input } => {
                 // id preserved VERBATIM — pairing is load-bearing (ADR-0004).
@@ -318,17 +341,24 @@ fn map_reasoning(
     req: &ConversationRequest,
     cfg: &ModelConfig,
 ) -> (Option<wire::ThinkingConfig>, Option<wire::OutputConfig>) {
-    let Some(effort) = req.sampling_args.reasoning_effort else {
+    let Some(effort) = req.sampling_args.reasoning_effort.as_ref() else {
         return (None, None);
     };
     match cfg.reasoning_encoding {
         ReasoningEncoding::Budget => {
             let budget = match effort {
-                // grok treats Minimal as thinking-off (types.rs:814).
-                ReasoningEffort::Minimal => return (None, None),
+                // grok treats Minimal as thinking-off (types.rs:814); explicit
+                // None is likewise off on a budget encoding. Other(_) is
+                // rejected with a clear Config error in complete() BEFORE the
+                // build (no principled budget for an unknown tier) — here it
+                // is a dead arm folded into the off case.
+                ReasoningEffort::None | ReasoningEffort::Minimal | ReasoningEffort::Other(_) => {
+                    return (None, None);
+                }
                 ReasoningEffort::Low => 4096,
                 ReasoningEffort::Medium => 8192,
                 ReasoningEffort::High => 16384,
+                ReasoningEffort::XHigh => 32768,
             };
             // Clamp to max_tokens-1 — mandatory WITHOUT interleaved thinking;
             // waived with the beta, where the budget spans the turn (plan §9.3).
@@ -346,10 +376,14 @@ fn map_reasoning(
         }
         ReasoningEncoding::EffortAdaptive => {
             let effort_str = match effort {
-                ReasoningEffort::Minimal => return (None, None),
+                ReasoningEffort::None | ReasoningEffort::Minimal => return (None, None),
                 ReasoningEffort::Low => "low",
                 ReasoningEffort::Medium => "medium",
                 ReasoningEffort::High => "high",
+                // Passed through verbatim — an unsupported tier surfaces the
+                // API's own error (never silently clamp).
+                ReasoningEffort::XHigh => "xhigh",
+                ReasoningEffort::Other(s) => s.as_str(),
             };
             (
                 Some(wire::ThinkingConfig::Adaptive {

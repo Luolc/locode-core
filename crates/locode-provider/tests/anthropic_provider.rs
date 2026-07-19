@@ -188,9 +188,9 @@ async fn happy_path_sends_the_right_request_and_parses() {
     assert_eq!(completion.stop, StopReason::EndTurn);
     assert!(matches!(
         &completion.content[0],
-        ContentBlock::Thinking { signature: Some(sig), .. } if sig == "sig-live-1"
+        ContentBlock::Reasoning { signature: Some(sig), .. } if sig == "sig-live-1"
     ));
-    assert_eq!(completion.usage.cache_creation_tokens, 8);
+    assert_eq!(completion.usage.cache_creation_tokens, Some(8));
 
     let log = captured.lock().expect("lock");
     let req = &log[0];

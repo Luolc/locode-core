@@ -27,7 +27,7 @@ pub use request::{CacheHint, ConversationRequest, ReasoningEffort, SamplingArgs}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use locode_protocol::{ContentBlock, Message, Role, Usage};
+    use locode_protocol::{ContentBlock, Message, ReasoningFormat, Role, Usage};
     use serde_json::json;
 
     fn text_completion(text: &str) -> Completion {
@@ -139,9 +139,11 @@ mod tests {
         // engine can replay it (ADR-0013).
         let completion = Completion {
             content: vec![
-                ContentBlock::Thinking {
+                ContentBlock::Reasoning {
+                    format: ReasoningFormat::Anthropic,
                     text: "let me think".into(),
                     signature: Some("sig-abc".into()),
+                    payload: None,
                 },
                 ContentBlock::Text {
                     text: "answer".into(),
@@ -153,7 +155,7 @@ mod tests {
         assert_eq!(completion.text().as_deref(), Some("answer"));
         assert!(matches!(
             completion.content.first(),
-            Some(ContentBlock::Thinking { signature: Some(sig), .. }) if sig == "sig-abc"
+            Some(ContentBlock::Reasoning { signature: Some(sig), .. }) if sig == "sig-abc"
         ));
     }
 

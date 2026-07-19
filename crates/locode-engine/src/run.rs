@@ -52,7 +52,7 @@ impl Session {
                 sampling_args: self.config.sampling_args.clone(),
                 cache_hint: self.config.cache_hint,
             };
-            let completion = match self.sample_with_retry(request).await {
+            let completion = match self.sample_nonempty(request).await {
                 Ok(completion) => completion,
                 Err(err) => {
                     break Terminal::ModelError {
@@ -62,6 +62,7 @@ impl Session {
             };
             acc.turns += 1;
             acc.usage += completion.usage;
+            acc.last_stop = Some(stop_reason_str(&completion.stop));
 
             // (c) Extract tool calls, then append the assistant turn VERBATIM so
             // Thinking{signature} blocks are preserved for replay (ADR-0013).
@@ -166,6 +167,41 @@ impl Session {
         (results, fatal)
     }
 
+    /// Sample until the completion is non-empty, spending the same bounded
+    /// resample budget on **empty completions** (no text, no tool calls — e.g.
+    /// a reasoning-only turn truncated by `max_output_tokens`) as on retryable
+    /// provider errors. Grok's rule (`is_empty` responses are resampled); an
+    /// engine that labeled these `Completed` would silently poison eval data
+    /// (ADR-0005 amendment 2026-07-19).
+    async fn sample_nonempty(
+        &mut self,
+        request: ConversationRequest,
+    ) -> Result<Completion, ProviderError> {
+        let mut attempt: u32 = 0;
+        loop {
+            let completion = self.sample_with_retry(request.clone()).await?;
+            let empty = !completion.has_tool_calls() && completion.text().is_none();
+            if !empty {
+                return Ok(completion);
+            }
+            if attempt >= self.config.resample_retries {
+                return Err(ProviderError::Decode(format!(
+                    "model returned an empty completion (no text, no tool calls; \
+                     stop: {}) after {attempt} resample(s)",
+                    stop_reason_str(&completion.stop)
+                )));
+            }
+            attempt += 1;
+            self.sink.emit(Event::Error {
+                message: format!(
+                    "empty completion (stop: {}); resample {attempt}/{}",
+                    stop_reason_str(&completion.stop),
+                    self.config.resample_retries
+                ),
+            });
+        }
+    }
+
     /// Sample once, retrying retryable provider errors up to the bounded budget.
     async fn sample_with_retry(
         &mut self,
@@ -212,8 +248,25 @@ impl Session {
             tool_calls: acc.tool_calls,
             usage: acc.usage,
             session_id: self.config.session_id.clone(),
+            stop_reason: acc.last_stop,
             error,
         }
+    }
+}
+
+/// The neutral stop-reason string for the report envelope.
+fn stop_reason_str(stop: &locode_provider::StopReason) -> String {
+    use locode_provider::StopReason as S;
+    match stop {
+        S::EndTurn => "end_turn".to_string(),
+        S::MaxTokens => "max_tokens".to_string(),
+        S::ToolUse => "tool_use".to_string(),
+        S::StopSequence => "stop_sequence".to_string(),
+        S::Refusal => "refusal".to_string(),
+        S::PauseTurn => "pause_turn".to_string(),
+        S::Unknown(raw) => raw.clone(),
+        // StopReason is #[non_exhaustive] in locode-provider.
+        _ => "unknown".to_string(),
     }
 }
 

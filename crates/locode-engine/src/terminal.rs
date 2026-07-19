@@ -32,4 +32,7 @@ pub(crate) struct RunAcc {
     pub(crate) tool_calls: Vec<ToolCallRecord>,
     pub(crate) usage: Usage,
     pub(crate) last_assistant_text: Option<String>,
+    /// The final completion's stop reason, as the neutral string for the report
+    /// (ADR-0009 amendment 2026-07-19).
+    pub(crate) last_stop: Option<String>,
 }

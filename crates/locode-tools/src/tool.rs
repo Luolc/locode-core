@@ -108,6 +108,17 @@ pub trait Tool: Send + Sync {
         serde_json::to_value(schema).unwrap_or_else(|_| Value::Object(serde_json::Map::new()))
     }
 
+    /// How the tool's input is specified to the model. Defaults to the derived
+    /// JSON schema (every tool today); a freeform tool (codex `apply_patch`)
+    /// overrides with `ToolInputFormat::Freeform` and takes raw-text args
+    /// (`Args` decodable from a JSON string).
+    #[must_use]
+    fn input_format(&self) -> locode_protocol::ToolInputFormat {
+        locode_protocol::ToolInputFormat::JsonSchema {
+            parameters: self.parameters_schema(),
+        }
+    }
+
     /// Execute the call.
     ///
     /// # Errors

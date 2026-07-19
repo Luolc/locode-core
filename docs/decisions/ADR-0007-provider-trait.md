@@ -56,3 +56,15 @@ generic proxy path:
 - **Config record env grows `LOCODE_MODEL`** alongside `LOCODE_BASE_URL` /
   `LOCODE_API_KEY`; the v0 default model is `claude-sonnet-5`. The wire-identity
   string is plain `"anthropic"`.
+
+## Amendment (2026-07-19): reasoning-effort ladder + `Config` error
+
+`ReasoningEffort` extends to `None | Minimal | Low | Medium | High | XHigh |
+Other(String)` (`#[non_exhaustive]`): effort tiers fragment per vendor/model
+generation, so the ladder covers the observed union and `Other` passes
+vendor-specific strings through verbatim. Wires that take effort strings send
+them as-is and let the API's own error surface (never silently clamp — that
+would corrupt eval comparisons); wires with fixed mappings (the Anthropic
+Budget encoding) reject `Other` pre-send with the new terminal
+`ProviderError::Config` variant. `SamplingArgs.reasoning_effort: None` (outer
+Option) still means "omit the parameter".
