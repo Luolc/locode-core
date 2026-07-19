@@ -19,7 +19,7 @@ tools into their own agent loop without using our engine.
 ## Quick start
 
 ```sh
-export ANTHROPIC_API_KEY=…
+export LOCODE_API_KEY=…
 
 # One task, headless: one JSON report on stdout, diagnostics on stderr.
 cargo run -p locode-exec -- "summarize this repo" --harness grok
