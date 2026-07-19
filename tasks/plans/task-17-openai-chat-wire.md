@@ -530,3 +530,27 @@ example gains nothing (flag values are self-documenting via clap).
 4. **Live-smoke model choice** for the non-OpenAI leg (grok-4.5 vs a cheaper
    OSS model) — whatever is in your OpenRouter allowlist; name it and I'll pin
    the smoke script.
+
+---
+
+## Addendum — review decisions (2026-07-19)
+
+Follows the task-18 addendum (read that first; the protocol migration lands in
+Task 18 step 0). Deltas for this wire:
+
+- **Reasoning capture** (§4.4): OpenRouter `message.reasoning` / DeepSeek-style
+  `reasoning_content` are captured into the unified block as
+  `Reasoning { format: TextOnly, text, signature: None, payload: None }` —
+  NOT `Thinking{signature: None}` as §4.4 sketched. `TextOnly` is replayed by no
+  wire; this wire's build drops ALL reasoning formats (the reasoning-blind
+  control, unchanged).
+- **Usage**: `prompt_tokens_details.cached_tokens` → `cache_read_tokens: Some`,
+  `cache_creation_tokens: None` (OpenRouter's `cache_write_tokens` extension read
+  opportunistically when present), `completion_tokens_details.reasoning_tokens`
+  → `reasoning_tokens: Some`.
+- **`reasoning_effort`**: serialize the extended ladder (task-18 A.3) as its
+  lowercase string; `Other(s)` passes `s` verbatim; unsupported tiers surface the
+  API's own error.
+- Confirmed limitations (audit, 2026-07-19): `role:"tool"` messages are text-only
+  (image result chunks are dropped with a debug note — v0 tools emit none);
+  `is_error` folds into output text (both same as the Responses wire).

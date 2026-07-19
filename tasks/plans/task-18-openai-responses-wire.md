@@ -949,3 +949,91 @@ hand-rolled precisely to avoid an `async_openai`-class dependency (§5.2).
    consumers (none exist yet outside our own tests) would see the new form. OK
    to change without an Event-schema version bump (Event is `#[non_exhaustive]`
    and pre-1.0)?
+
+---
+
+## Addendum — review decisions (2026-07-19)
+
+User review of this plan resolved §9-Q3 and reshaped three §3/§8 designs. These
+supersede the corresponding sections above; the ADR amendment texts in §8 are
+updated in spirit accordingly (final text written at implementation time).
+
+### A.1 Unified reasoning block (supersedes §4.4's `Thinking.signature` encoding)
+
+`ContentBlock::Thinking` and `ContentBlock::RedactedThinking` are **replaced** by
+one block (protocol migration lands as step 0 of this task, before the wire):
+
+```rust
+Reasoning {
+    /// Which encoding/replay contract this data follows. Named after the wire's
+    /// own vocabulary (reasoning items tag themselves `format:"openai-responses-v1"`).
+    format: ReasoningFormat,
+    /// Human-readable reasoning: full text (anthropic), empty (anthropic_redacted),
+    /// summary (openai_responses), captured text (text_only).
+    text: String,
+    /// Anthropic's validator over `text` (anthropic format only).
+    signature: Option<String>,
+    /// The wire's opaque replay payload, replayed verbatim, never interpreted:
+    /// the WHOLE Responses reasoning item (id+summary+encrypted_content+format+
+    /// future fields), or Anthropic's redacted-thinking data.
+    payload: Option<serde_json::Value>,
+}
+
+#[non_exhaustive]
+enum ReasoningFormat { Anthropic, AnthropicRedacted, OpenAiResponses, TextOnly }
+// serde: "anthropic" | "anthropic_redacted" | "openai_responses" | "text_only"
+// (deliberately echoing the api_schema strings)
+```
+
+- Whole-item-opaque replay (this plan's core call) is unchanged — it now lives in
+  `payload` instead of being JSON-stuffed into `signature`.
+- Each wire's build matches on `format` and **drops foreign formats** (explicit
+  cross-wire safety); `TextOnly` is never replayed by any wire (it exists for the
+  chat wire's capture-only reasoning — see task-17 addendum).
+- ADR-0013 gets a superseding amendment (also folding in the 2026-07-18
+  `RedactedThinking` amendment).
+- One trace shape for swe-lab and A/B reading: `{"type":"reasoning","format":…}`.
+
+### A.2 `Usage` honesty: `Option` counters, not zero-as-N/A (user requirement)
+
+`Some(0)` ≠ `None` — "no cache hit" vs "this wire does not report caching":
+
+```rust
+pub struct Usage {
+    pub input_tokens: u64,                  // universal
+    pub output_tokens: u64,                 // universal
+    pub cache_read_tokens: Option<u64>,     // None = not reported by this wire
+    pub cache_creation_tokens: Option<u64>, // None on OpenAI wires
+    pub reasoning_tokens: Option<u64>,      // NEW; None on Anthropic (folded into output)
+}
+```
+
+Summation: `Some+Some=Some(a+b)`, `None+x=x`; a run total is `None` only if no
+turn reported the counter. Report JSON: `null` vs number. Migration rides step 0.
+
+### A.3 `ReasoningEffort` ladder + escape hatch (supersedes the Task-5 enum)
+
+Tiers fragment per vendor/model generation (OpenAI none→xhigh, codex minimal→xhigh,
+grok stores per-model allowed-effort lists), so:
+
+```rust
+#[non_exhaustive]
+pub enum ReasoningEffort { None, Minimal, Low, Medium, High, XHigh, Other(String) }
+```
+
+- `SamplingArgs.reasoning_effort: Option<…>` outer `None` = omit the param;
+  `ReasoningEffort::None` = explicitly send `"none"`.
+- OpenAI wires serialize the lowercase string and pass unsupported tiers through
+  verbatim — the API's own 400 is surfaced, never silently clamped (silent
+  clamping would corrupt eval comparisons).
+- Anthropic wire budget table: None/Minimal → off, Low 4096, Medium 8192,
+  High 16384, XHigh 32768; `Other(_)` → clear soft error (no principled budget).
+
+### A.4 Confirmed context from the intent interview (2026-07-19)
+
+locode's primary role: the harness component of the swe-lab eval pipeline —
+native pairings first (claude×claude-pack, openai×codex-pack, grok×grok-pack),
+SWE-bench-style, orchestration/sandboxing/scoring external. Implications adopted:
+one unified trace schema (A.1), honest per-wire usage reporting (A.2), and a new
+small task: graceful SIGTERM in `locode-exec` (cancel → synthesized paired
+transcript → report still emitted) so timed-out eval runs yield failure-case data.

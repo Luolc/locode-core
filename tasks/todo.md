@@ -394,6 +394,11 @@ good ad-hoc exercise, not a tracked deliverable.
 **Scope:** L
 
 ## Task 18: OpenAI Responses wire — NEXT · **planned: [`plans/task-18-openai-responses-wire.md`](plans/task-18-openai-responses-wire.md)**
+> **Review decisions folded in (2026-07-19, plan addendum):** step 0 is a protocol migration —
+> unified `Reasoning{format, text, signature, payload}` block (+`ReasoningFormat`) replacing
+> `Thinking`/`RedactedThinking`; `Usage` counters become `Option<u64>` (+`reasoning_tokens`);
+> `ReasoningEffort` extends to `None…XHigh + Other(String)`. ADR-0013/0003/0007 amendments
+> land with the code (ADR-first).
 **Description:** The OpenAI Responses `Provider`: `api_schema = "openai-responses"`, `POST {base_url}/v1/responses`, non-streaming, always-Bearer, **stateless** (`store: false` always — codex and grok both run it that way; OpenRouter's beta *rejects* stateful requests). Required for faithful codex (Responses-only; freeform+Lark `apply_patch`) and grok build's own backend for xAI models (encrypted reasoning replay, ZDR). Verified live through OpenRouter (custom-grammar tools, `instructions`, `provider` prefs, xAI encrypted reasoning — plan §0 probe log).
 
 **Acceptance criteria (distilled from the plan — resolve its §9 open questions first, esp. Q3 reasoning-replay encoding):**
@@ -409,6 +414,24 @@ good ad-hoc exercise, not a tracked deliverable.
 **Scope:** L
 
 ---
+
+## Task 21: graceful SIGTERM in `locode-exec`
+**Description:** Adopted from the intent interview (2026-07-19): swe-lab timeouts kill the
+process; today that loses the report. On SIGTERM: trigger the engine `CancellationToken`,
+let the mid-batch abort synthesize the paired transcript (already built + tested, Task 6),
+and still emit the report (partial turns/usage) before exiting — so timed-out eval runs
+yield failure-case traces instead of nothing.
+
+**Acceptance criteria:**
+- [ ] SIGTERM during a run → exit with the normal artifact on stdout (`json`: one report with
+  a non-`completed` status; `stream-json`: the stream stays valid JSONL ending in `result`);
+  transcript validity holds (every `tool_use` paired).
+- [ ] SIGTERM before the run starts → clean exit 1, nothing on stdout.
+- [ ] Integration test drives the binary, sends SIGTERM mid-run (slow mock tool), asserts the
+  report parses.
+
+**Dependencies:** Task 14
+**Scope:** S
 
 ## Deferred (reserved seams, not scheduled)
 parallel tool batches (RwLock read/write) · compaction · OS sandbox · MCP · streaming events
