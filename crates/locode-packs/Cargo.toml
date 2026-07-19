@@ -13,9 +13,9 @@ readme.workspace = true
 workspace = true
 
 [dependencies]
-locode-protocol = { path = "../locode-protocol" }
-locode-tools = { path = "../locode-tools" }
-locode-host = { path = "../locode-host" }
+locode-protocol = { workspace = true }
+locode-tools = { workspace = true }
+locode-host = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 schemars = { workspace = true }
