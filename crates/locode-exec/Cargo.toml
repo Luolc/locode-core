@@ -13,7 +13,7 @@ readme.workspace = true
 workspace = true
 
 [dependencies]
-locode = { workspace = true }
+locode-core = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

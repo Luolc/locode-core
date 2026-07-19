@@ -10,7 +10,14 @@ Accepted
 The cleanest studied Rust trees (Codex, Grok Build) separate a **portable tools layer** from the **session/loop layer**, and further separate *tool definition* from *dialect selection* and *wire protocol*. Crate boundaries make those separations enforceable by the compiler rather than by convention. The design-doc placeholder names were `agent-*`; the real project uses `locode-*`.
 
 ## Decision
-Use a Cargo workspace of small `locode-*` crates. `locode-core` names the **workspace/repo**, not a crate.
+Use a Cargo workspace of small `locode-*` crates. `locode-core` names the **workspace/repo**
+and — since the 2026-07-18 rename below — the facade crate as well.
+
+> **Note (renamed facade, 2026-07-18):** the facade crate `locode` was renamed
+> **`locode-core`** at the first crates.io release: the bare name `locode` was already
+> owned on the registry by an unrelated UN/LOCODE (country/city codes) crate. The crate
+> boundary and re-export surface are unchanged; lib imports are now `locode_core::…`.
+> The planned `locode` *harness pack* (a pack name, not a crate) is unaffected.
 
 > **Note (superseded naming):** `locode-dialects` was renamed **`locode-packs`** by
 > [ADR-0012](ADR-0012-harness-packs.md) — harness packs (faithful per-harness toolsets)
@@ -25,7 +32,7 @@ Use a Cargo workspace of small `locode-*` crates. `locode-core` names the **work
 | `locode-provider` | `Provider` trait + API-agnostic `ConversationRequest` + Anthropic wire impl |
 | `locode-host` | fs/shell/path-jail/truncation/rg-resolution (injectable side-effect seam) |
 | `locode-engine` | sample→dispatch→append loop + `Session` driving API |
-| `locode` | thin facade re-exporting the public surface |
+| `locode-core` (was `locode`) | thin facade re-exporting the public surface |
 | `locode-exec` | minimal headless binary |
 
 ## Alternatives Considered
@@ -38,6 +45,6 @@ Use a Cargo workspace of small `locode-*` crates. `locode-core` names the **work
 - Rejected: softens exactly the boundaries we most want hard (host seam, provider wire, tools vs loop). We can always merge later; splitting later is harder.
 
 ## Consequences
-- Dependency direction is explicit and acyclic: `protocol` is the shared base; `engine` composes `tools`/`packs`/`provider`/`host`; `locode` re-exports; `locode-exec` depends only on `locode`.
+- Dependency direction is explicit and acyclic: `protocol` is the shared base; `engine` composes `tools`/`packs`/`provider`/`host`; `locode-core` re-exports; `locode-exec` depends only on `locode-core`.
 - Tools **never** touch `std::fs`/`Command` directly — only through `locode-host` — making them trivially testable and sandbox-ready.
 - More Cargo manifests and a `[workspace.lints]` table to maintain; accepted cost.

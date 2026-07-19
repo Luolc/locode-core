@@ -21,7 +21,7 @@ These are the assumptions this spec is built on. Correct any that are wrong befo
 
 Build the **headless engine of a coding agent**: a production-grade, robust Rust core library that owns the classic *sample → dispatch → append → re-sample* loop, exposes a typed tool registry (shell + filesystem + search) whose JSON schemas are derived from the arg types, organized into a selectable **harness pack** (a faithful per-harness toolset), talks to a model through a **provider trait** with one wire implementation, and returns a single structured result — with **no TUI and no interactive permission prompts**.
 
-**Users:** (1) the future `locode-app` (TUI + features) as a library consumer driving the engine programmatically; (2) researchers running headless A/B comparisons of harness packs and provider wires; (3) `locode-exec` as a thin reference consumer; (4) downstream consumers who want **just the tools** — the pack's tool implementations are a reusable library that can be dropped into *their own* harness loop, without using our engine (the `locode` facade re-exports the tool surface for this).
+**Users:** (1) the future `locode-app` (TUI + features) as a library consumer driving the engine programmatically; (2) researchers running headless A/B comparisons of harness packs and provider wires; (3) `locode-exec` as a thin reference consumer; (4) downstream consumers who want **just the tools** — the pack's tool implementations are a reusable library that can be dropped into *their own* harness loop, without using our engine (the `locode-core` facade re-exports the tool surface for this).
 
 **Success looks like:** a caller can drive one agent session to completion against Claude, under the `grok` harness pack, with the engine emitting exactly one machine-readable JSON report — and every architectural extension point (more harness packs, more wires, apply_patch, sandbox, MCP, streaming, compaction) is a seam, not a rewrite.
 
@@ -76,11 +76,11 @@ crates/
 ├── locode-provider/     → Provider trait + API-agnostic ConversationRequest + Anthropic wire impl
 ├── locode-host/         → fs/shell/path-jail/truncation/rg-resolution (injectable side-effect seam)
 ├── locode-engine/       → the sample→dispatch→append loop + Session driving API
-├── locode/              → thin facade re-exporting the public surface
+├── locode-core/         → thin facade re-exporting the public surface (the bare name `locode` is taken on crates.io)
 └── locode-exec/          → minimal headless binary (Codex-exec-style stdout discipline)
 ```
 
-Dependency direction: `protocol` ← everything; `tools` → `protocol`; `host` → `protocol`; `packs` → `tools` + `host` + `protocol`; `provider` → `protocol`; `engine` → `packs` + `tools` + `provider` + `host` + `protocol`; `locode` → all; `locode-exec` → `locode`.
+Dependency direction: `protocol` ← everything; `tools` → `protocol`; `host` → `protocol`; `packs` → `tools` + `host` + `protocol`; `provider` → `protocol`; `engine` → `packs` + `tools` + `provider` + `host` + `protocol`; `locode-core` → all; `locode-exec` → `locode-core`.
 
 ## Code Style
 
@@ -142,7 +142,7 @@ Carried from the design doc §12, minus what we've now decided (wire = Anthropic
 2. **When to add `apply_patch`** — with the `codex` pack (next milestone), delivered as a JSON-string patch arg on the Anthropic wire (freeform-grammar delivery deferred to a Responses wire).
 3. **Schema-constrained task answers** (`--json-schema`) — native `response_format` first with a `StructuredOutput`-tool fallback; **envelope-only for v0 (deferred, confirmed).** Also open: verifying whether Anthropic and OpenAI accept the *same* derived JSON Schema (we assume yes → a single shared normalization helper, not per-wire); needs a verification pass before the wire relies on it.
 4. **Session durability** — when do ephemeral runs need JSONL transcript persistence?
-5. ~~**facade surface**~~ — **Resolved:** `locode` re-exports the driving API (`Session`, `EngineConfig`, report/event types, provider + pack selection) **and the full tool surface** (`Tool`, `Registry`, `dispatch`, `ToolCtx`, `ToolOutput`, `ToolSpec`, and the pack's concrete tools). A **first-class goal**: downstream consumers can use our tools inside *their own* harness loop without our engine (see Users #4). Widen further as `locode-app` needs.
+5. ~~**facade surface**~~ — **Resolved:** `locode-core` re-exports the driving API (`Session`, `EngineConfig`, report/event types, provider + pack selection) **and the full tool surface** (`Tool`, `Registry`, `dispatch`, `ToolCtx`, `ToolOutput`, `ToolSpec`, and the pack's concrete tools). A **first-class goal**: downstream consumers can use our tools inside *their own* harness loop without our engine (see Users #4). Widen further as `locode-app` needs.
 
 ## Decisions of record
 

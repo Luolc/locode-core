@@ -7,7 +7,7 @@
 
 use std::process::ExitCode;
 
-use locode::Status;
+use locode_core::Status;
 
 /// Write one JSON value as one stdout line (the report, or one stream event).
 ///

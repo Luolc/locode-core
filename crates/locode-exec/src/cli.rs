@@ -60,7 +60,7 @@ pub enum Harness {
 }
 
 impl Harness {
-    /// The pack name for `locode::resolve`.
+    /// The pack name for `locode_core::resolve`.
     pub fn as_str(self) -> &'static str {
         match self {
             Harness::Grok => "grok",
