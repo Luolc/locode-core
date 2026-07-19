@@ -352,7 +352,10 @@ good ad-hoc exercise, not a tracked deliverable.
 
 ---
 
-## Task 17: OpenAI Chat Completions wire — **planned: [`plans/task-17-openai-chat-wire.md`](plans/task-17-openai-chat-wire.md)**
+## Task 17: OpenAI Chat Completions wire — DEFERRED (user decision 2026-07-19) · **planned: [`plans/task-17-openai-chat-wire.md`](plans/task-17-openai-chat-wire.md)**
+> Deferred: the Responses wire covers GPT + Grok natively, sufficient for the eval
+> pipeline's native pairs. The plan stays current (its addendum tracks the protocol
+> migration); revisit when a target model/provider only speaks chat completions.
 **Description:** The Chat Completions `Provider`: `api_schema = "openai-chat"`, `POST {base_url}/v1/chat/completions`, non-streaming, always-Bearer. The **broadest lowest-common-denominator schema** — OpenRouter's default surface for every model/provider (no translation layer in the path), grok's `ApiBackend` default. Motivated by testing non-Anthropic models WITHOUT OpenRouter's Messages/Responses conversion in the path (user decision, 2026-07-18). Deliberately the "reasoning-blind" control wire — reasoning replay only exists on Task 18's wire.
 
 **Acceptance criteria (distilled from the plan — resolve its §9 open questions first):**
