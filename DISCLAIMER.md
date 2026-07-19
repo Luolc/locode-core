@@ -1,0 +1,6 @@
+- All work is performed and completed on personal hardwares.
+- All work only use resources, features and information available to anyone outside of any company.
+- All work is performed and completed using only personal accounts.
+- All work is completed on personal time.
+- All work is represented as the author's own, with no affiliation or endorsement related to their employment.
+- All work is published with an open access or free and open source license.

@@ -59,3 +59,8 @@ cargo test --workspace
 | `locode-engine` | The sample→dispatch→append loop and the `Session` driving API |
 | `locode-core` | Facade: re-exports the driving API and the full tool surface |
 | `locode-exec` | Minimal headless binary — exactly one JSON report on stdout |
+
+## [Disclaimer](DISCLAIMER.md)
+
+This is a personal project and is not affiliated with any company. The content
+does not reflect any specific company's projects, products or internal work.
