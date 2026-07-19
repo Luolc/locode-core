@@ -32,8 +32,9 @@ pub use locode_provider::anthropic::{
     RetryPolicy,
 };
 pub use locode_provider::{
-    AnthropicProvider, CacheHint, Completion, ConversationRequest, MockProvider, Provider,
-    ProviderError, ReasoningEffort, SamplingArgs, StopReason,
+    AnthropicProvider, CacheHint, Completion, ConversationRequest, MockProvider, OpenAiBackend,
+    OpenAiModelConfig, OpenAiResponsesProvider, Provider, ProviderError, ReasoningEffort,
+    SamplingArgs, StopReason, SystemPlacement,
 };
 
 // ---- packs: harness selection ----

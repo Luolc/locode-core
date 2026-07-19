@@ -152,9 +152,15 @@ impl OpenAiModelConfig {
     }
 
     /// The OpenRouter `provider` preferences to inject, if any: the configured
-    /// value, or the default pair on the OpenRouter backend
-    /// (`require_parameters` prevents routing to a backend that silently drops
-    /// `tools`/`reasoning`; no Anthropic-specific `ignore` entry here).
+    /// value, or `{allow_fallbacks:false}` on the OpenRouter backend.
+    ///
+    /// **`require_parameters` is deliberately absent** (live finding,
+    /// 2026-07-19): on the beta `/v1/responses` endpoint, `require_parameters:
+    /// true` combined with a `tools` array 404s with "No endpoints found that
+    /// can handle the requested parameters" — OpenRouter's parameter registry
+    /// does not count `tools` as supported there. The silent-param-drop
+    /// protection it provided on the Messages endpoint is covered here by the
+    /// live smokes instead.
     #[must_use]
     pub fn effective_provider_prefs(&self) -> Option<serde_json::Value> {
         if self.backend != OpenAiBackend::OpenRouter {
@@ -163,7 +169,6 @@ impl OpenAiModelConfig {
         Some(self.provider_prefs.clone().unwrap_or_else(|| {
             serde_json::json!({
                 "allow_fallbacks": false,
-                "require_parameters": true,
             })
         }))
     }
@@ -274,10 +279,10 @@ mod tests {
         let or = OpenAiModelConfig::new("openai/gpt-5-mini", "https://openrouter.ai/api/", "k");
         assert_eq!(or.base_url, "https://openrouter.ai/api");
         let prefs = or.effective_provider_prefs().expect("prefs");
-        assert_eq!(prefs["require_parameters"], true);
+        assert_eq!(prefs["allow_fallbacks"], false);
         assert!(
-            prefs.get("ignore").is_none(),
-            "no Anthropic-specific ignore entry"
+            prefs.get("require_parameters").is_none(),
+            "404s /v1/responses when tools are present (live finding)"
         );
     }
 

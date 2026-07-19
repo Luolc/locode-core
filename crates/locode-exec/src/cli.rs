@@ -75,6 +75,10 @@ pub enum ApiSchema {
     /// Anthropic Messages (native, OpenRouter, or any compatible gateway —
     /// selected by `LOCODE_BASE_URL`).
     Anthropic,
+    /// OpenAI Responses (native, OpenRouter, or any compatible gateway) —
+    /// drives OpenAI and xAI grok models; stateless always.
+    #[value(name = "openai-responses")]
+    OpenAiResponses,
     /// The scripted mock provider — keyless CI runs.
     Mock,
 }

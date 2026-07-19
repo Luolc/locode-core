@@ -72,8 +72,11 @@ fn stateless_non_negotiables() {
         json.get("previous_response_id").is_none(),
         "the field must not even exist"
     );
-    // OpenRouter backend → provider prefs injected (no Anthropic ignore entry).
-    assert_eq!(json["provider"]["require_parameters"], true);
+    // OpenRouter backend → provider prefs injected. require_parameters is
+    // deliberately ABSENT (it 404s /v1/responses when tools are present —
+    // live finding 2026-07-19).
+    assert_eq!(json["provider"]["allow_fallbacks"], false);
+    assert!(json["provider"].get("require_parameters").is_none());
     // Native backend → no prefs.
     let native = build_request(
         &request(vec![msg(Role::User, vec![text("hi")])]),
@@ -318,11 +321,10 @@ fn reasoning_param_effort_ladder_and_summary_default() {
     let json = serde_json::to_value(build_request(&req, &cfg())).unwrap();
     assert_eq!(json["reasoning"]["effort"], "ultra");
 
-    // Absent effort + summary disabled → the field is omitted entirely.
+    // Absent effort → the field is omitted entirely EVEN with a summary
+    // configured (summary-only reads as reasoning-disabled → 400).
     req.sampling_args.reasoning_effort = None;
-    let mut quiet = cfg();
-    quiet.reasoning_summary = None;
-    let json = serde_json::to_value(build_request(&req, &quiet)).unwrap();
+    let json = serde_json::to_value(build_request(&req, &cfg())).unwrap();
     assert!(json.get("reasoning").is_none());
 }
 

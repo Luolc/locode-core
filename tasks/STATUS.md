@@ -69,8 +69,18 @@ v0 is done — every crate is real, the binary runs end-to-end against Claude
 deferred: `bundle-rg` packaging (ADR-0011), streaming, compaction, parallel
 dispatch, OS sandbox, MCP, `--json-schema` (see `tasks/todo.md` Deferred).
 
-Next (reprioritized 2026-07-18/19; **plans written 2026-07-19**): implementation
-order **Task 18 → Task 19 → Task 20**; **Task 17 (Chat Completions) is DEFERRED**
+**Task 18 is DONE (2026-07-19)**: the openai-responses wire is live — protocol
+migration (unified `Reasoning` block, Option usage counters + `reasoning_tokens`,
+`ToolSpec` freeform formats, effort ladder, `Report.stop_reason`, engine
+empty-completion resample), the shared `locode-provider::http` transport, the
+wire itself, `--api-schema openai-responses`, and live smokes: gpt-5-mini
+(function + custom/grammar tools, encrypted-reasoning replay) AND grok-4.5
+(function tools, degraded freeform, cache hits) both through OpenRouter, plus
+native-pair binary runs (grok pack × both models). **Read plan §A.6** — the
+post-implementation concerns locked for review (OpenRouter beta discipline,
+stop_reason contract for swe-lab, manual custom_tools flag, usage semantics).
+
+Next: implementation order **Task 19 → Task 20**; **Task 17 (Chat Completions) is DEFERRED**
 (Responses covers GPT + Grok natively — enough for the native-pair evals; its plan
 stays on file). Each task has a full source-grounded plan doc (read the plan + its
 addenda before starting):

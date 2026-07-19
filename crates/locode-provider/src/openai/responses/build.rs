@@ -291,7 +291,9 @@ fn tool_def(spec: &ToolSpec, use_custom: bool) -> Value {
 
 /// The `reasoning` request object: effort (extended ladder, pass-through — an
 /// unsupported tier surfaces the API's own error, never clamps) + summary
-/// (default `"auto"`, plan §A.5 Q2).
+/// (default `"auto"`, plan §A.5 Q2). **Summary rides only alongside an
+/// effort** — a summary-only object reads as "reasoning disabled" and 400s on
+/// reasoning-mandatory endpoints (live finding, 2026-07-19).
 fn reasoning_param(req: &ConversationRequest, cfg: &OpenAiModelConfig) -> Option<Value> {
     let effort = req
         .sampling_args
@@ -306,17 +308,11 @@ fn reasoning_param(req: &ConversationRequest, cfg: &OpenAiModelConfig) -> Option
             ReasoningEffort::XHigh => "xhigh".to_string(),
             ReasoningEffort::Other(s) => s.clone(),
         });
-    match (effort, cfg.reasoning_summary.as_ref()) {
-        (None, None) => None,
-        (effort, summary) => {
-            let mut obj = serde_json::Map::new();
-            if let Some(e) = effort {
-                obj.insert("effort".to_string(), Value::String(e));
-            }
-            if let Some(s) = summary {
-                obj.insert("summary".to_string(), Value::String(s.clone()));
-            }
-            Some(Value::Object(obj))
-        }
+    let effort = effort?;
+    let mut obj = serde_json::Map::new();
+    obj.insert("effort".to_string(), Value::String(effort));
+    if let Some(s) = cfg.reasoning_summary.as_ref() {
+        obj.insert("summary".to_string(), Value::String(s.clone()));
     }
+    Some(Value::Object(obj))
 }
