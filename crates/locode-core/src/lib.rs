@@ -16,6 +16,13 @@
 //! Downstream code should depend on this crate, not the `locode-*` internals —
 //! the internals may churn; this surface is the stable contract.
 
+mod providers;
+
+// ---- custom providers: name → factory registry (ADR-0015) ----
+pub use providers::{
+    BuiltProvider, ProviderBuildError, ProviderFactory, ProviderInit, ProviderRegistry,
+};
+
 // ---- protocol: conversation, report envelope, stream events ----
 pub use locode_protocol::{
     ContentBlock, Conversation, Event, GrammarSyntax, ImageSource, Message, ReasoningFormat,

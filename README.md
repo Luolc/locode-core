@@ -60,6 +60,25 @@ cargo test --workspace
 | `locode-core` | Facade: re-exports the driving API and the full tool surface |
 | `locode-exec` | Minimal headless binary — exactly one JSON report on stdout |
 
+## Custom providers
+
+The provider surface is open: implement the `Provider` trait for any backend,
+register it under a name, and your own binary crate gets the entire CLI —
+flags, report envelope, exit codes — with your provider selectable at run time:
+
+```rust
+use locode_exec::{ProviderRegistry, main_with};
+
+fn main() -> std::process::ExitCode {
+    let registry = ProviderRegistry::builtin()
+        .register("my-wire", |init| my_wire::build(init));
+    main_with(registry)
+}
+```
+
+`--api-schema my-wire` then selects it; unknown names fail before the run
+starts, listing what's registered.
+
 ## [Disclaimer](DISCLAIMER.md)
 
 This is a personal project and is not affiliated with any company. The content

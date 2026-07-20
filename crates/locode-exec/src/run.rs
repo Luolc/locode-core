@@ -6,12 +6,11 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use locode_core::{
-    AnthropicProvider, CacheHint, Completion, ContentBlock, EngineConfig, EventSink, FnSink, Host,
-    HostConfig, MockProvider, NullSink, OpenAiResponsesProvider, PackContext, PathPolicy, Provider,
-    SamplingArgs, Session, StopReason, Usage, grok,
+    CacheHint, EngineConfig, EventSink, FnSink, Host, HostConfig, NullSink, PackContext,
+    PathPolicy, ProviderInit, ProviderRegistry, SamplingArgs, Session, grok,
 };
 
-use crate::cli::{ApiSchema, Cli, Harness, OutputFormat};
+use crate::cli::{Cli, Harness, OutputFormat};
 use crate::output;
 
 /// A pre-run failure (config/setup — no report exists yet): stderr + exit 1.
@@ -27,7 +26,12 @@ impl<E: std::fmt::Display> From<E> for PreRunError {
 ///
 /// Every terminal state of a *started* run yields a report (the engine's
 /// `run()` is infallible) — only pre-run setup can fail here.
-pub async fn run(cli: Cli) -> Result<ExitCode, PreRunError> {
+///
+/// # Errors
+/// [`PreRunError`] on config/setup failures before a run exists (bad `--cwd`,
+/// unknown/misconfigured provider, empty prompt): stderr + exit 1, nothing on
+/// stdout.
+pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, PreRunError> {
     // ---- 1. Prompt: positional, or stdin when absent / `-`. ----
     let prompt = resolve_prompt(cli.prompt.as_deref())?;
 
@@ -66,26 +70,18 @@ pub async fn run(cli: Cli) -> Result<ExitCode, PreRunError> {
         Harness::Grok => grok::prompt::user_query(&prompt),
     };
 
-    // ---- 4. Provider: fail BEFORE driving the loop on missing config. ----
+    // ---- 4. Provider: registry-resolved (ADR-0015); unknown names and
+    //         factory failures (missing env, …) fail BEFORE driving the loop. ----
     let session_id = new_session_id();
-    let (provider, model): (Arc<dyn Provider>, String) = match cli.api_schema {
-        ApiSchema::Anthropic => {
-            let provider = AnthropicProvider::from_env()
-                .map_err(|e| PreRunError(format!("anthropic wire: {e}")))?;
-            let model = provider.config().model.clone();
-            (Arc::new(provider), model)
-        }
-        ApiSchema::OpenAiResponses => {
-            let mut provider = OpenAiResponsesProvider::from_env()
-                .map_err(|e| PreRunError(format!("openai-responses wire: {e}")))?;
-            // Cache-routing hint = the session id (codex's rule; plan §A.5 Q4 —
-            // probe-verified harmless for xAI models).
-            provider.config_mut().prompt_cache_key = Some(session_id.clone());
-            let model = provider.config().model.clone();
-            (Arc::new(provider), model)
-        }
-        ApiSchema::Mock => (Arc::new(mock_provider()), "mock-1".to_string()),
-    };
+    let built = providers
+        .build(
+            &cli.api_schema,
+            &ProviderInit {
+                session_id: session_id.clone(),
+            },
+        )
+        .map_err(|e| PreRunError(e.to_string()))?;
+    let (provider, model) = (built.provider, built.model);
 
     // ---- 5. Engine config + event sink per output mode. ----
     let config = EngineConfig {
@@ -138,17 +134,6 @@ fn resolve_prompt(arg: Option<&str>) -> Result<String, PreRunError> {
         ));
     }
     Ok(prompt)
-}
-
-/// The keyless CI provider: one scripted no-tool text turn → `completed`.
-fn mock_provider() -> MockProvider {
-    MockProvider::new(vec![Completion {
-        content: vec![ContentBlock::Text {
-            text: "Mock run complete.".to_string(),
-        }],
-        usage: Usage::default(),
-        stop: StopReason::EndTurn,
-    }])
 }
 
 /// A unique-enough session id for a headless run (no uuid dep in v0).

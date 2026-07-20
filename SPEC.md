@@ -142,7 +142,9 @@ Carried from the design doc §12, minus what we've now decided (wire = Anthropic
 2. **When to add `apply_patch`** — with the `codex` pack (next milestone), delivered as a JSON-string patch arg on the Anthropic wire (freeform-grammar delivery deferred to a Responses wire).
 3. **Schema-constrained task answers** (`--json-schema`) — native `response_format` first with a `StructuredOutput`-tool fallback; **envelope-only for v0 (deferred, confirmed).** Also open: verifying whether Anthropic and OpenAI accept the *same* derived JSON Schema (we assume yes → a single shared normalization helper, not per-wire); needs a verification pass before the wire relies on it.
 4. **Session durability** — when do ephemeral runs need JSONL transcript persistence?
-5. ~~**facade surface**~~ — **Resolved:** `locode-core` re-exports the driving API (`Session`, `EngineConfig`, report/event types, provider + pack selection) **and the full tool surface** (`Tool`, `Registry`, `dispatch`, `ToolCtx`, `ToolOutput`, `ToolSpec`, and the pack's concrete tools). A **first-class goal**: downstream consumers can use our tools inside *their own* harness loop without our engine (see Users #4). Widen further as `locode-app` needs.
+5. ~~**facade surface**~~ — **Resolved:** `locode-core` re-exports the driving API — including custom-provider
+   injection via `ProviderRegistry` (ADR-0015; `locode-exec` is a library + trivial binary
+   so downstream binaries register their own wires) — (`Session`, `EngineConfig`, report/event types, provider + pack selection) **and the full tool surface** (`Tool`, `Registry`, `dispatch`, `ToolCtx`, `ToolOutput`, `ToolSpec`, and the pack's concrete tools). A **first-class goal**: downstream consumers can use our tools inside *their own* harness loop without our engine (see Users #4). Widen further as `locode-app` needs.
 
 ## Decisions of record
 

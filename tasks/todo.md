@@ -436,6 +436,26 @@ yield failure-case traces instead of nothing.
 **Dependencies:** Task 14
 **Scope:** S
 
+## Task 22: custom provider injection — `ProviderRegistry` + lib-entry `locode-exec` ✅ done
+**Description:** ADR-0015. Downstream consumers need to select providers we don't ship
+(custom wires in their own codebases). Add `ProviderRegistry` (name → factory) to the
+`locode-core` facade with the built-ins pre-registered; move `locode-exec`'s substance into
+its lib target behind `main_with(registry)`; `--api-schema` becomes a registry-validated
+string instead of a closed `ValueEnum`.
+
+**Acceptance criteria:**
+- [x] `ProviderRegistry::builtin()` = `anthropic` / `openai-responses` / `mock`;
+  `register` adds or replaces; unknown `--api-schema` fails pre-run (exit 1) listing
+  available names.
+- [x] The shipped binary is a ~5-line `main_with(ProviderRegistry::builtin())`; a
+  downstream binary registering a custom factory selects it via `--api-schema <name>`.
+- [x] Registry unit tests (builtin names, custom registration, replacement, unknown-name
+  error) + the existing exec integration tests stay green.
+- [x] README "Custom providers" section; SPEC facade note; ADR-0015.
+
+**Dependencies:** Task 14, Task 18
+**Scope:** M
+
 ## Deferred (reserved seams, not scheduled)
 parallel tool batches (RwLock read/write) · compaction · OS sandbox · MCP · streaming events
 (SSE seams reserved in each wire plan) · `--json-schema` answers · JSONL session durability ·
