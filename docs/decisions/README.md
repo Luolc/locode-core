@@ -22,3 +22,4 @@ live in `~/dev/coding-cli-survey`.
 | [0012](ADR-0012-harness-packs.md) | Harness packs — faithful per-harness toolsets (supersedes 0006) | Accepted |
 | [0013](ADR-0013-conversation-protocol.md) | Conversation protocol — 4-role (System/Developer/User/Assistant), Anthropic-shaped blocks | Accepted |
 | [0014](ADR-0014-streaming-event-protocol.md) | Streaming event protocol (`stream-json`) — self-sufficient trace source | Accepted |
+| [0015](ADR-0015-custom-provider-injection.md) | Custom providers — `ProviderRegistry` + library-entry `locode-exec` | Accepted |

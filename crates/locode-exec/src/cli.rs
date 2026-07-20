@@ -26,9 +26,11 @@ pub struct Cli {
     #[arg(long, value_enum, default_value_t = Harness::Grok)]
     pub harness: Harness,
 
-    /// Provider wire schema (`mock` = keyless CI).
-    #[arg(long, value_enum, env = "LOCODE_API_SCHEMA", default_value_t = ApiSchema::Anthropic)]
-    pub api_schema: ApiSchema,
+    /// Provider wire schema: `anthropic`, `openai-responses`, or `mock`
+    /// (keyless CI) — plus any custom providers the binary registered
+    /// (ADR-0015). Unknown names fail pre-run listing the available set.
+    #[arg(long, env = "LOCODE_API_SCHEMA", default_value = "anthropic")]
+    pub api_schema: String,
 
     /// Hard ceiling on sample→dispatch turns. **Unlimited when omitted**
     /// (ADR-0005 amendment — no studied harness caps turns by default).
@@ -61,26 +63,12 @@ pub enum Harness {
 
 impl Harness {
     /// The pack name for `locode_core::resolve`.
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Harness::Grok => "grok",
         }
     }
-}
-
-/// The provider wire schemas (ADR-0007: a schema, not a gateway).
-#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
-#[value(rename_all = "kebab-case")]
-pub enum ApiSchema {
-    /// Anthropic Messages (native, OpenRouter, or any compatible gateway —
-    /// selected by `LOCODE_BASE_URL`).
-    Anthropic,
-    /// OpenAI Responses (native, OpenRouter, or any compatible gateway) —
-    /// drives OpenAI and xAI grok models; stateless always.
-    #[value(name = "openai-responses")]
-    OpenAiResponses,
-    /// The scripted mock provider — keyless CI runs.
-    Mock,
 }
 
 /// The stdout artifact selector (ADR-0014; Claude Code's three-way shape).
