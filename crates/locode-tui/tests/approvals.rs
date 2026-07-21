@@ -16,9 +16,13 @@ use serde_json::json;
 
 fn cli(dir: &tempfile::TempDir, yolo: bool) -> Cli {
     Cli {
-        harness: "grok".into(),
+        prompt: None,
+        print: false,
+        harness: locode_exec::Harness::Grok,
         api_schema: "mock".into(),
         cwd: Some(dir.path().to_path_buf()),
+        output_format: locode_exec::OutputFormat::Json,
+        max_turns: None,
         dangerously_skip_permissions: yolo,
         strip_identity: false,
     }

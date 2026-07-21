@@ -64,3 +64,28 @@ the load-bearing architectural decisions so they survive the spec's churn.
   replacing it (grok/codex both ended up with custom editors) is local.
 - Streaming deltas, kitty keyboard, mouse, themes, multi-session all have
   named extension points in SPEC-TUI; none require re-architecture.
+
+## Amendment (2026-07-21): the `locode` binary unifies TUI + `-p` headless
+
+`locode` becomes the single entry point for both modes (Task 28), matching
+Claude Code (`claude` interactive / `claude -p "…"` headless) and grok
+(`grok -p`). `locode_tui::main_with` detects `-p`/`--print` and dispatches:
+
+- **default** → the interactive TUI (this ADR's architecture);
+- **`-p`** → a headless one-shot (no terminal setup), reusing
+  `locode-exec`'s engine via the new `locode_exec::run_headless(cli,
+  registry)` — the same session assembly, `--output-format` emit (ADR-0009),
+  and SIGTERM handling. The two CLIs share `Harness`/`OutputFormat`; the
+  headless prints stay inside `locode-exec`'s audited stdout writers, so the
+  workspace print-ban is not weakened.
+
+`locode-tui` therefore depends on `locode-exec` (lib) for now. **Retire plan:**
+`locode-exec` (the binary) is slated for removal after this version, and the
+installers will ship `locode` instead of `locode-exec`; when that happens the
+headless logic (`run.rs`/`output.rs`/`signal.rs`) migrates into `locode-tui`
+or a shared lib, and the `locode-tui → locode-exec` edge is dropped. Until
+then the reuse avoids duplicating the proven headless path.
+
+A bare positional prompt (`locode "task"`) pre-fills the composer in TUI mode
+(not auto-sent). The publish/installer switch to `locode` remains a user-gated
+release decision.

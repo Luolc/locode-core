@@ -26,6 +26,7 @@ locode-host = { path = "crates/locode-host", version = "0.1.4" }
 locode-engine = { path = "crates/locode-engine", version = "0.1.4" }
 locode-core = { path = "crates/locode-core", version = "0.1.4" }
 locode-tui = { path = "crates/locode-tui", version = "0.1.4" }
+locode-exec = { path = "crates/locode-exec", version = "0.1.4" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Async, object-safe tool traits (native `async fn` in traits isn't dyn-safe yet);

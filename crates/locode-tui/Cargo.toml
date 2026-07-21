@@ -15,6 +15,9 @@ workspace = true
 
 [dependencies]
 locode-core = { workspace = true }
+# The headless one-shot engine, reused by `locode -p` (Task 28). To be
+# retired with locode-exec; this logic then migrates here (ADR-0019 amendment).
+locode-exec = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 tui-textarea = { workspace = true }
@@ -29,3 +32,5 @@ chrono = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time", "test-util"] }
 tempfile = { workspace = true }
+assert_cmd = { workspace = true }
+predicates = { workspace = true }

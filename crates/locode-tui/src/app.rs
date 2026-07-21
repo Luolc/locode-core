@@ -174,6 +174,17 @@ impl App {
         }
     }
 
+    /// Fresh state with the composer pre-filled from a positional prompt
+    /// (bare `locode "task"` — the user edits/sends it; it is not auto-sent).
+    #[must_use]
+    pub fn with_draft(draft: &str) -> Self {
+        let mut app = Self::new();
+        if !draft.trim().is_empty() {
+            app.composer.set_text(draft);
+        }
+        app
+    }
+
     /// Whether a run is currently active.
     #[must_use]
     pub fn is_running(&self) -> bool {
@@ -1285,6 +1296,15 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn with_draft_prefills_the_composer_without_sending() {
+        let app = App::with_draft("draft task");
+        assert_eq!(app.composer.text(), "draft task");
+        assert!(app.outbox.is_empty(), "pre-fill does not auto-send");
+        // Empty/whitespace draft leaves the composer empty.
+        assert!(App::with_draft("  ").composer.is_empty());
     }
 
     #[test]

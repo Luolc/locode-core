@@ -44,9 +44,14 @@ pub async fn run(cli: Cli, registry: ProviderRegistry) -> Result<ExitCode, RunEr
     let mut terminal = term::init()?;
     let mut input_rx = term::spawn_input_reader();
     let mut signal_rx = spawn_signal_task();
+    // Pre-fill from a positional prompt before `cli` moves into the engine.
+    let initial_draft = cli.prompt.clone();
     let (engine_tx, mut engine_rx) = engine::spawn(cli, registry);
 
-    let mut app = App::new();
+    let mut app = match &initial_draft {
+        Some(prompt) => App::with_draft(prompt),
+        None => App::new(),
+    };
     let mut last_draw = Instant::now()
         .checked_sub(MIN_DRAW_INTERVAL)
         .unwrap_or_else(Instant::now);
