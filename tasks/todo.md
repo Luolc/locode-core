@@ -507,23 +507,32 @@ per tool with verbatim schema diffs, behavior gaps, quirks, and a detailed fixin
   walker (needs `ignore` crate — **ask-first dependency**), depth-budgeted BFS +
   `[N files in subtree: …]` summaries, exact bullet/header format, truncation notices,
   four exact error texts. Scope M.
-- [ ] `read_file` — DRIFT, 4 schema + 10 behavior ([audit](audits/read_file.md)):
-  `pages`/`format`, bare-integer schema shape + lenient coercion, grok's five-bullet
-  description, **sparse `N→` numbering (first + every 10th line)**, negative-offset
-  tail-read, overflow message variants (incl. grok's own typo). Scope M (L with
-  images/PDF tier — defer multimodal).
-- [ ] `search_replace` — DRIFT, 2 schema + 8 behavior ([audit](audits/search_replace.md)):
-  currently matches grok's **legacy-0.4.10** surface, not current default — **decide
-  target version first** (recommend: current); empty-`old_string` overwrite semantics,
-  grok's success text (no counts, echoes model path), 3-bullet description, lenient
-  bool coercion. Scope M.
-- [ ] `run_terminal_cmd` — DRIFT, 3 schema + 11 behavior ([audit](audits/run_terminal_cmd.md)):
-  20k-char front/back truncation with grok's exact markers + spill file, detected-shell
-  `-c` + login-PATH probe, ANSI-strip/soft-wrap, `exit: killed (…)` variants, trailing-`&`
-  rejection (active in background-disabled config — applies to us today), and full
-  background mode (`is_background` + `get_task_output`/`kill_task` companion tools —
-  needs new `locode-host` surface). Scope M foreground / L background.
+- [ ] `read_file` — **IMMEDIATE: faithful text path** (audit criteria 1–8 + 10-as-
+  deviation-note; see the audit's Split section): `pages`/`format` schema fields
+  (verbatim; PDF-only behavior stays deferred), bare-integer schema + lenient `offset`
+  coercion, description (PDF/image bullets trimmed + logged), **sparse `N→` numbering**,
+  negative-offset tail-read, `total_lines` semantics, overflow messages (incl. grok's
+  typo), exact error texts. Scope M, no new deps. ([audit](audits/read_file.md))
+- [ ] `search_replace` — **IMMEDIATE** once the target version is decided (**open
+  decision:** current grok default [recommended] vs the legacy-0.4.10 surface we match
+  today): overwrite semantics for empty `old_string`, grok's success text, 3-bullet
+  description, lenient bool coercion. Scope M. ([audit](audits/search_replace.md))
+- [ ] `list_dir` — **IMMEDIATE** once the `ignore`-crate dependency is approved (**open
+  decision**, ask-first): gitignore walker, BFS budget + subtree summaries, exact
+  formats/notices/error texts. Scope M. ([audit](audits/list_dir.md))
+- [ ] `run_terminal_cmd` — **IMMEDIATE: faithful foreground slice** (audit criteria
+  1–8 + 11–12; see the audit's Split section): bg-disabled description variant,
+  lenient timeout parsing, 20k-char front/back truncation + exact markers, `exit:
+  killed (…)` variants, ANSI-strip/soft-wrap, trailing-`&` rejection (active in our
+  configuration **today**), + two host changes (combined capture w/ front/back cap;
+  spill file). Scope M. ([audit](audits/run_terminal_cmd.md))
 - [ ] Sweep the pack for any remaining dropped-field comments; none left un-tasked.
+
+**Deferred (user decision, 2026-07-20):**
+- `read_file` binary/image/PDF/PPTX tier (audit criteria 9 + 11) — binary reads emit
+  lossy text until then (known consequence, recorded in the audit).
+- `run_terminal_cmd` background mode (audit criteria 9–10): `Host::exec_background` +
+  task registry, `is_background`, `<task-id>` envelope, `get_task_output`/`kill_task`.
 
 **Dependencies:** none (independent of Tasks 23–25)
 **Scope:** grep S (done) · list_dir M · read M · search_replace M · terminal M–L
@@ -534,4 +543,7 @@ parallel tool batches (RwLock read/write) · compaction · OS sandbox · MCP · 
 multi-platform `rg` bundle matrix + macOS notarization/sidecar (packaging, ADR-0011) ·
 pack session-start file context (AGENTS.md/CLAUDE.md loading — plans 19 Q4 / 20 Q3) ·
 codex unified exec (PTY) / `view_image` / hosted `web_search` · Claude Code
-TodoWrite/Task/WebFetch/WebSearch/NotebookEdit (plan 20 §1) · per-model codex prompt variants.
+TodoWrite/Task/WebFetch/WebSearch/NotebookEdit (plan 20 §1) · per-model codex prompt variants ·
+grok pack multimodal `read_file` tier (binary/image/PDF/PPTX — Task 26 deferral) ·
+grok pack background commands (`is_background` + `get_task_output`/`kill_task` + host
+registry — Task 26 deferral).

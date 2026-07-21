@@ -108,3 +108,25 @@ Host-seam constraints: `locode-host` today offers one-shot `exec` with a hard ti
 10. **Background mode — schema/tools**: restore `is_background` (exact description, lenient bool, `bash/mod.rs:279-288`), return the `<task-id>…` XML envelope (`output.rs:775-793`) with the exact retrieval-hint sentence, and port `get_task_output` + `kill_task` (GB finalize *requires* them whenever the param is exposed, `bash/mod.rs:1558-1573`). Accept: `is_background:true` returns the envelope immediately; output retrievable; kill works.
 11. **Guardrails**: port the `&`-operator rejection (active in our bg-disabled config — see Quirk 7) with exact messages, the `wait`-suffix/heredoc/quote exemptions, and the self-matching `pkill/pgrep -f` rejection with GB's exact message. Accept: `sleep 5 &` → GB's "(false,false)" message; `cmd1 & cmd2 & wait` passes; `pkill -f my_script.py ; ./my_script.py` → rejected with the pkill message.
 12. **ADR reconciliation** (repo rule: ADR-first): record which criteria land now vs deferred (esp. background mode and the `-lc` vs `-c` + PATH-probe shell choice) as a dated amendment to ADR-0012 before code changes.
+
+## Split: immediate vs deferred (user decision, 2026-07-20)
+
+**Deferred — background mode** (user call): criteria 9–10 (the
+`Host::exec_background` surface + task registry, `is_background` schema field,
+`<task-id>` envelope, and the `get_task_output`/`kill_task` companion tools).
+
+**Immediate (faithful foreground slice):** criteria 1–5, 8, 11, 12 — including
+criterion 11's trailing-`&` rejection, which is **not** background work: GB
+actively rejects `&` exactly in the background-disabled configuration we now
+permanently occupy until the deferred slice lands. Criterion 3 uses GB's
+background-disabled description variant (`bash/mod.rs:1440-1453`), which is
+the honest rendering for our configuration. Criterion 1's timeout description:
+verify at implementation time which text GB's wire carries in a
+background-disabled session and use that verbatim.
+
+**Immediate host work:** criterion 6 (combined interleaved capture +
+front/back char cap — truncation fidelity depends on it) and criterion 7
+(full-output spill file; if skipped initially, the `- full output at:` clause
+must be omitted with the deviation documented, per criterion 4's note).
+
+Immediate scope: **M** (incl. the two host changes); deferred scope: **L**.
