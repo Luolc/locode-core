@@ -45,8 +45,8 @@ Two new workspace crates (decided 2026-07-21, mirroring the ADR-0015
   Exists from slice 1 so `cargo run -p locode-app` works throughout. This is
   the assembly point where future non-TUI capability (MCP wiring, config,
   richer UX) lands; the moment feature logic appears here, push it down.
-  Binary name: `locode-app` for now — shipping the bin as `locode` (bin
-  names aren't namespaced on crates.io) is a slice-6 release decision.
+  Binary name: **`locode`** (resolved early — user 2026-07-21, "when I can
+  `locode --yolo`"; bin names aren't namespaced on crates.io).
 
 Both `publish = false` until v1 stabilizes (flipping later is non-breaking).
 

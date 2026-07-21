@@ -25,6 +25,7 @@ locode-provider = { path = "crates/locode-provider", version = "0.1.4" }
 locode-host = { path = "crates/locode-host", version = "0.1.4" }
 locode-engine = { path = "crates/locode-engine", version = "0.1.4" }
 locode-core = { path = "crates/locode-core", version = "0.1.4" }
+locode-tui = { path = "crates/locode-tui", version = "0.1.4" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Async, object-safe tool traits (native `async fn` in traits isn't dyn-safe yet);
@@ -65,6 +66,16 @@ assert_cmd = "2"
 predicates = "3"
 # The one HTTP client; rustls avoids the system OpenSSL dep (SPEC, ADR-0007).
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "http2"] }
+# ---- TUI workstream deps (SPEC-TUI, approved with the spec 2026-07-21) ----
+# Terminal UI framework + backend — stock crates, no forks (SPEC-TUI: our v1
+# uses Viewport::Inline + insert_before, not the forked scrolling-region path).
+ratatui = "0.29"
+crossterm = { version = "0.28", features = ["bracketed-paste"] }
+# Multiline composer widget (grok forked one; the stock crate suffices for v1
+# behind our own Composer wrapper).
+tui-textarea = "0.7"
+# Assistant markdown -> styled lines (no syntect in v1).
+pulldown-cmark = { version = "0.13", default-features = false }
 
 # Strict-from-empty: these are enabled now, while the crates are empty, so we never pay
 # the churn of adding lints after code exists. See ADR-0010.

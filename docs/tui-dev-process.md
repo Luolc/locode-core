@@ -140,8 +140,10 @@ amendments that *narrow* or *clarify* scope.
 
 **Hard stops — still require the user (batched where possible):**
 
-1. **New dependencies** beyond the four approved with the spec (ratatui,
-   crossterm, tui-textarea, pulldown-cmark). Includes dev-deps.
+1. **New dependencies** — relaxed (user, 2026-07-21): *reasonable,
+   well-justified* deps may be added without asking, recorded in the plan doc
+   and PR body with the justification; anything heavy, niche, or
+   security-sensitive still stops for the user.
 2. **Changes to core crates' public surface** (traits, envelope,
    `schema_version`, facade exports) — with one pre-authorized exception: the
    spec-flagged ADR-0017 amendment (engine `decide()` await observing the
