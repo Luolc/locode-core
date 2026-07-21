@@ -150,6 +150,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_terminal_cmd_truncates_front_back_with_grok_markers() {
+        let (_dir, registry, root) = setup();
+        let out = registry
+            .dispatch(
+                "run_terminal_cmd",
+                json!({
+                    "command": "for i in $(seq 1 3000); do echo line-$i; done",
+                    "description": "spam output"
+                }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(out.record.ok);
+        let text = result_text(&out.tool_result);
+        assert!(
+            text.starts_with("exit: 0 [truncated: showing first/last "),
+            "{}",
+            &text[..80]
+        );
+        assert!(text.contains(" - full output at: "), "spill path in header");
+        assert!(
+            text.contains("\n\n... (output truncated) ...\n\n"),
+            "grok separator"
+        );
+        assert!(text.contains("line-1\n"), "front retained");
+        assert!(text.contains("line-3000"), "back retained");
+        assert_eq!(out.record.output["truncated"], json!(true));
+    }
+
+    #[tokio::test]
+    async fn run_terminal_cmd_rejects_background_operator() {
+        let (_dir, registry, root) = setup();
+        let out = registry
+            .dispatch(
+                "run_terminal_cmd",
+                json!({ "command": "sleep 5 &", "description": "bg" }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(is_error(&out.tool_result));
+        assert_eq!(
+            result_text(&out.tool_result),
+            "Remove the background '&' from your command; background execution is disabled."
+        );
+    }
+
+    #[tokio::test]
     async fn read_file_numbers_lines() {
         let (_dir, registry, root) = setup();
         std::fs::write(root.join("f.txt"), "alpha\nbeta\ngamma\n").unwrap();
