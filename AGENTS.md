@@ -10,9 +10,11 @@ Code, Codex, and Grok Build** (and any other harness). Codex and Grok Build read
 
 `locode-core` is the **headless Rust core library** of a custom coding agent
 ("locode"): the sample→dispatch→append loop, a typed tool registry, a
-provider/wire abstraction, and a single structured-output contract. **No TUI and
-no interactive permission prompts** live here — a separate future repo
-(`locode-app`) will build the TUI on top of these crates.
+provider/wire abstraction, and a single structured-output contract. The TUI
+will be built **in this repo as separate crate(s)** on top of the core (ADR-0001
+amendment 2026-07-21) — but the **core crates stay headless**: no TUI
+dependencies and no interactive prompts inside them; interaction reaches the
+engine only through its public seams (approval, cancel, events, continuity).
 
 Read these before starting implementation work — they are the source of truth for
 what we are building and in what order:

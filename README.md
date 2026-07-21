@@ -3,8 +3,7 @@
 The headless Rust core of **locode**, a custom coding agent: the
 sample→dispatch→append loop, a typed tool registry, faithful per-harness tool
 packs, and a provider/wire abstraction — shipped as a set of library crates
-plus a minimal headless binary (`locode-exec`). No TUI lives here; that
-belongs to a separate app built on these crates.
+plus a minimal headless binary (`locode-exec`).
 
 ## Why
 
