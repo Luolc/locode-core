@@ -145,6 +145,8 @@ mod tests {
     }
 
     #[cfg(unix)]
+    // `std::os::unix::fs::symlink` — does not even compile off unix.
+    #[cfg(unix)]
     #[tokio::test]
     async fn rejects_symlink_escape() {
         let dir = tempdir().unwrap();

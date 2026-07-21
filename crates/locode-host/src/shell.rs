@@ -651,6 +651,8 @@ mod tests {
         let _ = std::fs::remove_file(spill);
     }
 
+    // Spawns the host's `-c`-style POSIX shell.
+    #[cfg(unix)]
     #[tokio::test]
     async fn front_back_small_output_is_untruncated() {
         let dir = tempdir().unwrap();
