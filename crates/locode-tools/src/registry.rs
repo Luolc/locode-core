@@ -173,6 +173,15 @@ impl Registry {
         self.tools.keys().map(String::as_str)
     }
 
+    /// The [`ToolKind`] registered under `name`, or `None` for an unknown tool.
+    ///
+    /// The pre-dispatch lookup the approval seam uses (ADR-0017): an approver
+    /// can auto-allow read-only kinds without knowing pack-specific tool names.
+    #[must_use]
+    pub fn kind_of(&self, name: &str) -> Option<ToolKind> {
+        self.tools.get(name).map(|tool| tool.kind())
+    }
+
     /// The neutral tool specs for every registered tool, unordered.
     #[must_use]
     pub fn specs(&self) -> Vec<ToolSpec> {
@@ -267,6 +276,9 @@ fn record(
         kind: kind.as_str().to_owned(),
         args,
         ok,
+        // Never set here: `denial_reason` belongs exclusively to the engine's
+        // approver-deny path (ADR-0017) — dispatch failures are not denials.
+        denial_reason: None,
         output,
     }
 }

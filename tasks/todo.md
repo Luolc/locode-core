@@ -488,10 +488,14 @@ select, between batch calls with synthetic pairing); `Status::Cancelled`
   integration test (report parses, exit 0, valid stream tail).
 **Dependencies:** Task 23 (one test only) · **Scope:** M
 
-### Task 25: approval seam (ADR-0017)
+### Task 25: approval seam (ADR-0017) ✅ done
 `Approver` trait at the engine dispatch step; deny = paired soft error;
-`AllowAll` default (zero behavior change); facade re-exports.
-- [ ] Deny/mixed-batch/async-approver/kind tests; golden default-approver run.
+`AllowAll` default (zero behavior change); facade re-exports. Also shipped per
+the Resolutions: `Event::Approval` (+`wait_ms`), `ToolCallRecord.denial_reason`
+(approver-deny path only), `Registry::kind_of`, `#[non_exhaustive]` on
+`ApprovalRequest`/`Decision`, ADR-0008 dated amendment.
+- [x] Deny/mixed-batch/async-approver/kind tests; golden default-approver run
+  (exec integration suite untouched); denial_reason + Approval serde tests.
 **Dependencies:** none · **Scope:** M
 
 ## Task 26: grok pack schema fidelity — undo the Task 11 "v0 seam" cuts

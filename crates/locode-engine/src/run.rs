@@ -1,10 +1,11 @@
 //! The sample → dispatch → append → re-sample loop (ADR-0005, ADR-0004, ADR-0014).
 
-use locode_protocol::{ContentBlock, Event, Message, Report, ResultChunk, Role};
+use locode_protocol::{ContentBlock, Event, Message, Report, ResultChunk, Role, ToolCallRecord};
 use locode_provider::{Completion, ConversationRequest, ProviderError};
-use locode_tools::ToolCtx;
+use locode_tools::{ToolCtx, ToolKind};
 use serde_json::Value;
 
+use crate::approve::{ApprovalRequest, Decision};
 use crate::session::Session;
 use crate::terminal::{RunAcc, Terminal};
 
@@ -137,8 +138,17 @@ impl Session {
     /// results and the first `Fatal` message (which aborts the turn). Calls after a
     /// fatal are not run but are still paired with synthetic `is_error` results so
     /// the transcript stays valid (ADR-0004).
+    ///
+    /// Each call first passes the approval gate (ADR-0017): the injected
+    /// [`Approver`](crate::Approver) is consulted per call — serially, so an
+    /// interactive frontend naturally receives one prompt at a time — and every
+    /// resolution emits [`Event::Approval`] with the decision latency. A deny is
+    /// **soft**: a paired `is_error` result carries the reason to the model,
+    /// the record lands in the report with `denial_reason` set, and the run
+    /// continues ("deny and stop" is deny + the cancel handle, composed by the
+    /// frontend).
     async fn dispatch_batch(
-        &self,
+        &mut self,
         calls: Vec<(String, String, Value)>,
         acc: &mut RunAcc,
     ) -> (Vec<ContentBlock>, Option<String>) {
@@ -152,6 +162,39 @@ impl Session {
                 ));
                 continue;
             }
+
+            // The approval gate — in front of the dispatch door, so the tools
+            // crate stays interaction-free (ADR-0017 Option P1).
+            let request = ApprovalRequest {
+                tool_use_id: &id,
+                tool_name: &name,
+                kind: self.registry.kind_of(&name),
+                input: &input,
+            };
+            let asked = std::time::Instant::now();
+            let decision = self.approver.decide(&request).await;
+            let wait_ms = u64::try_from(asked.elapsed().as_millis()).unwrap_or(u64::MAX);
+            self.sink.emit(Event::Approval {
+                tool_use_id: id.clone(),
+                tool_name: name.clone(),
+                decision: match &decision {
+                    Decision::Allow => "allow".to_owned(),
+                    Decision::Deny { .. } => "deny".to_owned(),
+                },
+                wait_ms,
+            });
+            if let Decision::Deny { reason } = decision {
+                results.push(synthetic_error(&id, &format!("tool call denied: {reason}")));
+                acc.tool_calls.push(denied_record(
+                    &id,
+                    &name,
+                    &input,
+                    self.registry.kind_of(&name),
+                    reason,
+                ));
+                continue;
+            }
+
             let ctx = ToolCtx::new(
                 self.config.cwd.clone(),
                 id.clone(),
@@ -286,6 +329,27 @@ fn join_text(content: &[ContentBlock]) -> Option<String> {
         }
     }
     (!out.is_empty()).then_some(out)
+}
+
+/// The report-side record for an approver-denied call (never executed):
+/// `ok: false`, no output, and `denial_reason` set — the **only** producer of
+/// that field (ADR-0017: denial stays structurally separable from failure).
+fn denied_record(
+    id: &str,
+    name: &str,
+    input: &Value,
+    kind: Option<ToolKind>,
+    reason: String,
+) -> ToolCallRecord {
+    ToolCallRecord {
+        id: id.to_owned(),
+        name: name.to_owned(),
+        kind: kind.unwrap_or(ToolKind::Other).as_str().to_owned(),
+        args: input.clone(),
+        ok: false,
+        output: Value::Null,
+        denial_reason: Some(reason),
+    }
 }
 
 /// A synthesized `is_error` result to keep an un-run `tool_use` paired.

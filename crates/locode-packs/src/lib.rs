@@ -213,6 +213,25 @@ mod tests {
 
     // ---- grok wiring ----
 
+    /// The approval seam resolves `kind` by registry lookup pre-dispatch
+    /// (ADR-0017): pin the grok pack's `ToolKind` taxonomy end-to-end.
+    #[test]
+    fn grok_tools_expose_kinds_for_the_approval_seam() {
+        use locode_tools::ToolKind;
+        let (_dir, host) = test_host();
+        let registry = resolve("grok").unwrap().build_registry(&host);
+        for (tool, kind) in [
+            ("run_terminal_cmd", ToolKind::Shell),
+            ("read_file", ToolKind::Read),
+            ("search_replace", ToolKind::Edit),
+            ("grep", ToolKind::Grep),
+            ("list_dir", ToolKind::Glob),
+        ] {
+            assert_eq!(registry.kind_of(tool), Some(kind), "kind_of({tool})");
+        }
+        assert_eq!(registry.kind_of("no_such_tool"), None);
+    }
+
     #[test]
     fn grok_registers_real_tools_and_preamble() {
         let (_dir, host) = test_host();
