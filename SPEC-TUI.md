@@ -1,4 +1,4 @@
-# SPEC-TUI — `locode-tui`, the minimal interactive frontend
+# SPEC-TUI — `locode-tui` + `locode-app`, the minimal interactive frontend
 
 Status: **Proposed** (2026-07-21) — review before implementation.
 Grounding: [`docs/research/tui-harness-study.md`](docs/research/tui-harness-study.md)
@@ -31,11 +31,35 @@ files; session persistence/resume; multiple sessions/tabs; steer/interject
 mid-turn; Windows; alt-screen or app-owned scrollback; vim mode; `@`-file
 mentions; image/paste chips.
 
-## Crate & dependencies
+## Crates & dependencies
 
-- New workspace crate **`crates/locode-tui`** (bin target `locode-tui`),
-  `publish = false` until v1 stabilizes (flipping it later is non-breaking).
+Two new workspace crates (decided 2026-07-21, mirroring the ADR-0015
+`locode-exec` lib+thin-binary pattern and the grok `pager`/`pager-bin` split):
+
+- **`crates/locode-tui`** — a **library**: all TUI components and the
+  runnable app behind one entry point
+  (`locode_tui::main_with(ProviderRegistry) -> ExitCode`, the exec pattern).
   Depends only on `locode-core` (facade) among our crates.
+- **`crates/locode-app`** — the product binary: **flag-free composition
+  only**, a few lines calling `main_with(ProviderRegistry::builtin())`.
+  Exists from slice 1 so `cargo run -p locode-app` works throughout. This is
+  the assembly point where future non-TUI capability (MCP wiring, config,
+  richer UX) lands; the moment feature logic appears here, push it down.
+  Binary name: `locode-app` for now — shipping the bin as `locode` (bin
+  names aren't namespaced on crates.io) is a slice-6 release decision.
+
+Both `publish = false` until v1 stabilizes (flipping later is non-breaking).
+
+**`locode-tui` stays ONE crate**, with a strict module map (`term/` lifecycle,
+`engine/` session driver, `app/` reducer + state, `ui/` blocks + composer +
+overlay) and namespaced enums from day one. Evidence: codex holds ~221k LOC
+in a single TUI crate — its regrets are module hygiene, never crate
+boundaries — while grok's sibling-crate splits are third-party forks
+(textarea, inline terminal) and a second render mode, neither of which we
+have (stock crates, one screen mode). Split **triggers** (a rule, not a
+vibe): forking/vendoring a widget crate → sibling crate; a second frontend
+consuming the block renderers → extract them; a wire-protocol extraction or
+material compile-time pain → extract. Until a trigger fires, modules.
 - **New dependencies (ask-first list, approve with this spec):**
   - `ratatui` (stock, `crossterm` backend) — the Rust-ecosystem standard;
     both Rust harnesses use it (via forks we do not need: our v1 uses the
@@ -208,7 +232,8 @@ small core change + ADR note when the TUI work confirms the shape.
 
 ## Build order (thin slices, each PR-sized and green)
 
-1. **Shell**: crate scaffold, terminal init/teardown/panic/signal plumbing,
+1. **Shell**: both crate scaffolds (`locode-tui` lib + thin `locode-app`
+   bin), terminal init/teardown/panic/signal plumbing,
    event loop, composer, quit keys. Runs and exits clean; reducer + teardown
    tests.
 2. **Drive a run**: engine task + mock provider; submit → transcript blocks
@@ -225,7 +250,7 @@ small core change + ADR note when the TUI work confirms the shape.
 
 ## Success criteria
 
-- `locode-tui --api-schema mock` runs a full scripted conversation —
+- `locode-app --api-schema mock` runs a full scripted conversation —
   submit, tool calls rendered, follow-up turn, approval prompt honored,
   Esc-cancel produces a calm `cancelled` separator — and exits with the
   terminal perfectly restored, including after a forced panic.

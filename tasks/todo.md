@@ -565,16 +565,19 @@ search_replace → list_dir. Release: 0.1.3 = this task.**
 **Dependencies:** none (independent of Tasks 23–25)
 **Scope:** grep S (done) · list_dir M · read M · search_replace M · terminal M–L
 
-## Task 27: locode-tui v1 — the minimal interactive frontend
-**Description:** Build the TUI crate per [`SPEC-TUI.md`](../SPEC-TUI.md) (spec grounded in
+## Task 27: locode-tui + locode-app v1 — the minimal interactive frontend
+**Description:** Build the TUI per [`SPEC-TUI.md`](../SPEC-TUI.md) (spec grounded in
 the four-harness TUI source study, [`docs/research/tui-harness-study.md`](../docs/research/tui-harness-study.md)).
+Crate shape (2026-07-21): `locode-tui` = ONE library crate (components + runnable app
+behind `main_with`, exec-style; module map with named split triggers); `locode-app` =
+flag-free thin product binary, the future assembly point for non-TUI capability.
 Six thin slices: shell (terminal lifecycle + loop + composer) → drive-a-run →
 cancel → approvals → conversation polish → hardening/release. Inline viewport +
 print-once transcript; `Msg → update → Cmd` reducer; TuiApprover with FIFO overlay
 queue; robustness floor from slice 1.
 
 **Acceptance criteria:** SPEC-TUI.md "Success criteria" section.
-- [ ] Slice 1 — shell (+ TUI architecture ADR, SPEC.md pointer)
+- [ ] Slice 1 — shell, both crate scaffolds (+ TUI architecture ADR, SPEC.md pointer)
 - [ ] Slice 2 — drive a run (mock)
 - [ ] Slice 3 — cancel
 - [ ] Slice 4 — approvals (+ possible ADR-0017 amendment: decide() await observes the cancel token)
