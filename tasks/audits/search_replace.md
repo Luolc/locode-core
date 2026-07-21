@@ -283,3 +283,23 @@ Acceptance criteria:
     string-typed value errors — pins the declined-deviation behavior), same
     old/new rejection — asserting exact strings (grok's own tests do:
     gb/mod.rs:1008-1016, 1173-1180, 1228-1236).
+
+## Plan finalization (user interview, 2026-07-21)
+
+- **Target version resolved (Q2): current-default grok** — port exactly what a
+  default-configuration session exhibits. Grok's DI/config toggles become
+  constructor-time constants frozen at grok defaults with citation comments
+  (no resource bag): user-edit hint ON (`mod.rs:110-115`), overwrite-by-empty-
+  old-string ON (`empty_old_string_does_not_override = false`, `mod.rs:99-102`),
+  nearest-match hint per its call-site gating.
+- **Default-off subsystems are not ported** (unreachable at default config;
+  each a one-line recorded deviation): path-not-found hints
+  (`PathNotFoundHints` default false) and the confusable normalized-fallback
+  matching (`unicode_normalized_fallback` default false, `mod.rs:103-109`).
+  **Verify at implementation:** whether the confusable *diagnostic message*
+  (`mod.rs:410-417`) is gated with the fallback or unconditional; port
+  accordingly and size it before writing.
+- **Gitignore guard** (default ON via `RespectGitignore`, `mod.rs:176`) ports
+  via the new host `is_path_ignored` API — no pack fs access.
+- Architecture confirmed: all hint injection is in-memory string logic inside
+  the pack over existing `host.read_file`/`write_file` calls; no seam changes.
