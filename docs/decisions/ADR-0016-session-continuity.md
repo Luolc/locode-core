@@ -1,7 +1,7 @@
 # ADR-0016: Session continuity — multi-turn conversations in the engine
 
 ## Status
-Proposed (under review)
+Accepted (options reviewed and resolved in user interview, 2026-07-20)
 
 ## Date
 2026-07-20
@@ -106,6 +106,18 @@ Option A. Concretely:
    transcript after a run without replaying events).
 5. `max_turns` (`config.rs:28`) continues to bound **a single run's** turns —
    unchanged semantics, now documented explicitly.
+
+## Resolution (user interview, 2026-07-20)
+- **Option A accepted.**
+- **Continuation after failed runs is allowed unconditionally** — both
+  `ModelError` (history intact; e.g. rate limit/outage) and `Error` (fatal tool
+  error; transcript fully paired before the break, `run.rs:110-112`). The
+  pre-send `repair_pairing` (`run.rs:46`) heals any structural damage on the
+  next sample. No "poisoned session" flag: an unrecoverable cause (e.g.
+  context-too-long before compaction exists) surfaces as a repeating, visible
+  error the frontend can explain — preferred over silently discarding a
+  conversation that hit one transient failure. Matches claude/codex
+  retry-after-failed-turn behavior.
 
 ## Consequences
 - The TUI's turn loop is `loop { let report = session.run_text(input).await; }`.

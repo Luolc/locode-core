@@ -1,7 +1,7 @@
 # ADR-0018: Public cancellation — handle, semantics, and the `cancelled` status
 
 ## Status
-Proposed (under review)
+Accepted (options reviewed and resolved in user interview, 2026-07-20)
 
 ## Date
 2026-07-20
@@ -85,14 +85,31 @@ aggregation, and exit-code mapping (`crates/locode-exec/src/output.rs:46-50`)
 would report failure for an intentional stop. Rejected.
 **T3 — `Completed` with a flag.** Lies about completion. Rejected.
 
-## Decision (proposed)
+## Decision
 H1 + S1 + T1, plus the deferred Task 21 delivery on top:
 
-1. `Session::cancel_handle()` public accessor; cancellation is sticky and
-   idempotent (grok's rule) — a cancelled session's next `run()` returns a
-   `cancelled` report immediately unless the token is replaced (fresh token per
-   run; the handle returns the *current* run's token — exact lifecycle detailed
-   in the task plan).
+1. `Session::cancel_handle()` public accessor with a **per-run token, replaced
+   at run end** (resolved 2026-07-20): the session is born with token T1; the
+   frontend clones the handle *before* calling `run()` (mandatory — `run`
+   takes `&mut self`, `session.rs:54`, so no method is callable mid-run); when
+   `run()` returns, the token is retired and a fresh one installed; the
+   frontend re-fetches the handle each turn. A cancel landing after the run
+   ended hits a retired token — a harmless no-op, resolving the Esc-lands-late
+   race by construction. Double-cancel is idempotent (grok's re-sendable rule,
+   `dispatch/turn.rs:66-90`). **No public `reset()`.**
+
+   Cross-harness reference (checked before finalizing): the one in-process
+   precedent, Claude Code, creates a **fresh `AbortController` per query**
+   (`REPL.tsx:3126`, `:3401`; retired via `setAbortController(null)` at
+   `:1830`, `:2159`, `:2743`) — per-run scope is the forced JS pattern since an
+   aborted controller is permanently aborted. The three wire-separated
+   harnesses expose cancellation as an *operation* on the current turn (codex
+   `turn_interrupt`, `app_server_session.rs:866`; grok `Effect::CancelTurn`;
+   opencode `POST /session/:id/interrupt`) — inherently per-current-turn, no-op
+   when idle. **No studied harness has a sticky kill-switch requiring reset**;
+   the rejected session-lifetime design has zero precedent. If a wire layer is
+   added later (daemon split), "interrupt" is the op that internally cancels
+   the current run's token — this primitive is exactly what it needs.
 2. Loop observes the token at: iteration top, provider await (select), backoff
    sleep, and between batch calls — with synthetic pairing for the unfinished
    batch (`run.rs:288`).
@@ -102,6 +119,22 @@ H1 + S1 + T1, plus the deferred Task 21 delivery on top:
 4. `locode-exec` installs a SIGTERM handler (tokio `signal`) that triggers the
    handle — delivering Task 21's real acceptance criteria (report on stdout,
    valid stream tail, paired transcript).
+
+## Resolution addenda (user interview, 2026-07-20)
+- **`Status::Cancelled` approved** (the ask-first envelope change), with the
+  additive-evolution policy at `schema_version: 1` — and the policy text must
+  include **unknown-value-tolerance guidance**: JSON consumers should treat
+  unrecognized status strings as "unknown terminal state," not a parse error.
+- **Broad `#[non_exhaustive]`**: `Status` and `Event` (protocol) are marked
+  `#[non_exhaustive]` alongside ADR-0017's `ApprovalRequest`/`Decision` — the
+  additive policy, compiler-enforced for Rust consumers. `locode-exec`'s status
+  match (`output.rs:47`) gains a wildcard arm mapping unknown future statuses
+  to exit 1. Done now because we are pre-1.0: retrofitting `non_exhaustive`
+  later is itself a breaking change. `ToolCallRecord` stays exhaustively
+  constructible (engine-only construction; consumers read).
+- **No stdin TTY hint** in `resolve_prompt` — considered and declined; the
+  silent stdin-until-EOF wait is intentional Unix behavior (Task 24 does not
+  touch it).
 
 ## Consequences
 - The TUI's Esc handler is one line; partial work is preserved by construction

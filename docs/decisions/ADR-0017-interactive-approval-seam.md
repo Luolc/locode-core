@@ -1,7 +1,7 @@
 # ADR-0017: Interactive approval seam at the engine's dispatch step
 
 ## Status
-Proposed (under review)
+Accepted (options reviewed and resolved in user interview, 2026-07-20)
 
 ## Date
 2026-07-20
@@ -134,11 +134,39 @@ seam. The TUI can present richer choices and map them down to V1. Rejected.
    A frontend wanting "deny and stop" composes deny with the cancel handle
    (ADR-0005 amendment, same change-set).
 
-4. **No new `Event` variant in v1.** The denial is visible in the transcript
-   (the `is_error` tool_result rides the existing `Event::Message`,
-   `run.rs:107`) and in `Report.tool_calls`. An `Event::Approval` pair can be
-   added later if trace consumers need decision *timing*; noted as an open
-   extension, not done now.
+4. **`Event::Approval` ships in v1** (resolved 2026-07-20, reversing the
+   original defer-proposal): every approver resolution emits
+   `Event::Approval { tool_use_id, tool_name, decision, wait_ms }` — grok's
+   journal shape (`PermissionResolved { tool_name, decision, wait_ms }`,
+   `permission/prompter.rs:776-780`). Rationale: the two harnesses with
+   analysis-grade journals (grok events.jsonl, codex decision history cells)
+   both record approval resolutions as first-class trace events, and `wait_ms`
+   (human decision latency) is unrecoverable from any other artifact. Allowed
+   calls are otherwise invisible in the trace; this keeps interactive traces
+   complete from the first TUI session.
+
+5. **Denied calls are recorded in `Report.tool_calls`** with a new additive
+   field `denial_reason: Option<String>` on `ToolCallRecord` (protocol
+   `:230-243`), `ok: false`, serialized only when present. Two rules from the
+   cross-harness study are binding:
+   - `denial_reason` is set **only** from the approver-deny path — never reused
+     for other failures. (Codex's `Declined` status is polluted by non-user
+     rejection paths, a documented in-code TODO/caveat at
+     `core/src/tools/events.rs:409-414`; we do not repeat that.)
+   - Cancellation synthetics (ADR-0018) never carry `denial_reason`, keeping
+     deny vs cancel separable — grok's taxonomy lesson
+     (`CancellationCategory::PermissionRejected` vs `PermissionCancelled`,
+     `xai-file-utils/src/events/types.rs:605-612`).
+   Evidence base: claude-code and opencode both conflate denial with failure
+   structurally (text-matching required — `REJECT_MESSAGE` prefix matching in
+   `UserToolResultMessage.tsx:50`; opencode discards its typed
+   `PermissionRejectedError` tag before persistence, `processor.ts:186-204`);
+   the model-visible transcript carries text-only in all four harnesses, which
+   our paired `is_error` tool_result matches.
+
+6. **`ApprovalRequest` and `Decision` are `#[non_exhaustive]`** so future
+   fields/variants (e.g. `AllowModified { input }`, richer request context) are
+   additive by construction for downstream matchers.
 
 ## Consequences
 - The core remains headless (ADR-0001 intact): nothing in the engine renders or
@@ -151,3 +179,9 @@ seam. The TUI can present richer choices and map them down to V1. Rejected.
 - Tests: deny produces a paired `is_error` result and the run continues; batch
   with deny-then-allow keeps order and pairing; default approver preserves
   current behavior byte-for-byte (golden test on the exec integration suite).
+- **Future in-execution escalation** (codex's "run sandboxed, fail, ask to
+  retry unsandboxed") is out of v1 scope. When needed, the path is an additive
+  `Arc<dyn Approver>` field on `ToolCtx` so the host/tool layer can consult it
+  mid-execution — it must NOT be "fixed" by moving this seam into
+  `locode-tools`, which would couple the host-agnostic tool framework to
+  frontend concerns (the rejected Option P2).

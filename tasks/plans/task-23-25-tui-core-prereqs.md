@@ -149,19 +149,35 @@ that test deferred).
 
 ---
 
-## Open questions for review (please decide)
+## Resolutions (user interview, 2026-07-20 — all questions closed)
 
-1. **(23)** Continue-after-error runs: allowed (recommended) or fresh-session
-   required?
-2. **(24)** Token lifecycle: per-run fresh token (recommended) vs
-   session-lifetime token?
-3. **(25)** Should a denied call appear in `Report.tool_calls` (recommended:
-   yes, with an `is_error` marker — the record type may need a field) or be
-   report-invisible?
-4. **(24)** `Status::Cancelled` + additive-evolution policy at
-   `schema_version: 1` — explicit ask-first sign-off on the envelope change.
-5. **(25)** Approval visibility in the event stream: v1 has no `Event::Approval`
-   (denials visible via the tool_result message). OK, or do you want the
-   explicit event now?
-6. **(release)** All three slices → one 0.1.3 release at the end, or release
-   per slice?
+1. **(23)** Continue-after-error: **allowed unconditionally** for both
+   `ModelError` and `Error` (ADR-0016 Resolution).
+2. **(24)** Token lifecycle: **per-run token, replaced at run end**; handle
+   cloned pre-run; no public `reset()`; double-cancel idempotent (ADR-0018
+   Decision 1, with the four-harness cross-reference).
+3. **(25)** Denied calls: **recorded** with additive
+   `ToolCallRecord.denial_reason: Option<String>`, set only from the
+   approver-deny path; cancellation synthetics never carry it (ADR-0017
+   Decision 5).
+4. **(24)** **`Status::Cancelled` approved**; additive-evolution policy at
+   `schema_version: 1` incl. unknown-value tolerance (ADR-0018 addenda).
+5. **(25)** **`Event::Approval` ships in v1** — grok-shaped
+   `{ tool_use_id, tool_name, decision, wait_ms }` (ADR-0017 Decision 4).
+6. **(release)** **One 0.1.3** after all three slices. Implementation order:
+   **23 → 25 → 24**.
+7. **Broad `#[non_exhaustive]`** on `Status`/`Event`/`ApprovalRequest`/
+   `Decision`; exec status match gains a wildcard arm → exit 1 (ADR-0018
+   addenda). Lands with Task 24 (`Status`) and Task 25 (the rest).
+8. **No stdin TTY hint** — declined, out of scope.
+
+### Additional work items from the resolutions
+
+- **Task 25** additionally: `Event::Approval` variant in `locode-protocol`
+  (with `wait_ms` measured around the `decide()` await in `dispatch_batch`);
+  `ToolCallRecord.denial_reason` field + serialization test; `#[non_exhaustive]`
+  on `Event`/`ApprovalRequest`/`Decision`; test asserting an *allowed* call
+  emits `Approval` with `decision: allow`.
+- **Task 24** additionally: `#[non_exhaustive]` on `Status`; exec wildcard arm
+  (unknown status → exit 1) + doc-comment stating the additive-evolution policy
+  and unknown-value-tolerance guidance in the protocol crate.

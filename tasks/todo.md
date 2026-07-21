@@ -462,9 +462,14 @@ string instead of a closed `ValueEnum`.
 **Dependencies:** Task 14, Task 18
 **Scope:** M
 
-## Tasks 23–25: TUI core prerequisites (Workstream A) — ADRs under review
-Detailed plan: [`plans/task-23-25-tui-core-prereqs.md`](plans/task-23-25-tui-core-prereqs.md).
-Do not implement until the Proposed ADRs are accepted in review.
+## Tasks 23–25: TUI core prerequisites (Workstream A) — ADRs accepted, ready to implement
+Detailed plan: [`plans/task-23-25-tui-core-prereqs.md`](plans/task-23-25-tui-core-prereqs.md)
+(all open questions resolved in the 2026-07-20 user interview — see the plan's
+Resolutions section). Implementation order **23 → 25 → 24**; one 0.1.3 release
+at the end. Task 25 additionally ships `Event::Approval` (+`wait_ms`),
+`ToolCallRecord.denial_reason`, and `#[non_exhaustive]` on the approval types +
+`Event`; Task 24 additionally ships `#[non_exhaustive]` on `Status` and the
+exec wildcard exit arm.
 
 ### Task 23: session continuity (ADR-0016)
 Multi-turn conversations: `Session` owns history across `run()` calls; `Init`

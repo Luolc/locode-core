@@ -23,6 +23,6 @@ live in `~/dev/coding-cli-survey`.
 | [0013](ADR-0013-conversation-protocol.md) | Conversation protocol — 4-role (System/Developer/User/Assistant), Anthropic-shaped blocks | Accepted |
 | [0014](ADR-0014-streaming-event-protocol.md) | Streaming event protocol (`stream-json`) — self-sufficient trace source | Accepted |
 | [0015](ADR-0015-custom-provider-injection.md) | Custom providers — `ProviderRegistry` + library-entry `locode-exec` | Accepted |
-| [0016](ADR-0016-session-continuity.md) | Session continuity — multi-turn conversations in the engine | Proposed |
-| [0017](ADR-0017-interactive-approval-seam.md) | Interactive approval seam at the engine's dispatch step | Proposed |
-| [0018](ADR-0018-cancellation-and-cancelled-status.md) | Public cancellation — handle, semantics, `cancelled` status | Proposed |
+| [0016](ADR-0016-session-continuity.md) | Session continuity — multi-turn conversations in the engine | Accepted |
+| [0017](ADR-0017-interactive-approval-seam.md) | Interactive approval seam at the engine's dispatch step | Accepted |
+| [0018](ADR-0018-cancellation-and-cancelled-status.md) | Public cancellation — handle, semantics, `cancelled` status | Accepted |
