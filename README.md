@@ -55,6 +55,31 @@ reach other providers over the same schema. `LOCODE_MODEL` defaults to
 `claude-sonnet-5` on the Anthropic wire and `gpt-5-mini` on the OpenAI
 Responses wire, and `LOCODE_API_KEY` must match whichever endpoint you target.
 
+## Interactive app (`locode`)
+
+An interactive terminal UI is built in this repo as separate crates
+(`locode-tui` = components/library, `locode-app` = the `locode` binary) layered
+on the core (ADR-0019). It drives one session interactively: type a prompt,
+watch tool calls and the reply stream in, approve or deny tool calls, cancel a
+turn with Esc, continue the conversation.
+
+```sh
+# Keyless demo (scripted mock wire — no API key):
+cargo run -p locode-app -- --api-schema mock
+
+# Against a real wire, with tool approvals prompted:
+LOCODE_API_KEY=… cargo run -p locode-app
+
+# …or skip approvals (auto-allow every tool, lift the path jail):
+LOCODE_API_KEY=… cargo run -p locode-app -- --yolo
+```
+
+Keys: Enter sends (Alt+Enter for a newline); Esc cancels a running turn, or
+pops a queued prompt / clears a draft when idle; Ctrl+C cancels then quits;
+Up/Down browse prompt history; `/new` starts a fresh session, `/quit` exits.
+`--harness`, `--api-schema`, and `--cwd` match `locode-exec`. The app crates are
+`publish = false` (pre-release); the binary installs as `locode` once released.
+
 To build and test everything:
 
 ```sh
