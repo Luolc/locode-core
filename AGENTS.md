@@ -114,6 +114,22 @@ Design rationale and the source study behind every decision live in the separate
   the one dispatch door, and every `tool_use` is paired with exactly one
   `tool_result`. These are correctness invariants, not style preferences.
 
+## TUI workstream: the autonomous slice loop
+
+The TUI (Task 27: `locode-tui` + `locode-app`) is developed **near-fully
+autonomously** under the binding process in
+[`docs/tui-dev-process.md`](docs/tui-dev-process.md) (user decision,
+2026-07-21). In one line per phase: (0) written status analysis — minimal
+next unit, why, prereqs, what it unblocks; (1) mandatory re-read of how the
+four harnesses did *this unit's area* (fresh citations; decide
+implement-now / deferred / rejected; flag-don't-block user questions);
+(2) plan doc `tasks/plans/task-27-slice-N-*.md` with test matrix + binary
+preset targets; (3) implement + test until every target passes, full quality
+gates + self-review; (4) PR → auto-merge → same-PR bookkeeping (checkboxes,
+plan Result addendum, spec reconciliation); (5) loop without waiting. The
+hard-stop list (new deps, core public surface, crate boundaries, releases,
+scope past SPEC-TUI non-goals) is in the process doc and overrides autonomy.
+
 ## Git & GitHub workflow (agents drive this — no manual clicking)
 
 This is a solo, automation-first project. Agents own the full git/GitHub flow via
