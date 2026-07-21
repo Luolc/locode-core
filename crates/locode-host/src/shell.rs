@@ -504,6 +504,7 @@ mod tests {
         test_host(root, PathPolicy::Jailed, false)
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn captures_stdout_and_exit() {
         let dir = tempdir().unwrap();
@@ -520,6 +521,7 @@ mod tests {
         assert!(!out.timed_out && !out.cancelled);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn captures_stderr_and_nonzero_exit() {
         let dir = tempdir().unwrap();
