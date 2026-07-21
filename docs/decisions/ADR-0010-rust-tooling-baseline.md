@@ -43,3 +43,16 @@ The original "start mild, tighten later" advice assumed the usual trap of tighte
 **Deliberately deferred** (revisit as the repo grows): the clippy `cargo` group (needs crate metadata/licence fields first), `cargo-deny` (Phase B — little to check against an empty dep tree), `cargo-nextest` (+ a `--doc` step, since nextest skips doctests), a macOS matrix (when we build/bundle `rg`), coverage, `cargo-semver-checks`, and typo/spell checks. **Not** adopted at all: Bazel, custom dylint, multi-hour path-filtered job graphs (Codex-scale machinery).
 
 **Merge gate.** ~~Platform-enforced required status checks (and true `gh pr merge --auto`) need GitHub Pro or a public repo; … the gate is **procedural**~~ — **superseded 2026-07-21 (repo is public):** the gate is now **platform-enforced**. `main` has classic branch protection: required status check `fmt · clippy · test · doc` (strict up-to-date), `enforce_admins` (direct pushes rejected for everyone, including the agent/owner), linear history, no force pushes or deletions; repo-level auto-merge is enabled. The agent flow is: branch → `gh pr create` → `gh pr merge --auto --squash --delete-branch` immediately — GitHub merges on green with no watcher process. Direct-to-`main` no longer exists, even for trivial fixes (auto-merge makes PR overhead negligible).
+
+## Amendment (2026-07-21): release binary artifacts
+
+On every version tag (`vX.Y.Z`, pushed after the crates.io publish), the
+`release` workflow (`.github/workflows/release.yml`) creates a GitHub Release
+and attaches **fully static musl Linux binaries** of `locode-exec` —
+`x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl` tarballs with
+sha256 checksums (taiki-e action family; same third-party tier as the existing
+`Swatinem/rust-cache`). Static linking is possible because the workspace is
+OpenSSL-free by design (`rustls`, SPEC/ADR-0007). The release procedure is:
+version-bump PR → auto-merge on green → `cargo publish` in dependency order →
+`git tag vX.Y.Z && git push origin vX.Y.Z`. macOS/Windows artifacts are an
+easy later addition to the same matrix if wanted.
