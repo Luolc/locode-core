@@ -251,10 +251,14 @@ Acceptance criteria:
    or — if PDF support stays out of v0 — the drop is recorded in the pack's
    fidelity notes/ADR with these citations, not just a code comment.
 2. `offset` and `limit` schemas render as bare `{"type":"integer"}` (port a
-   `GrokIntegerSchema` equivalent; `schema.rs:3-15`), and `offset` accepts
-   lenient values (integer, whole float, numeric string, incl. negatives)
-   matching `deserialize_lenient_i64` (`schema.rs:130-141`, `gb:2336-2344`);
-   `limit` stays strict.
+   `GrokIntegerSchema` equivalent; `schema.rs:3-15`). ~~`offset` accepts
+   lenient values (whole float, numeric string) via `deserialize_lenient_i64`~~
+   — **DECLINED (explicit user call, 2026-07-20): type-strict.** `offset`
+   stays a plain `Option<i64>`: negative *integers* still work (the tail-read
+   semantics of criterion 4 are unaffected — that's typed-value handling, not
+   coercion), but `"42"`/`100.0` forms error instead of coercing
+   (grok: `schema.rs:130-141`). Recorded deviation; a test pins the strict
+   rejection.
 3. Tool description equals `DESCRIPTION_FULL` (`gb:103-110`) with
    `{max_lines_read}` interpolated to 1000, trimmed only of claims for
    behavior we genuinely don't ship (if PDF/PPTX/image stay out, the bullet

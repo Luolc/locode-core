@@ -509,8 +509,9 @@ per tool with verbatim schema diffs, behavior gaps, quirks, and a detailed fixin
   four exact error texts. Scope M.
 - [ ] `read_file` — **IMMEDIATE: faithful text path** (audit criteria 1–8 + 10-as-
   deviation-note; see the audit's Split section): `pages`/`format` schema fields
-  (verbatim; PDF-only behavior stays deferred), bare-integer schema + lenient `offset`
-  coercion, description (PDF/image bullets trimmed + logged), **sparse `N→` numbering**,
+  (verbatim; PDF-only behavior stays deferred), bare-integer schema shape (lenient
+  `offset` coercion **declined** — type-strict per user call, deviation recorded),
+  description (PDF/image bullets trimmed + logged), **sparse `N→` numbering**,
   negative-offset tail-read, `total_lines` semantics, overflow messages (incl. grok's
   typo), exact error texts. Scope M, no new deps. ([audit](audits/read_file.md))
 - [ ] `search_replace` — **IMMEDIATE** once the target version is decided (**open
@@ -523,8 +524,9 @@ per tool with verbatim schema diffs, behavior gaps, quirks, and a detailed fixin
   decision**, ask-first): gitignore walker, BFS budget + subtree summaries, exact
   formats/notices/error texts. Scope M. ([audit](audits/list_dir.md))
 - [ ] `run_terminal_cmd` — **IMMEDIATE: faithful foreground slice** (audit criteria
-  1–8 + 11–12; see the audit's Split section): bg-disabled description variant,
-  lenient timeout parsing, 20k-char front/back truncation + exact markers, `exit:
+  1–8 + 11–12; see the audit's Split section): bg-disabled description variant
+  (lenient timeout parsing **declined** — type-strict per user call, deviation
+  recorded), 20k-char front/back truncation + exact markers, `exit:
   killed (…)` variants, ANSI-strip/soft-wrap, trailing-`&` rejection (active in our
   configuration **today**), + two host changes (combined capture w/ front/back cap;
   spill file). Scope M. ([audit](audits/run_terminal_cmd.md))

@@ -97,7 +97,12 @@ Scope estimate: **M** for the faithful-foreground slice (criteria 1–8), **L** 
 Host-seam constraints: `locode-host` today offers one-shot `exec` with a hard timeout, per-stream tail byte caps, and cooperative cancel (`shell.rs:65-157`). It has **no** process registry, no output-to-file streaming, and no front/back char truncation. Criteria 6–7 need host changes; 9–11 need a new host surface.
 
 1. **Timeout wire description**: change the `timeout` schemars description to the exported wire form verbatim: `"Optional timeout in milliseconds (max 300000). Default: 120000. `timeout: 0` in background mode disables the wrapper timeout entirely; the task runs until it exits or is killed via the kill task tool."` (drop "(2 minutes)"). Accept: schema snapshot equals GB `bash/mod.rs:1367-1370` rendering. (If we keep `is_background` dropped, decide explicitly whether to also strip the bg-zero sentence and note the deviation in the ADR — faithful text references a param we don't expose.)
-2. **Lenient `timeout` parsing**: accept integer or numeric-string. Accept: `{"timeout":"120000"}` parses to 120000; `null`/absent → default (mirrors GB tests `bash/mod.rs:2232-2253`).
+2. ~~**Lenient `timeout` parsing**: accept integer or numeric-string~~ —
+   **DECLINED (explicit user call, 2026-07-20): type-strict.** `timeout` stays
+   a plain `Option<u64>`; `{"timeout":"120000"}` errors instead of coercing
+   (grok accepts it, `bash/mod.rs:264`, tests `:2232-2253`). Absent/`null` →
+   default via `#[serde(default)]` (unchanged — that's serde, not coercion).
+   Recorded deviation; a test pins the strict rejection.
 3. **Tool description**: replace the one-liner with GB's rendered default-unix description (background-disabled variant `bash/mod.rs:1440-1453` is the honest match for our v0: no `is_background` bullet), with 300000/120000/20000 interpolated and the SIGTERM→SIGKILL sentence included. Accept: byte-identical to the rendered GB template for a `enabled_background:false` unix session.
 4. **Truncation fidelity (prompt shape)**: 20,000-char cap, front/back 10k+10k, exact separator `"\n\n... (output truncated) ...\n\n"`, header annotation `" [truncated: showing first/last {X} of {Y}…]"` (the `- full output at:` clause depends on criterion 7; if no output file, decide and document). Accept: a 100k-char output yields first/last 10k joined by the exact separator, header carries `format_bytes`-formatted sizes.
 5. **Exit-header reasons**: reproduce `exit: killed (timeout)` / `(cancelled)` / `(signal N)` and the `[signal=…]` annotation rule; wire `ExecOutput.cancelled` (currently dropped at `terminal.rs:115-120`) into `(cancelled)`. Accept: timeout, cancel, and signal-kill each render GB's exact header.
