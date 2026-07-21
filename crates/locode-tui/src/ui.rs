@@ -19,8 +19,24 @@ pub mod composer;
 const SPINNER: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 /// Draw the live region: flexible blank space, then status row (while
-/// running), then composer, then footer.
+/// running), then the composer OR the approval overlay, then footer.
 pub fn draw(frame: &mut Frame<'_>, app: &App) {
+    // The approval overlay replaces the composer while a decision is pending
+    // (grok's front-only render).
+    if let Some(view) = app.approval_queue.front() {
+        let lines = approval_lines(view);
+        let height = u16::try_from(lines.len()).unwrap_or(u16::MAX);
+        let [_, overlay_area, footer_area] = Layout::vertical([
+            Constraint::Fill(1),
+            Constraint::Length(height),
+            Constraint::Length(1),
+        ])
+        .areas(frame.area());
+        frame.render_widget(Paragraph::new(lines), overlay_area);
+        frame.render_widget(Paragraph::new(approval_footer()), footer_area);
+        return;
+    }
+
     let composer_height = app.composer.desired_height(frame.area().width);
     let status_height = u16::from(app.is_running());
     let [_, status_area, composer_area, footer_area] = Layout::vertical([
@@ -36,6 +52,31 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     }
     app.composer.render(frame, composer_area);
     frame.render_widget(Paragraph::new(footer_line(app)), footer_area);
+}
+
+/// The approval overlay body: `⚠ Allow <tool>?` + dimmed args.
+fn approval_lines(view: &crate::approval::ApprovalView) -> Vec<Line<'static>> {
+    use ratatui::style::Color;
+    use ratatui::text::Span;
+    let title = Line::from(vec![
+        Span::styled("⚠ ", Style::default().fg(Color::Yellow)),
+        Span::styled(
+            format!("Allow {}?", view.tool_name),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+    ]);
+    let args = Line::styled(
+        format!("  {}", view.args),
+        Style::default().add_modifier(Modifier::DIM),
+    );
+    vec![title, args]
+}
+
+fn approval_footer() -> Line<'static> {
+    Line::styled(
+        "y allow · a allow for session · d/esc deny",
+        Style::default().add_modifier(Modifier::DIM),
+    )
 }
 
 /// The single-row turn status (grok's shape at v1 scale:

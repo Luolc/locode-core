@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use ratatui::text::Line;
 
 use crate::app::{App, Cmd, Msg};
+use crate::approval::ApprovalOutcome;
 use crate::cli::Cli;
 use crate::engine::{self, EngineMsg, UiCommand};
 use crate::{term, ui};
@@ -56,6 +57,9 @@ pub async fn run(cli: Cli, registry: &ProviderRegistry) -> Result<ExitCode, RunE
     // fired on Cmd::CancelRun, cleared at RunFinished. Loop-owned so the
     // reducer stays sans-IO.
     let mut current_cancel: Option<locode_core::CancellationToken> = None;
+    // Pending approval oneshots keyed by tool_use id (ADR-0017). Bounded by
+    // the engine's serial dispatch (one in flight) but a map for generality.
+    let mut approvals: PendingApprovals = std::collections::HashMap::new();
 
     let exit_code = loop {
         if app.should_quit {
@@ -95,7 +99,8 @@ pub async fn run(cli: Cli, registry: &ProviderRegistry) -> Result<ExitCode, RunE
         tokio::select! {
             biased;
             _ = signal_rx.recv() => {
-                dispatch(&mut app, Msg::SignalQuit, &engine_tx, current_cancel.as_ref());
+                let mut io = LoopIo { engine_tx: &engine_tx, current_cancel: current_cancel.as_ref(), approvals: &mut approvals };
+                run_reducer(&mut app, Msg::SignalQuit, &mut io);
             }
             // Engine arm gated on an empty input queue so a busy engine can
             // never starve keystrokes; bounded batch drain (grok's rule).
@@ -105,13 +110,13 @@ pub async fn run(cli: Cli, registry: &ProviderRegistry) -> Result<ExitCode, RunE
                     // app stays usable for quit keys.
                     continue;
                 };
-                route_engine(&mut app, first, &engine_tx, &mut current_cancel);
+                route_engine(&mut app, first, &engine_tx, &mut current_cancel, &mut approvals);
                 for _ in 1..ENGINE_DRAIN_MAX {
                     if !input_rx.is_empty() {
                         break;
                     }
                     match engine_rx.try_recv() {
-                        Ok(msg) => route_engine(&mut app, msg, &engine_tx, &mut current_cancel),
+                        Ok(msg) => route_engine(&mut app, msg, &engine_tx, &mut current_cancel, &mut approvals),
                         Err(_) => break,
                     }
                 }
@@ -125,7 +130,8 @@ pub async fn run(cli: Cli, registry: &ProviderRegistry) -> Result<ExitCode, RunE
                     resize_at = Some(Instant::now() + RESIZE_DEBOUNCE);
                     continue;
                 }
-                dispatch(&mut app, Msg::Input(Box::new(event)), &engine_tx, current_cancel.as_ref());
+                let mut io = LoopIo { engine_tx: &engine_tx, current_cancel: current_cancel.as_ref(), approvals: &mut approvals };
+                run_reducer(&mut app, Msg::Input(Box::new(event)), &mut io);
             }
             () = sleep_until(timer), if timer.is_some() => {
                 let now = Instant::now();
@@ -136,7 +142,8 @@ pub async fn run(cli: Cli, registry: &ProviderRegistry) -> Result<ExitCode, RunE
                 }
                 if next_tick.is_some_and(|at| now >= at) {
                     next_tick = None; // rescheduled at loop top while running
-                    dispatch(&mut app, Msg::Tick, &engine_tx, current_cancel.as_ref());
+                    let mut io = LoopIo { engine_tx: &engine_tx, current_cancel: current_cancel.as_ref(), approvals: &mut approvals };
+                    run_reducer(&mut app, Msg::Tick, &mut io);
                 }
                 // A due deferred draw is handled by the top-of-loop paint.
             }
@@ -189,47 +196,106 @@ fn debug_log(line: &str) {
     }
 }
 
-/// Route an engine message: manage the loop-owned cancel handle around the
-/// run lifecycle (capture at start, clear at finish), then dispatch.
+/// The map of pending approval oneshots, keyed by `tool_use` id (the loop
+/// holds these; the reducer holds the display queue).
+type PendingApprovals =
+    std::collections::HashMap<String, tokio::sync::oneshot::Sender<ApprovalOutcome>>;
+
+/// The loop-owned IO the reducer's commands drive.
+struct LoopIo<'a> {
+    engine_tx: &'a tokio::sync::mpsc::UnboundedSender<UiCommand>,
+    current_cancel: Option<&'a locode_core::CancellationToken>,
+    approvals: &'a mut PendingApprovals,
+}
+
+/// Route an engine message: manage the loop-owned cancel handle + approval
+/// oneshots around the run lifecycle, then dispatch a reducer-visible message.
 fn route_engine(
     app: &mut App,
     msg: EngineMsg,
     engine_tx: &tokio::sync::mpsc::UnboundedSender<UiCommand>,
     current_cancel: &mut Option<locode_core::CancellationToken>,
+    approvals: &mut PendingApprovals,
 ) {
-    match &msg {
-        EngineMsg::RunStarted { cancel } => *current_cancel = Some(cancel.clone()),
-        EngineMsg::RunFinished(_) => *current_cancel = None,
-        _ => {}
+    match msg {
+        EngineMsg::RunStarted { cancel } => {
+            *current_cancel = Some(cancel.clone());
+            dispatch_engine(
+                app,
+                EngineMsg::RunStarted { cancel },
+                engine_tx,
+                current_cancel.as_ref(),
+                approvals,
+            );
+        }
+        EngineMsg::RunFinished(report) => {
+            *current_cancel = None;
+            approvals.clear(); // defensive: senders should already be resolved
+            dispatch_engine(
+                app,
+                EngineMsg::RunFinished(report),
+                engine_tx,
+                current_cancel.as_ref(),
+                approvals,
+            );
+        }
+        // Take the responder into the loop's map; forward the display view.
+        EngineMsg::Approval(ask) => {
+            let crate::approval::ApprovalAsk { view, respond } = ask;
+            approvals.insert(view.tool_use_id.clone(), respond);
+            let mut io = LoopIo {
+                engine_tx,
+                current_cancel: current_cancel.as_ref(),
+                approvals,
+            };
+            run_reducer(app, Msg::Approval(view), &mut io);
+        }
+        other => dispatch_engine(app, other, engine_tx, current_cancel.as_ref(), approvals),
     }
-    dispatch(
-        app,
-        Msg::Engine(Box::new(msg)),
+}
+
+fn dispatch_engine(
+    app: &mut App,
+    msg: EngineMsg,
+    engine_tx: &tokio::sync::mpsc::UnboundedSender<UiCommand>,
+    current_cancel: Option<&locode_core::CancellationToken>,
+    approvals: &mut PendingApprovals,
+) {
+    let mut io = LoopIo {
         engine_tx,
-        current_cancel.as_ref(),
-    );
+        current_cancel,
+        approvals,
+    };
+    run_reducer(app, Msg::Engine(Box::new(msg)), &mut io);
 }
 
 /// Run the reducer and execute the returned commands (all IO lives here).
-fn dispatch(
-    app: &mut App,
-    msg: Msg,
-    engine_tx: &tokio::sync::mpsc::UnboundedSender<UiCommand>,
-    current_cancel: Option<&locode_core::CancellationToken>,
-) {
+fn run_reducer(app: &mut App, msg: Msg, io: &mut LoopIo<'_>) {
     debug_log(&format!("msg: {msg:?}"));
     let cmds = app.update(msg, Instant::now());
-    for cmd in &cmds {
+    for cmd in cmds {
         match cmd {
             Cmd::Quit => app.should_quit = true,
             Cmd::Submit(text) => {
-                let _ = engine_tx.send(UiCommand::Submit(text.clone()));
+                let _ = io.engine_tx.send(UiCommand::Submit(text));
             }
-            // Fire the run's cancel handle (idempotent — ADR-0018). A late
-            // fire after the run retired the token is a harmless no-op.
+            // Fire the run's cancel handle (idempotent — ADR-0018) AND drain
+            // every pending approval with Deny, so a run parked in an
+            // approval await (the ADR-0017 gap) unblocks and settles as
+            // cancelled.
             Cmd::CancelRun => {
-                if let Some(cancel) = current_cancel {
+                if let Some(cancel) = io.current_cancel {
                     cancel.cancel();
+                }
+                for (_, tx) in io.approvals.drain() {
+                    let _ = tx.send(ApprovalOutcome::Deny {
+                        reason: "run cancelled".to_string(),
+                    });
+                }
+            }
+            Cmd::ResolveApproval { id, outcome } => {
+                if let Some(tx) = io.approvals.remove(&id) {
+                    let _ = tx.send(outcome);
                 }
             }
         }

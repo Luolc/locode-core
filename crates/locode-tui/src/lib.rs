@@ -14,6 +14,7 @@ use clap::Parser;
 use locode_core::ProviderRegistry;
 
 pub mod app;
+pub mod approval;
 pub mod cli;
 pub mod engine;
 pub mod term;
