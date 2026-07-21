@@ -426,15 +426,21 @@ and still emit the report (partial turns/usage) before exiting — so timed-out 
 yield failure-case traces instead of nothing.
 
 **Acceptance criteria:**
-- [x] SIGTERM during a run → exit with the normal artifact on stdout (`json`: one report with
+- [ ] SIGTERM during a run → exit with the normal artifact on stdout (`json`: one report with
   a non-`completed` status; `stream-json`: the stream stays valid JSONL ending in `result`);
   transcript validity holds (every `tool_use` paired).
-- [x] SIGTERM before the run starts → clean exit 1, nothing on stdout.
-- [x] Integration test drives the binary, sends SIGTERM mid-run (slow mock tool), asserts the
+- [ ] SIGTERM before the run starts → clean exit 1, nothing on stdout.
+- [ ] Integration test drives the binary, sends SIGTERM mid-run (slow mock tool), asserts the
   report parses.
 
+> **Correction (2026-07-20):** these boxes were previously checked `[x]`, but no
+> signal-handling or cancellation code exists in the tree (verified: no
+> `signal`/`SIGTERM` references in `locode-exec`, no implementing commit).
+> **Superseded by Task 24** (ADR-0018), which delivers this via the public
+> cancel handle + `cancelled` status.
+
 **Dependencies:** Task 14
-**Scope:** S
+**Scope:** S — folded into Task 24
 
 ## Task 22: custom provider injection — `ProviderRegistry` + lib-entry `locode-exec` ✅ done
 **Description:** ADR-0015. Downstream consumers need to select providers we don't ship
@@ -455,6 +461,35 @@ string instead of a closed `ValueEnum`.
 
 **Dependencies:** Task 14, Task 18
 **Scope:** M
+
+## Tasks 23–25: TUI core prerequisites (Workstream A) — ADRs accepted, ready to implement
+Detailed plan: [`plans/task-23-25-tui-core-prereqs.md`](plans/task-23-25-tui-core-prereqs.md)
+(all open questions resolved in the 2026-07-20 user interview — see the plan's
+Resolutions section). Implementation order **23 → 25 → 24**; one 0.1.3 release
+at the end. Task 25 additionally ships `Event::Approval` (+`wait_ms`),
+`ToolCallRecord.denial_reason`, and `#[non_exhaustive]` on the approval types +
+`Event`; Task 24 additionally ships `#[non_exhaustive]` on `Status` and the
+exec wildcard exit arm.
+
+### Task 23: session continuity (ADR-0016)
+Multi-turn conversations: `Session` owns history across `run()` calls; `Init`
+once per session; per-run reports; `history()` accessor.
+- [ ] Two-run continuity + single-`Init` + per-run report + reconstruction golden tests.
+**Dependencies:** none · **Scope:** S
+
+### Task 24: cancellation + `cancelled` status + SIGTERM (ADR-0018)
+`Session::cancel_handle()`; loop observes the token (iteration top, provider
+select, between batch calls with synthetic pairing); `Status::Cancelled`
+(additive envelope policy — ask-first); exec SIGTERM handler (delivers Task 21).
+- [ ] Mid-sample + mid-batch cancel tests; idempotent double-cancel; exec SIGTERM
+  integration test (report parses, exit 0, valid stream tail).
+**Dependencies:** Task 23 (one test only) · **Scope:** M
+
+### Task 25: approval seam (ADR-0017)
+`Approver` trait at the engine dispatch step; deny = paired soft error;
+`AllowAll` default (zero behavior change); facade re-exports.
+- [ ] Deny/mixed-batch/async-approver/kind tests; golden default-approver run.
+**Dependencies:** none · **Scope:** M
 
 ## Deferred (reserved seams, not scheduled)
 parallel tool batches (RwLock read/write) · compaction · OS sandbox · MCP · streaming events
