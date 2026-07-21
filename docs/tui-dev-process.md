@@ -95,7 +95,9 @@ Record in the plan doc, as a four-row table or per-harness bullets:
 - Quality gates before PR, all mandatory:
   1. `cargo fmt --all -- --check`
   2. `cargo clippy --workspace --all-targets -- -D warnings`
-  3. `cargo test --workspace`
+  3. `cargo test --workspace` — **confirm no `FAILED`/`panicked` lines
+     directly** (`… | grep -E 'FAILED|panicked'` must be empty); never trust a
+     summed pass-count, which can hide a failed test binary.
   4. `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`
   5. A self-review pass over the full diff: correctness re-read, dead code,
      naming, comment discipline (constraints only), simplification

@@ -14,6 +14,7 @@ use crate::app::{App, Hint, RunState};
 
 pub mod blocks;
 pub mod composer;
+pub mod markdown;
 
 /// Braille spinner frames (the four-harness standard).
 const SPINNER: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
