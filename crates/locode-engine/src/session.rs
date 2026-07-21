@@ -7,6 +7,7 @@ use locode_provider::Provider;
 use locode_tools::Registry;
 use tokio_util::sync::CancellationToken;
 
+use crate::approve::{AllowAll, Approver};
 use crate::config::EngineConfig;
 use crate::sink::EventSink;
 
@@ -37,6 +38,8 @@ pub struct Session {
     pub(crate) history: Vec<Message>,
     /// Runs driven on this session; gates the once-per-session `Init` event.
     pub(crate) turns_run: u32,
+    /// The pre-dispatch approval gate (ADR-0017); [`AllowAll`] by default.
+    pub(crate) approver: Arc<dyn Approver>,
 }
 
 impl Session {
@@ -62,7 +65,18 @@ impl Session {
             sink,
             cancel: CancellationToken::new(),
             turns_run: 0,
+            approver: Arc::new(AllowAll),
         }
+    }
+
+    /// Install an [`Approver`] consulted before every tool call (ADR-0017).
+    ///
+    /// Builder-style so [`Session::new`]'s signature stays intact. The default
+    /// is [`AllowAll`] — headless consumers are unchanged without this call.
+    #[must_use]
+    pub fn with_approver(mut self, approver: Arc<dyn Approver>) -> Self {
+        self.approver = approver;
+        self
     }
 
     /// The conversation so far: the preamble plus every appended turn across all

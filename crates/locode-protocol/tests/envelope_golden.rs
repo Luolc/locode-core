@@ -20,6 +20,7 @@ fn sample_report() -> Report {
             args: json!({ "command": "echo hi" }),
             ok: true,
             output: json!({ "exit_code": 0, "truncated": false }),
+            denial_reason: None,
         }],
         usage: Usage {
             input_tokens: 100,

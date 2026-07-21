@@ -7,12 +7,14 @@
 //! returning one [`locode_protocol::Report`]. Proven end-to-end against
 //! `MockProvider` with zero network.
 
+mod approve;
 mod config;
 mod run;
 mod session;
 mod sink;
 mod terminal;
 
+pub use approve::{AllowAll, ApprovalRequest, Approver, Decision};
 pub use config::EngineConfig;
 pub use session::Session;
 pub use sink::{EventSink, FnSink, NullSink};
@@ -409,6 +411,268 @@ mod tests {
             roles,
             vec![Role::User, Role::Assistant, Role::User, Role::Assistant]
         );
+    }
+
+    // ---- the approval seam (ADR-0017) ----
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A tool that counts its executions — proves a denied call never ran.
+    struct Counting(Arc<AtomicUsize>);
+    #[async_trait]
+    impl Tool for Counting {
+        type Args = Value;
+        type Output = EchoOut;
+        fn kind(&self) -> ToolKind {
+            ToolKind::Shell
+        }
+        fn description(&self) -> &str {
+            "counting"
+        }
+        async fn run(&self, _ctx: &ToolCtx, _args: Value) -> Result<EchoOut, ToolError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(EchoOut {
+                echoed: "ran".into(),
+            })
+        }
+    }
+
+    type SeenKinds = Arc<Mutex<Vec<(String, Option<ToolKind>)>>>;
+
+    /// Denies tools whose name is in the list; allows everything else. Records
+    /// the `kind` seen on each request so tests can assert it is populated.
+    struct DenyNamed {
+        deny: Vec<&'static str>,
+        seen_kinds: SeenKinds,
+    }
+    #[async_trait]
+    impl Approver for DenyNamed {
+        async fn decide(&self, request: &ApprovalRequest<'_>) -> Decision {
+            self.seen_kinds
+                .lock()
+                .unwrap()
+                .push((request.tool_name.to_owned(), request.kind));
+            if self.deny.contains(&request.tool_name) {
+                Decision::Deny {
+                    reason: format!("{} is not allowed here", request.tool_name),
+                }
+            } else {
+                Decision::Allow
+            }
+        }
+    }
+
+    fn approvals(events: &Arc<Mutex<Vec<Event>>>) -> Vec<(String, String, String)> {
+        dump(events)
+            .iter()
+            .filter_map(|e| match e {
+                Event::Approval {
+                    tool_use_id,
+                    tool_name,
+                    decision,
+                    ..
+                } => Some((tool_use_id.clone(), tool_name.clone(), decision.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn deny_is_a_soft_paired_error_and_the_run_continues() {
+        let ran = Arc::new(AtomicUsize::new(0));
+        let mut reg = Registry::new();
+        reg.register("counting", Counting(Arc::clone(&ran)));
+        let (s, events) = session_with(
+            vec![Ok(tool_turn("c1", "counting")), Ok(text_turn("done"))],
+            reg,
+            config(),
+        );
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut s = s.with_approver(Arc::new(DenyNamed {
+            deny: vec!["counting"],
+            seen_kinds: Arc::clone(&seen),
+        }));
+        let report = s.run_text("go").await;
+
+        // Soft: the run continued to Completed; the tool never executed.
+        assert_eq!(report.status, Status::Completed);
+        assert_eq!(ran.load(Ordering::SeqCst), 0, "denied tool must not run");
+
+        // The record: ok=false, denial_reason set (and only here), no output.
+        assert_eq!(report.tool_calls.len(), 1);
+        let record = &report.tool_calls[0];
+        assert!(!record.ok);
+        assert_eq!(
+            record.denial_reason.as_deref(),
+            Some("counting is not allowed here")
+        );
+        assert_eq!(record.kind, "shell", "kind still recorded on denial");
+
+        // The transcript: a paired is_error result carrying the reason.
+        let denied_result = dump(&events).iter().any(|e| match e {
+            Event::Message { message } => message.content.iter().any(|b| {
+                matches!(
+                    b,
+                    ContentBlock::ToolResult { tool_use_id, is_error: true, content, .. }
+                        if tool_use_id == "c1"
+                            && content.iter().any(|c| matches!(
+                                c,
+                                locode_protocol::ResultChunk::Text { text }
+                                    if text == "tool call denied: counting is not allowed here"
+                            ))
+                )
+            }),
+            _ => false,
+        });
+        assert!(denied_result, "the model sees the denial reason, paired");
+
+        // The trace: a deny Approval event for c1.
+        assert_eq!(
+            approvals(&events),
+            vec![("c1".into(), "counting".into(), "deny".into())]
+        );
+    }
+
+    #[tokio::test]
+    async fn deny_then_allow_within_one_batch_keeps_order_and_pairing() {
+        let ran = Arc::new(AtomicUsize::new(0));
+        let mut reg = Registry::new();
+        reg.register("blocked", Counting(Arc::clone(&ran)));
+        reg.register("echo", Echo);
+        let batch = Completion {
+            content: vec![
+                ContentBlock::ToolUse {
+                    id: "c1".into(),
+                    name: "blocked".into(),
+                    input: json!({}),
+                },
+                ContentBlock::ToolUse {
+                    id: "c2".into(),
+                    name: "echo".into(),
+                    input: json!({}),
+                },
+            ],
+            usage: Usage::default(),
+            stop: StopReason::ToolUse,
+        };
+        let (s, events) = session_with(vec![Ok(batch), Ok(text_turn("done"))], reg, config());
+        let mut s = s.with_approver(Arc::new(DenyNamed {
+            deny: vec!["blocked"],
+            seen_kinds: Arc::new(Mutex::new(Vec::new())),
+        }));
+        let report = s.run_text("go").await;
+        assert_eq!(report.status, Status::Completed);
+        assert_eq!(ran.load(Ordering::SeqCst), 0);
+
+        // Both calls answered, in call order, denied first.
+        let pairs: Vec<(String, bool)> = dump(&events)
+            .iter()
+            .filter_map(|e| match e {
+                Event::Message { message } if message.role == Role::User => Some(&message.content),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|b| match b {
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    is_error,
+                    ..
+                } => Some((tool_use_id.clone(), *is_error)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pairs, vec![("c1".into(), true), ("c2".into(), false)]);
+
+        // Records: denied (with reason) then executed (without).
+        assert_eq!(report.tool_calls.len(), 2);
+        assert!(report.tool_calls[0].denial_reason.is_some());
+        assert_eq!(report.tool_calls[0].kind, "shell");
+        assert!(report.tool_calls[1].ok);
+        assert_eq!(report.tool_calls[1].denial_reason, None);
+
+        // Approval trace: deny then allow, in order.
+        assert_eq!(
+            approvals(&events),
+            vec![
+                ("c1".into(), "blocked".into(), "deny".into()),
+                ("c2".into(), "echo".into(), "allow".into()),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn approval_request_carries_the_registry_kind() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let (s, _e) = session_with(
+            vec![Ok(tool_turn("c1", "echo")), Ok(text_turn("done"))],
+            echo_registry(),
+            config(),
+        );
+        let mut s = s.with_approver(Arc::new(DenyNamed {
+            deny: vec![],
+            seen_kinds: Arc::clone(&seen),
+        }));
+        let _ = s.run_text("go").await;
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].0, "echo");
+        assert_eq!(
+            seen[0].1,
+            Some(ToolKind::Shell),
+            "kind resolves from the registry pre-dispatch"
+        );
+    }
+
+    /// An approver that suspends on a oneshot until an external task resolves
+    /// it — the exact shape of a TUI prompt. Proves the engine awaits the
+    /// decision without deadlocking the run.
+    #[tokio::test]
+    async fn async_approver_suspends_the_call_until_resolved() {
+        struct OneshotApprover(Mutex<Option<tokio::sync::oneshot::Receiver<Decision>>>);
+        #[async_trait]
+        impl Approver for OneshotApprover {
+            async fn decide(&self, _request: &ApprovalRequest<'_>) -> Decision {
+                let rx = self.0.lock().unwrap().take().expect("one decision");
+                rx.await.expect("decider dropped")
+            }
+        }
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let (s, _e) = session_with(
+            vec![Ok(tool_turn("c1", "echo")), Ok(text_turn("done"))],
+            echo_registry(),
+            config(),
+        );
+        let mut s = s.with_approver(Arc::new(OneshotApprover(Mutex::new(Some(rx)))));
+
+        // Resolve the prompt from "the UI" after the run has started.
+        let ui = tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            let _ = tx.send(Decision::Allow);
+        });
+        let report = s.run_text("go").await;
+        ui.await.expect("ui task");
+        assert_eq!(report.status, Status::Completed);
+        assert_eq!(report.tool_calls.len(), 1);
+        assert!(report.tool_calls[0].ok);
+    }
+
+    #[tokio::test]
+    async fn allowed_calls_emit_approval_events_by_default() {
+        // The default AllowAll approver still journals every resolution.
+        let (mut s, events) = session_with(
+            vec![Ok(tool_turn("c1", "echo")), Ok(text_turn("done"))],
+            echo_registry(),
+            config(),
+        );
+        let report = s.run_text("go").await;
+        assert_eq!(report.status, Status::Completed);
+        assert_eq!(
+            approvals(&events),
+            vec![("c1".into(), "echo".into(), "allow".into())]
+        );
+        // And denial_reason is absent on ordinary success records.
+        assert_eq!(report.tool_calls[0].denial_reason, None);
     }
 
     // ---- session continuity (ADR-0016) ----

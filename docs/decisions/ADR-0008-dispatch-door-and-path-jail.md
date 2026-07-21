@@ -63,3 +63,14 @@ its own caps, and the engine needs no `locode-host` dependency (resolving the
 Task-12 handoff's open concern #1, option "at the door" over "in the engine"
 or "facade wraps the registry"). `HostConfig.model_output_budget` (never read)
 was removed.
+
+## Amendment (2026-07-21): the approval *seam* is in scope — the prompt still is not
+
+The "Interactive approval prompts — out of scope" alternative above is
+narrowed by ADR-0017: the engine now consults an injected `Approver` **in
+front of** the dispatch door (`dispatch_batch`, before `ToolCtx`
+construction), with a headless `AllowAll` default. What remains out of scope
+here is unchanged: no prompt UI, no terminal interaction, and no policy inside
+individual tools or inside `Registry::dispatch` itself — the tools crate stays
+interaction-free (ADR-0017 rejected exactly that as Option P2). See ADR-0017
+for the trait, vocabulary, and event/record semantics.

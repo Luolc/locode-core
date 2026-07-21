@@ -240,6 +240,13 @@ pub struct ToolCallRecord {
     pub ok: bool,
     /// The structured output of the call (the report view, not `prompt_text`).
     pub output: Value,
+    /// The approver's reason, iff this call was **denied by the approval seam**
+    /// (ADR-0017). Set only from the approver-deny path — never reused for
+    /// other failures, and cancellation synthetics never carry it — so deny
+    /// stays structurally separable from failure and from cancel (the
+    /// codex-`Declined` / grok-taxonomy lesson).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub denial_reason: Option<String>,
 }
 
 /// Token accounting parsed from the provider's terminal usage event.
@@ -386,6 +393,20 @@ pub enum Event {
         /// A human-readable message.
         message: String,
     },
+    /// An approver resolution at the dispatch gate (ADR-0017) — grok's journal
+    /// shape (`PermissionResolved`). Emitted for **every** consulted call,
+    /// allowed or denied, so interactive traces are complete; `wait_ms` (human
+    /// decision latency) is unrecoverable from any other artifact.
+    Approval {
+        /// The `tool_use` id the decision applies to.
+        tool_use_id: String,
+        /// The client-facing tool name.
+        tool_name: String,
+        /// The resolution: `"allow"` or `"deny"`.
+        decision: String,
+        /// Milliseconds spent awaiting the approver (human decision latency).
+        wait_ms: u64,
+    },
 }
 
 /// Reconstruct the full [`Conversation`] from a `stream-json` event trajectory.
@@ -400,7 +421,7 @@ pub fn reconstruct_conversation(events: &[Event]) -> Conversation {
         match event {
             Event::Init { preamble, .. } => messages.extend(preamble.iter().cloned()),
             Event::Message { message } => messages.push(message.clone()),
-            Event::Result { .. } | Event::Error { .. } => {}
+            Event::Result { .. } | Event::Error { .. } | Event::Approval { .. } => {}
         }
     }
     Conversation { messages }
@@ -616,6 +637,75 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&event).unwrap()["type"],
             json!("message")
+        );
+    }
+
+    /// `denial_reason` (ADR-0017) is additive at `schema_version: 1`: absent
+    /// from the wire when `None`, round-trips when set, and pre-field JSON
+    /// still deserializes.
+    #[test]
+    fn tool_call_record_denial_reason_is_additive() {
+        let record = ToolCallRecord {
+            id: "c1".into(),
+            name: "shell".into(),
+            kind: "shell".into(),
+            args: json!({}),
+            ok: false,
+            output: Value::Null,
+            denial_reason: None,
+        };
+        let value = serde_json::to_value(&record).unwrap();
+        assert!(
+            !value.as_object().unwrap().contains_key("denial_reason"),
+            "None must not appear on the wire: {value}"
+        );
+
+        let denied = ToolCallRecord {
+            denial_reason: Some("not allowed".into()),
+            ..record
+        };
+        let value = serde_json::to_value(&denied).unwrap();
+        assert_eq!(value["denial_reason"], json!("not allowed"));
+        let back: ToolCallRecord = serde_json::from_value(value).unwrap();
+        assert_eq!(back, denied);
+
+        // A record serialized before the field existed still parses.
+        let old = json!({
+            "id": "c1", "name": "shell", "kind": "shell",
+            "args": {}, "ok": true, "output": null
+        });
+        let back: ToolCallRecord = serde_json::from_value(old).unwrap();
+        assert_eq!(back.denial_reason, None);
+    }
+
+    /// `Event::Approval` (ADR-0017): grok's journal shape, `snake_case`
+    /// tagged, round-trips, and reconstruction ignores it.
+    #[test]
+    fn approval_event_shape_and_reconstruction() {
+        let event = Event::Approval {
+            tool_use_id: "c1".into(),
+            tool_name: "run_terminal_cmd".into(),
+            decision: "deny".into(),
+            wait_ms: 1234,
+        };
+        let value = serde_json::to_value(&event).unwrap();
+        assert_eq!(
+            value,
+            json!({
+                "type": "approval",
+                "tool_use_id": "c1",
+                "tool_name": "run_terminal_cmd",
+                "decision": "deny",
+                "wait_ms": 1234
+            })
+        );
+        let back: Event = serde_json::from_value(value).unwrap();
+        assert_eq!(back, event);
+
+        let conversation = reconstruct_conversation(&[event]);
+        assert!(
+            conversation.messages.is_empty(),
+            "approval events are run metadata, not history"
         );
     }
 }
