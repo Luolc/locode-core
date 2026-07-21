@@ -39,9 +39,11 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
 
     let composer_height = app.composer.desired_height(frame.area().width);
     let status_height = u16::from(app.is_running());
-    let [_, status_area, composer_area, footer_area] = Layout::vertical([
+    let queue_height = u16::try_from(app.prompt_queue.len()).unwrap_or(u16::MAX);
+    let [_, status_area, queue_area, composer_area, footer_area] = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(status_height),
+        Constraint::Length(queue_height),
         Constraint::Length(composer_height),
         Constraint::Length(1),
     ])
@@ -50,8 +52,25 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     if app.is_running() {
         frame.render_widget(Paragraph::new(status_line(app)), status_area);
     }
+    if !app.prompt_queue.is_empty() {
+        frame.render_widget(Paragraph::new(queue_lines(app)), queue_area);
+    }
     app.composer.render(frame, composer_area);
     frame.render_widget(Paragraph::new(footer_line(app)), footer_area);
+}
+
+/// Dim `queued: …` previews for prompts waiting to run.
+fn queue_lines(app: &App) -> Vec<Line<'static>> {
+    app.prompt_queue
+        .iter()
+        .map(|text| {
+            let one_line = text.replace('\n', " ");
+            Line::styled(
+                format!("queued: {one_line}"),
+                Style::default().add_modifier(Modifier::DIM),
+            )
+        })
+        .collect()
 }
 
 /// The approval overlay body: `⚠ Allow <tool>?` + dimmed args.
@@ -109,7 +128,6 @@ fn footer_line(app: &App) -> Line<'static> {
     let text = match app.hint {
         Some(Hint::QuitArmed) => "press ctrl+c again to quit".to_string(),
         Some(Hint::ClearArmed) => "press esc again to clear".to_string(),
-        Some(Hint::RunInProgress) => "run in progress".to_string(),
         Some(Hint::Cancelling) => "cancelling — esc again to retry".to_string(),
         None => {
             let base = "enter to send · alt+enter newline · ctrl+c quit";

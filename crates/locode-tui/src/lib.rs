@@ -43,7 +43,7 @@ pub fn main_with(registry: ProviderRegistry) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    match runtime.block_on(event_loop::run(cli, &registry)) {
+    match runtime.block_on(event_loop::run(cli, registry)) {
         Ok(code) => code,
         Err(e) => {
             // The terminal was restored by the guard/teardown before we get

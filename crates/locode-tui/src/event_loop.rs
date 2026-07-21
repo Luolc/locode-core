@@ -39,12 +39,12 @@ impl<E: std::error::Error> From<E> for RunError {
 }
 
 /// Run the app to completion.
-pub async fn run(cli: Cli, registry: &ProviderRegistry) -> Result<ExitCode, RunError> {
+pub async fn run(cli: Cli, registry: ProviderRegistry) -> Result<ExitCode, RunError> {
     term::install_panic_hook();
     let mut terminal = term::init()?;
     let mut input_rx = term::spawn_input_reader();
     let mut signal_rx = spawn_signal_task();
-    let (engine_tx, mut engine_rx) = engine::spawn(&cli, registry);
+    let (engine_tx, mut engine_rx) = engine::spawn(cli, registry);
 
     let mut app = App::new();
     let mut last_draw = Instant::now()
@@ -278,6 +278,9 @@ fn run_reducer(app: &mut App, msg: Msg, io: &mut LoopIo<'_>) {
             Cmd::Quit => app.should_quit = true,
             Cmd::Submit(text) => {
                 let _ = io.engine_tx.send(UiCommand::Submit(text));
+            }
+            Cmd::NewSession => {
+                let _ = io.engine_tx.send(UiCommand::NewSession);
             }
             // Fire the run's cancel handle (idempotent — ADR-0018) AND drain
             // every pending approval with Deny, so a run parked in an

@@ -37,11 +37,16 @@ pub enum Msg {
     SignalQuit,
 }
 
+/// Maximum prompt-history entries kept (grok's cap).
+const HISTORY_CAP: usize = 200;
+
 /// Everything the reducer asks the loop to do (the loop owns all IO).
 #[derive(Debug, PartialEq, Eq)]
 pub enum Cmd {
     /// Forward this prompt to the engine task.
     Submit(String),
+    /// Discard the session and build a fresh one (`/new`).
+    NewSession,
     /// Fire the current run's cancel handle (the loop holds it — ADR-0018).
     CancelRun,
     /// Resolve a pending approval (the loop holds the oneshot, keyed by id).
@@ -62,8 +67,6 @@ pub enum Hint {
     QuitArmed,
     /// "press esc again to clear"
     ClearArmed,
-    /// "run in progress" (Enter while running; queueing is slice 5)
-    RunInProgress,
     /// "cancelling…" (Esc/Ctrl+C fired the cancel handle; awaiting the
     /// terminal report).
     Cancelling,
@@ -116,6 +119,15 @@ pub struct App {
     /// The composer draft stashed while an approval overlay is up (restored
     /// when the queue empties — grok's flow).
     stashed_draft: Option<String>,
+    /// Prompts submitted while a run was active — drained one per turn end
+    /// (codex's queue-and-drain).
+    pub prompt_queue: VecDeque<String>,
+    /// Prompt history, most-recent-first (move-to-front dedup, cap 200).
+    history: Vec<String>,
+    /// History browse cursor (`None` = not browsing); index into `history`.
+    history_nav: Option<usize>,
+    /// The live draft saved when history browsing began (restored on exit).
+    history_saved: Option<String>,
     /// Resolved model id (footer display); `None` until the engine is ready.
     pub model: Option<String>,
     /// Session assembly failed — submits are disabled.
@@ -149,6 +161,10 @@ impl App {
             pending_tools: Vec::new(),
             approval_queue: VecDeque::new(),
             stashed_draft: None,
+            prompt_queue: VecDeque::new(),
+            history: Vec::new(),
+            history_nav: None,
+            history_saved: None,
             model: None,
             engine_failed: false,
             spinner_frame: 0,
@@ -183,10 +199,7 @@ impl App {
                 self.spinner_frame = self.spinner_frame.wrapping_add(1);
                 vec![]
             }
-            Msg::Engine(engine_msg) => {
-                self.on_engine(*engine_msg, now);
-                vec![]
-            }
+            Msg::Engine(engine_msg) => self.on_engine(*engine_msg, now),
             Msg::Approval(view) => {
                 self.on_approval(view);
                 vec![]
@@ -208,16 +221,18 @@ impl App {
         }
     }
 
-    fn on_engine(&mut self, msg: EngineMsg, now: Instant) {
+    fn on_engine(&mut self, msg: EngineMsg, now: Instant) -> Vec<Cmd> {
         match msg {
             EngineMsg::Ready { model } => {
                 self.model = Some(model);
+                vec![]
             }
             EngineMsg::BuildFailed(message) => {
                 self.engine_failed = true;
                 self.outbox.push(Block::Notice(format!(
                     "engine unavailable: {message} (ctrl+c to quit)"
                 )));
+                vec![]
             }
             // The loop captures the cancel handle; the reducer only tracks
             // that a run is active (sans-IO — no token stored here).
@@ -227,12 +242,24 @@ impl App {
                     cancelling: false,
                 };
                 self.hint = None;
+                vec![]
             }
-            EngineMsg::Event(event) => self.on_event(*event),
+            EngineMsg::Event(event) => {
+                self.on_event(*event);
+                vec![]
+            }
             // The loop takes the responder before forwarding the view; the
             // reducer never sees `Approval` on the Engine channel.
-            EngineMsg::Approval(_) => {}
+            EngineMsg::Approval(_) => vec![],
             EngineMsg::RunFinished(report) => self.on_run_finished(&report, now),
+            EngineMsg::SessionReset => {
+                self.run = RunState::Idle;
+                self.pending_tools.clear();
+                self.approval_queue.clear();
+                self.prompt_queue.clear();
+                self.outbox.push(Block::Notice("— new session —".into()));
+                vec![]
+            }
         }
     }
 
@@ -313,7 +340,7 @@ impl App {
         });
     }
 
-    fn on_run_finished(&mut self, report: &Report, now: Instant) {
+    fn on_run_finished(&mut self, report: &Report, now: Instant) -> Vec<Cmd> {
         // Defensive: pairing guarantees results for every tool_use, but a
         // future terminal path must never strand a pending entry silently.
         for p in std::mem::take(&mut self.pending_tools) {
@@ -335,6 +362,19 @@ impl App {
         if !self.approval_queue.is_empty() {
             self.approval_queue.clear();
             self.restore_draft();
+        }
+        // Drain one queued prompt per completion (codex's cadence).
+        self.drain_queued_prompt()
+    }
+
+    /// Pop and submit the next queued prompt, if any (called at turn end).
+    fn drain_queued_prompt(&mut self) -> Vec<Cmd> {
+        match self.prompt_queue.pop_front() {
+            Some(text) => {
+                self.outbox.push(Block::UserPrompt(text.clone()));
+                vec![Cmd::Submit(text)]
+            }
+            None => vec![],
         }
     }
 
@@ -421,11 +461,19 @@ impl App {
             }
             // Esc while running: cancel the turn (spec) — first press,
             // idempotent re-fire on a stuck run (grok's retry rule,
-            // `dispatch/turn.rs:68-95`). Esc at idle: double-press clears a
+            // `dispatch/turn.rs:68-95`). Esc at idle: pop the last queued
+            // prompt back into the composer, else double-press clears a
             // non-empty draft (grok's 800 ms TTL).
             (KeyCode::Esc, _) => {
                 if self.is_running() {
                     return vec![self.begin_cancel()];
+                }
+                if let Some(text) = self.prompt_queue.pop_back() {
+                    // Un-queue the most recently queued prompt (codex's
+                    // edit-queued gesture, mapped to Esc per our spec).
+                    self.composer.set_text(&text);
+                    self.disarm();
+                    return vec![];
                 }
                 if self.composer.is_empty() {
                     self.disarm();
@@ -440,6 +488,16 @@ impl App {
                 self.hint = Some(Hint::ClearArmed);
                 vec![]
             }
+            // Up/Down browse prompt history (gated to single-line/empty so a
+            // multiline draft is never clobbered).
+            (KeyCode::Up, false) if self.can_history_nav() => {
+                self.history_prev();
+                vec![]
+            }
+            (KeyCode::Down, false) if self.history_nav.is_some() => {
+                self.history_next();
+                vec![]
+            }
             // Enter submits; Alt+Enter inserts a newline (works without the
             // kitty protocol — deferred).
             (KeyCode::Enter, _) => {
@@ -447,27 +505,109 @@ impl App {
                     self.composer.insert_newline();
                     return vec![];
                 }
-                if self.is_running() {
-                    self.hint = Some(Hint::RunInProgress);
-                    return vec![]; // queueing lands in slice 5; draft kept
-                }
-                if self.engine_failed || self.model.is_none() {
-                    return vec![]; // engine not ready; draft kept
-                }
                 let text = self.composer.take_text();
                 self.disarm();
+                self.history_nav = None;
                 if text.trim().is_empty() {
+                    return vec![];
+                }
+                // Slash commands intercept before submit/queue.
+                if let Some(cmds) = self.try_slash(&text) {
+                    return cmds;
+                }
+                if self.engine_failed || self.model.is_none() {
+                    self.composer.set_text(&text); // engine not ready; keep it
+                    return vec![];
+                }
+                self.record_history(&text);
+                // Running ⇒ queue (drained one per turn end); else submit.
+                if self.is_running() {
+                    self.prompt_queue.push_back(text);
                     return vec![];
                 }
                 self.outbox.push(Block::UserPrompt(text.clone()));
                 vec![Cmd::Submit(text)]
             }
             // Everything else goes to the editor; any keypress disarms the
-            // pending quit/clear arms.
+            // pending quit/clear arms and exits history browsing.
             _ => {
                 self.disarm();
+                self.history_nav = None;
                 self.composer.input(key);
                 vec![]
+            }
+        }
+    }
+
+    /// Slash-command dispatch (`/quit`, `/new`); `None` if `text` isn't a
+    /// recognized command shape (falls through to submit/queue).
+    fn try_slash(&mut self, text: &str) -> Option<Vec<Cmd>> {
+        let trimmed = text.trim();
+        if !trimmed.starts_with('/') {
+            return None;
+        }
+        match trimmed {
+            "/quit" | "/exit" => {
+                self.should_quit = true;
+                Some(vec![Cmd::Quit])
+            }
+            "/new" => {
+                if self.is_running() {
+                    self.outbox
+                        .push(Block::Notice("finish or cancel the run before /new".into()));
+                    Some(vec![])
+                } else {
+                    Some(vec![Cmd::NewSession])
+                }
+            }
+            other => {
+                self.outbox
+                    .push(Block::Notice(format!("unknown command: {other}")));
+                Some(vec![])
+            }
+        }
+    }
+
+    /// Record a submitted prompt in history (move-to-front dedup, cap).
+    fn record_history(&mut self, text: &str) {
+        self.history.retain(|h| h != text);
+        self.history.insert(0, text.to_owned());
+        self.history.truncate(HISTORY_CAP);
+    }
+
+    /// History nav is allowed only from an empty/single-line composer, or
+    /// while already browsing (so a multiline draft is never clobbered).
+    fn can_history_nav(&self) -> bool {
+        !self.history.is_empty()
+            && (self.history_nav.is_some() || !self.composer.text().contains('\n'))
+    }
+
+    fn history_prev(&mut self) {
+        let next = match self.history_nav {
+            None => {
+                self.history_saved = Some(self.composer.text());
+                0
+            }
+            Some(i) => (i + 1).min(self.history.len() - 1),
+        };
+        self.history_nav = Some(next);
+        let entry = self.history[next].clone();
+        self.composer.set_text(&entry);
+    }
+
+    fn history_next(&mut self) {
+        match self.history_nav {
+            Some(0) | None => {
+                // Back to the live draft.
+                let draft = self.history_saved.take().unwrap_or_default();
+                self.composer.set_text(&draft);
+                self.history_nav = None;
+            }
+            Some(i) => {
+                let idx = i - 1;
+                self.history_nav = Some(idx);
+                let entry = self.history[idx].clone();
+                self.composer.set_text(&entry);
             }
         }
     }
@@ -676,20 +816,12 @@ mod tests {
     // ---- slice 2: run lifecycle + event translation ----
 
     #[test]
-    fn submit_requires_ready_engine_and_idle_run() {
+    fn submit_requires_a_ready_engine() {
         let t0 = Instant::now();
         // Not ready: Enter keeps the draft, no command.
         let mut app = App::new();
         type_str(&mut app, "hi", t0);
         assert_eq!(app.update(key(KeyCode::Enter), t0), vec![]);
-        assert!(!app.composer.is_empty());
-
-        // Running: Enter keeps the draft, hint shown.
-        let mut app = ready_app();
-        let _ = app.update(run_started(), t0);
-        type_str(&mut app, "queued later", t0);
-        assert_eq!(app.update(key(KeyCode::Enter), t0), vec![]);
-        assert_eq!(app.hint, Some(Hint::RunInProgress));
         assert!(!app.composer.is_empty());
     }
 
@@ -990,5 +1122,133 @@ mod tests {
             t0,
         );
         assert!(!app.is_awaiting_approval());
+    }
+
+    // ---- slice 5a: queued prompts, history, slash ----
+
+    #[test]
+    fn enter_while_running_queues_and_turn_end_drains_one() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        let _ = app.update(run_started(), t0);
+        type_str(&mut app, "next prompt", t0);
+        // Queued, not dropped, no command.
+        assert_eq!(app.update(key(KeyCode::Enter), t0), vec![]);
+        assert_eq!(app.prompt_queue.len(), 1);
+        assert!(app.composer.is_empty());
+
+        // Second queued waits behind the first.
+        type_str(&mut app, "and another", t0);
+        let _ = app.update(key(KeyCode::Enter), t0);
+        assert_eq!(app.prompt_queue.len(), 2);
+
+        // Turn end drains exactly one (echoed + submitted).
+        let cmds = app.update(
+            Msg::Engine(Box::new(EngineMsg::RunFinished(Box::new(report(
+                Status::Completed,
+            ))))),
+            t0,
+        );
+        assert_eq!(cmds, vec![Cmd::Submit("next prompt".into())]);
+        assert_eq!(app.prompt_queue.len(), 1);
+        assert!(matches!(app.outbox.last(), Some(Block::UserPrompt(p)) if p == "next prompt"));
+    }
+
+    #[test]
+    fn esc_at_idle_pops_the_last_queued_prompt() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        app.prompt_queue.push_back("first".into());
+        app.prompt_queue.push_back("second".into());
+        let _ = app.update(key(KeyCode::Esc), t0);
+        assert_eq!(app.composer.text(), "second", "last queued popped back");
+        assert_eq!(app.prompt_queue.len(), 1);
+    }
+
+    #[test]
+    fn prompt_history_records_dedups_and_navigates() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        // Submit two prompts (records history, most-recent-first).
+        type_str(&mut app, "one", t0);
+        let _ = app.update(key(KeyCode::Enter), t0);
+        type_str(&mut app, "two", t0);
+        let _ = app.update(key(KeyCode::Enter), t0);
+        // Re-submit "one" → move-to-front dedup (no duplicate).
+        type_str(&mut app, "one", t0);
+        let _ = app.update(key(KeyCode::Enter), t0);
+        assert_eq!(app.history, vec!["one", "two"]);
+
+        // Up recalls most-recent, Up again older, Down restores.
+        let _ = app.update(key(KeyCode::Up), t0);
+        assert_eq!(app.composer.text(), "one");
+        let _ = app.update(key(KeyCode::Up), t0);
+        assert_eq!(app.composer.text(), "two");
+        let _ = app.update(key(KeyCode::Down), t0);
+        assert_eq!(app.composer.text(), "one");
+        let _ = app.update(key(KeyCode::Down), t0);
+        assert_eq!(app.composer.text(), "", "back to the (empty) live draft");
+    }
+
+    #[test]
+    fn history_nav_disabled_with_a_multiline_draft() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        type_str(&mut app, "past", t0);
+        let _ = app.update(key(KeyCode::Enter), t0); // history: ["past"]
+        // Build a multiline draft; Up must go to the editor, not history.
+        type_str(&mut app, "line one", t0);
+        let _ = app.update(alt_enter(), t0);
+        type_str(&mut app, "line two", t0);
+        let _ = app.update(key(KeyCode::Up), t0);
+        assert!(app.composer.text().contains("line one"), "draft preserved");
+        assert!(app.history_nav.is_none());
+    }
+
+    #[test]
+    fn slash_quit_and_new_and_unknown() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+
+        type_str(&mut app, "/quit", t0);
+        assert_eq!(app.update(key(KeyCode::Enter), t0), vec![Cmd::Quit]);
+        assert!(app.should_quit);
+
+        let mut app = ready_app();
+        type_str(&mut app, "/new", t0);
+        assert_eq!(app.update(key(KeyCode::Enter), t0), vec![Cmd::NewSession]);
+
+        // Unknown slash → notice, no command, not submitted.
+        type_str(&mut app, "/bogus", t0);
+        assert_eq!(app.update(key(KeyCode::Enter), t0), vec![]);
+        assert!(
+            matches!(app.outbox.last(), Some(Block::Notice(n)) if n.contains("unknown command"))
+        );
+
+        // /new while running → notice, no reset.
+        let _ = app.update(run_started(), t0);
+        type_str(&mut app, "/new", t0);
+        assert_eq!(app.update(key(KeyCode::Enter), t0), vec![]);
+        assert!(
+            matches!(app.outbox.last(), Some(Block::Notice(n)) if n.contains("cancel the run"))
+        );
+    }
+
+    #[test]
+    fn session_reset_clears_transcript_state() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        let _ = app.update(run_started(), t0);
+        app.prompt_queue.push_back("q".into());
+        app.pending_tools.push(PendingTool {
+            id: "c".into(),
+            name: "grep".into(),
+            args: "{}".into(),
+        });
+        let _ = app.update(Msg::Engine(Box::new(EngineMsg::SessionReset)), t0);
+        assert!(matches!(app.run, RunState::Idle));
+        assert!(app.prompt_queue.is_empty());
+        assert!(app.pending_tools.is_empty());
+        assert!(matches!(app.outbox.last(), Some(Block::Notice(n)) if n.contains("new session")));
     }
 }
