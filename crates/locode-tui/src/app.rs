@@ -351,6 +351,12 @@ impl App {
                 body: "(no result)".into(),
             });
         }
+        // Surface why a run failed (ModelError/Error) so a real-wire session
+        // is legible — rate limit, bad key, fatal tool (codex adds an error
+        // cell on a failed turn). Cancelled/Completed carry no error.
+        if let Some(err) = &report.error {
+            self.outbox.push(Block::Notice(format!("error: {err}")));
+        }
         let elapsed = match self.run {
             RunState::Running { started, .. } => now.duration_since(started).as_secs(),
             RunState::Idle => 0,
@@ -1250,5 +1256,53 @@ mod tests {
         assert!(app.prompt_queue.is_empty());
         assert!(app.pending_tools.is_empty());
         assert!(matches!(app.outbox.last(), Some(Block::Notice(n)) if n.contains("new session")));
+    }
+
+    // ---- slice 6: error surfacing ----
+
+    #[test]
+    fn failed_run_surfaces_the_error_before_the_separator() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        let _ = app.update(run_started(), t0);
+        let mut r = report(Status::ModelError);
+        r.error = Some("rate limited after 3 retries".into());
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::RunFinished(Box::new(r)))),
+            t0,
+        );
+        // error notice immediately precedes the TurnEnd separator.
+        let n = app.outbox.len();
+        assert!(
+            matches!(&app.outbox[n - 2], Block::Notice(m) if m.contains("rate limited")),
+            "{:?}",
+            app.outbox
+        );
+        assert!(matches!(
+            &app.outbox[n - 1],
+            Block::TurnEnd {
+                status: Status::ModelError,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn completed_run_has_no_error_notice() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        let _ = app.update(run_started(), t0);
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::RunFinished(Box::new(report(
+                Status::Completed,
+            ))))),
+            t0,
+        );
+        assert!(
+            !app.outbox
+                .iter()
+                .any(|b| matches!(b, Block::Notice(m) if m.starts_with("error:"))),
+            "no error notice on success"
+        );
     }
 }

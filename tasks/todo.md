@@ -565,7 +565,7 @@ search_replace → list_dir. Release: 0.1.3 = this task.**
 **Dependencies:** none (independent of Tasks 23–25)
 **Scope:** grep S (done) · list_dir M · read M · search_replace M · terminal M–L
 
-## Task 27: locode-tui + locode-app v1 — the minimal interactive frontend
+## Task 27: locode-tui + locode-app v1 — the minimal interactive frontend ✅ functionally complete (release pending user)
 **Description:** Build the TUI per [`SPEC-TUI.md`](../SPEC-TUI.md) (spec grounded in
 the four-harness TUI source study, [`docs/research/tui-harness-study.md`](../docs/research/tui-harness-study.md)).
 Crate shape (2026-07-21): `locode-tui` = ONE library crate (components + runnable app
@@ -582,7 +582,7 @@ queue; robustness floor from slice 1.
 - [x] Slice 3 — cancel — PR #79
 - [x] Slice 4 — approvals — PR #80 (ADR-0017 gap handled approver-side; engine amendment still open)
 - [x] Slice 5 — conversation polish (5a #81 + 5b #82)
-- [ ] Slice 6 — hardening + release decision
+- [x] Slice 6 — hardening (#83); release = user hard-stop
 
 **Dependencies:** 0.1.4 seams (Tasks 23-25, done). New deps (ask-first, approved with
 the spec review): ratatui, crossterm, tui-textarea, pulldown-cmark.
