@@ -901,7 +901,7 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
 name = "locode-core"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "locode-engine",
  "locode-host",
@@ -914,7 +914,7 @@ dependencies = [
 
 [[package]]
 name = "locode-engine"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-trait",
  "locode-protocol",
@@ -928,7 +928,7 @@ dependencies = [
 
 [[package]]
 name = "locode-exec"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "assert_cmd",
  "chrono",
@@ -945,7 +945,7 @@ dependencies = [
 
 [[package]]
 name = "locode-host"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "ignore",
  "nix",
@@ -957,7 +957,7 @@ dependencies = [
 
 [[package]]
 name = "locode-packs"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-trait",
  "locode-host",
@@ -975,7 +975,7 @@ dependencies = [
 
 [[package]]
 name = "locode-protocol"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -983,7 +983,7 @@ dependencies = [
 
 [[package]]
 name = "locode-provider"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-trait",
  "locode-protocol",
@@ -997,7 +997,7 @@ dependencies = [
 
 [[package]]
 name = "locode-tools"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-trait",
  "locode-protocol",
