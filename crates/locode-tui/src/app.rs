@@ -3,14 +3,19 @@
 //! sans-IO"). All interaction semantics live here so they are table-testable
 //! without a terminal.
 
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers};
 use locode_core::{ContentBlock, Event, Report, ResultChunk, Role};
 
+use crate::approval::{ApprovalOutcome, ApprovalView};
 use crate::engine::EngineMsg;
 use crate::ui::blocks::{Block, turn_end};
 use crate::ui::composer::Composer;
+
+/// The default reason a bare Deny sends (typed feedback is a slice-5 polish).
+const DENY_REASON: &str = "denied by user";
 
 /// Double-press window for Esc-clear and the Ctrl+C quit arm (grok uses
 /// 800 ms for double-Esc; codex's quit arm is the same order of magnitude).
@@ -24,6 +29,8 @@ pub enum Msg {
     Input(Box<CrosstermEvent>),
     /// A message from the engine task.
     Engine(Box<EngineMsg>),
+    /// A tool call is awaiting approval (the loop kept the oneshot).
+    Approval(ApprovalView),
     /// Animation tick (sent by the loop only while a run is active).
     Tick,
     /// SIGINT/SIGTERM arrived (graceful quit path).
@@ -37,6 +44,13 @@ pub enum Cmd {
     Submit(String),
     /// Fire the current run's cancel handle (the loop holds it — ADR-0018).
     CancelRun,
+    /// Resolve a pending approval (the loop holds the oneshot, keyed by id).
+    ResolveApproval {
+        /// The `tool_use` id whose approval this answers.
+        id: String,
+        /// The user's choice.
+        outcome: ApprovalOutcome,
+    },
     /// Tear down and exit.
     Quit,
 }
@@ -96,6 +110,12 @@ pub struct App {
     pub outbox: Vec<Block>,
     /// Tool calls awaiting their results.
     pub pending_tools: Vec<PendingTool>,
+    /// Approvals awaiting a user decision — FIFO, only the front renders
+    /// (grok's rule). The loop holds the matching oneshots.
+    pub approval_queue: VecDeque<ApprovalView>,
+    /// The composer draft stashed while an approval overlay is up (restored
+    /// when the queue empties — grok's flow).
+    stashed_draft: Option<String>,
     /// Resolved model id (footer display); `None` until the engine is ready.
     pub model: Option<String>,
     /// Session assembly failed — submits are disabled.
@@ -127,6 +147,8 @@ impl App {
             run: RunState::Idle,
             outbox: Vec::new(),
             pending_tools: Vec::new(),
+            approval_queue: VecDeque::new(),
+            stashed_draft: None,
             model: None,
             engine_failed: false,
             spinner_frame: 0,
@@ -140,6 +162,12 @@ impl App {
     #[must_use]
     pub fn is_running(&self) -> bool {
         matches!(self.run, RunState::Running { .. })
+    }
+
+    /// Whether an approval overlay is up (owns the input).
+    #[must_use]
+    pub fn is_awaiting_approval(&self) -> bool {
+        !self.approval_queue.is_empty()
     }
 
     /// The reducer. Pure over (`self`, `msg`, `now`): no IO, no clock reads —
@@ -157,6 +185,10 @@ impl App {
             }
             Msg::Engine(engine_msg) => {
                 self.on_engine(*engine_msg, now);
+                vec![]
+            }
+            Msg::Approval(view) => {
+                self.on_approval(view);
                 vec![]
             }
             Msg::Input(event) => match *event {
@@ -197,8 +229,20 @@ impl App {
                 self.hint = None;
             }
             EngineMsg::Event(event) => self.on_event(*event),
+            // The loop takes the responder before forwarding the view; the
+            // reducer never sees `Approval` on the Engine channel.
+            EngineMsg::Approval(_) => {}
             EngineMsg::RunFinished(report) => self.on_run_finished(&report, now),
         }
+    }
+
+    /// Enqueue an approval; stash the draft on the empty→non-empty transition
+    /// so the composer is free for follow-up (grok's flow).
+    fn on_approval(&mut self, view: ApprovalView) {
+        if self.approval_queue.is_empty() {
+            self.stashed_draft = Some(self.composer.take_text());
+        }
+        self.approval_queue.push_back(view);
     }
 
     /// Translate one engine event into transcript state (SPEC-TUI mapping).
@@ -286,10 +330,59 @@ impl App {
         };
         self.outbox.push(turn_end(report, elapsed));
         self.run = RunState::Idle;
+        // Defensive: a terminal report clears any lingering overlay (the loop
+        // drains the matching oneshots). The queue should already be empty.
+        if !self.approval_queue.is_empty() {
+            self.approval_queue.clear();
+            self.restore_draft();
+        }
+    }
+
+    /// Resolve the front approval with `outcome`, pop it, and restore the
+    /// stashed draft once the queue empties.
+    fn resolve_front_approval(&mut self, outcome: ApprovalOutcome) -> Vec<Cmd> {
+        let Some(view) = self.approval_queue.pop_front() else {
+            return vec![];
+        };
+        if self.approval_queue.is_empty() {
+            self.restore_draft();
+        }
+        vec![Cmd::ResolveApproval {
+            id: view.tool_use_id,
+            outcome,
+        }]
+    }
+
+    fn restore_draft(&mut self) {
+        if let Some(draft) = self.stashed_draft.take() {
+            self.composer.set_text(&draft);
+        }
+    }
+
+    /// Overlay key handling while an approval is pending (non-Ctrl keys).
+    /// y/Enter = allow, a = allow-for-session, d/Esc = deny.
+    fn on_approval_key(&mut self, key: KeyEvent) -> Vec<Cmd> {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Enter => {
+                self.resolve_front_approval(ApprovalOutcome::Allow)
+            }
+            KeyCode::Char('a') => self.resolve_front_approval(ApprovalOutcome::AllowSession),
+            KeyCode::Char('d') | KeyCode::Esc => {
+                self.resolve_front_approval(ApprovalOutcome::Deny {
+                    reason: DENY_REASON.to_string(),
+                })
+            }
+            _ => vec![], // ignore other keys while the overlay owns input
+        }
     }
 
     fn on_key(&mut self, key: KeyEvent, now: Instant) -> Vec<Cmd> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        // The approval overlay owns non-Ctrl input; Ctrl+C/Ctrl+D still fall
+        // through to cancel/quit (cancel drains the queue).
+        if self.is_awaiting_approval() && !ctrl {
+            return self.on_approval_key(key);
+        }
         match (key.code, ctrl) {
             // Ctrl+C: (spec) first press cancels a running turn AND arms the
             // quit hint; a second press within the window quits. At idle:
@@ -799,5 +892,103 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    // ---- slice 4: approvals ----
+
+    fn approval_view(id: &str, name: &str) -> ApprovalView {
+        ApprovalView {
+            tool_use_id: id.into(),
+            tool_name: name.into(),
+            kind: "shell".into(),
+            args: "{}".into(),
+        }
+    }
+
+    #[test]
+    fn approval_enqueues_stashes_draft_and_allow_resolves_and_restores() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        let _ = app.update(run_started(), t0);
+        type_str(&mut app, "my draft", t0);
+
+        // Ask arrives → queued, draft stashed, composer cleared.
+        let _ = app.update(Msg::Approval(approval_view("c1", "run_terminal_cmd")), t0);
+        assert!(app.is_awaiting_approval());
+        assert!(app.composer.is_empty(), "draft stashed while overlay is up");
+
+        // `y` allows → resolves the front and restores the draft.
+        let cmds = app.update(key(KeyCode::Char('y')), t0);
+        assert_eq!(
+            cmds,
+            vec![Cmd::ResolveApproval {
+                id: "c1".into(),
+                outcome: ApprovalOutcome::Allow,
+            }]
+        );
+        assert!(!app.is_awaiting_approval());
+        assert_eq!(app.composer.text(), "my draft", "draft restored");
+    }
+
+    #[test]
+    fn approval_deny_and_allow_session_map_correctly() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        let _ = app.update(run_started(), t0);
+
+        let _ = app.update(Msg::Approval(approval_view("c1", "grep")), t0);
+        assert_eq!(
+            app.update(key(KeyCode::Char('d')), t0),
+            vec![Cmd::ResolveApproval {
+                id: "c1".into(),
+                outcome: ApprovalOutcome::Deny {
+                    reason: "denied by user".into()
+                },
+            }]
+        );
+
+        let _ = app.update(Msg::Approval(approval_view("c2", "grep")), t0);
+        assert_eq!(
+            app.update(key(KeyCode::Char('a')), t0),
+            vec![Cmd::ResolveApproval {
+                id: "c2".into(),
+                outcome: ApprovalOutcome::AllowSession,
+            }]
+        );
+
+        // Esc denies too.
+        let _ = app.update(Msg::Approval(approval_view("c3", "grep")), t0);
+        assert!(matches!(
+            app.update(key(KeyCode::Esc), t0).as_slice(),
+            [Cmd::ResolveApproval {
+                outcome: ApprovalOutcome::Deny { .. },
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn ctrl_c_still_cancels_while_an_approval_pends() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        let _ = app.update(run_started(), t0);
+        let _ = app.update(Msg::Approval(approval_view("c1", "grep")), t0);
+        // Ctrl+C falls through to cancel (the loop then drains the queue).
+        assert_eq!(app.update(ctrl('c'), t0), vec![Cmd::CancelRun]);
+    }
+
+    #[test]
+    fn run_finished_clears_a_lingering_overlay() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        let _ = app.update(run_started(), t0);
+        let _ = app.update(Msg::Approval(approval_view("c1", "grep")), t0);
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::RunFinished(Box::new(report(
+                Status::Cancelled,
+            ))))),
+            t0,
+        );
+        assert!(!app.is_awaiting_approval());
     }
 }

@@ -580,7 +580,7 @@ queue; robustness floor from slice 1.
 - [x] Slice 1 — shell, both crate scaffolds (+ ADR-0019, SPEC.md pointer) — PR #77
 - [x] Slice 2 — drive a run (mock) — PR #78
 - [x] Slice 3 — cancel — PR #79
-- [ ] Slice 4 — approvals (+ possible ADR-0017 amendment: decide() await observes the cancel token)
+- [x] Slice 4 — approvals — PR #80 (ADR-0017 gap handled approver-side; engine amendment still open)
 - [ ] Slice 5 — conversation polish
 - [ ] Slice 6 — hardening + release decision
 

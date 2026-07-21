@@ -76,6 +76,12 @@ impl Composer {
         self.textarea = Self::new().textarea;
     }
 
+    /// Replace the contents with `text` (draft restore).
+    pub fn set_text(&mut self, text: &str) {
+        self.clear();
+        self.textarea.insert_str(text);
+    }
+
     /// Rows needed at `width`: content lines clamped to `[1, MAX_ROWS]`
     /// (soft-wrap is deferred with the widget; long lines scroll).
     #[must_use]

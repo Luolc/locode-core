@@ -38,6 +38,9 @@ pub enum EngineMsg {
     /// One engine event (message/error/approval …) from the run's sink
     /// (boxed — `Event` is large).
     Event(Box<locode_core::Event>),
+    /// A tool call is awaiting the user's approval (ADR-0017). The loop takes
+    /// the responder; the reducer renders the view.
+    Approval(crate::approval::ApprovalAsk),
     /// The run reached its terminal state.
     RunFinished(Box<Report>),
 }
@@ -147,10 +150,18 @@ fn build_session(
         ..EngineConfig::default()
     };
 
+    // The approver surfaces asks on the same channel; --yolo makes it
+    // auto-allow without ever surfacing UI (ADR-0017 client-side stickiness).
+    let approver = Arc::new(crate::approval::TuiApprover::new(
+        cli.dangerously_skip_permissions,
+        events.clone(),
+    ));
+
     let sink: Box<dyn EventSink> = Box::new(FnSink(move |event| {
         let _ = events.send(EngineMsg::Event(Box::new(event)));
     }));
-    let session = Session::new(provider, registry_tools, preamble, config, sink);
+    let session =
+        Session::new(provider, registry_tools, preamble, config, sink).with_approver(approver);
     Ok((session, model))
 }
 
