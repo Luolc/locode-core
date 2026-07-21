@@ -298,3 +298,26 @@ description, negative offset, sparse numbering, caps/messages, binary
 sniff; all pure-Rust, no new deps except possibly `infer`); **L** if the
 multimodal/PDF/PPTX tier (criterion 11) is pulled in, since it adds
 dependencies and protocol-level image results.
+
+## Split: immediate vs deferred (user decision, 2026-07-20)
+
+**Deferred — binary/image/PDF/PPTX handling** (user call, recorded here as the
+required deviation note):
+- Criterion 9 (binary sniff + "Cannot read binary file" rejection) and
+  criterion 11 (image multimodal output, PDF `pages`/`format` execution, PPTX
+  extraction, base64-image line extraction). **Known consequence until this
+  lands:** reading a binary file emits `from_utf8_lossy` garbage where grok
+  errors cleanly — acceptable for text-repo A/B runs, not for mixed-content
+  repos.
+- `pages`/`format` schema fields stay **immediate** (criterion 1): they are
+  fully schema-visible in grok and "Ignored for non-PDF files" by behavior, so
+  verbatim schema + ignore-on-text is faithful today; only their PDF execution
+  is deferred.
+
+**Immediate (the faithful text path):** criteria 1–8, plus criterion 10
+resolved as a recorded deviation (skills are out of scope for the grok pack
+v0 — no `SKILL.md` exemption; deviation note in the pack docs). Criterion 3's
+description must trim the PDF/PPTX/image bullets per its own rule (never ship
+claims the tool can't honor) and log the trim as part of this deferral.
+
+Immediate scope: **M**, pure-Rust, no new dependencies.
