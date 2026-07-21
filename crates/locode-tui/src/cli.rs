@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use clap::Parser;
 
 /// `locode` — drive a locode session interactively.
-#[derive(Debug, Parser)]
+#[derive(Debug, Clone, Parser)]
 #[command(name = "locode", version, about)]
 pub struct Cli {
     /// The harness pack to run (currently: grok).

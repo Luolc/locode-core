@@ -16,6 +16,8 @@ use crate::cli::Cli;
 pub enum UiCommand {
     /// Run one turn with this (unwrapped) prompt text.
     Submit(String),
+    /// Discard the current `Session` and build a fresh one (`/new`).
+    NewSession,
 }
 
 /// Messages from the engine task to the UI.
@@ -43,6 +45,8 @@ pub enum EngineMsg {
     Approval(crate::approval::ApprovalAsk),
     /// The run reached its terminal state.
     RunFinished(Box<Report>),
+    /// The session was reset (`/new`); the UI clears transcript-adjacent state.
+    SessionReset,
 }
 
 /// Spawn the engine task. Returns the command sender and the message
@@ -56,8 +60,8 @@ pub enum EngineMsg {
 /// when streaming deltas land.
 #[must_use]
 pub fn spawn(
-    cli: &Cli,
-    registry: &ProviderRegistry,
+    cli: Cli,
+    registry: ProviderRegistry,
 ) -> (
     tokio::sync::mpsc::UnboundedSender<UiCommand>,
     tokio::sync::mpsc::UnboundedReceiver<EngineMsg>,
@@ -65,9 +69,9 @@ pub fn spawn(
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel::<UiCommand>();
     let (msg_tx, msg_rx) = tokio::sync::mpsc::unbounded_channel::<EngineMsg>();
 
-    let build = build_session(cli, registry, msg_tx.clone());
+    // Own cli + registry so `/new` can rebuild the session on demand.
     tokio::spawn(async move {
-        let mut session = match build {
+        let mut session = match build_session(&cli, &registry, msg_tx.clone()) {
             Ok((session, model)) => {
                 let _ = msg_tx.send(EngineMsg::Ready { model });
                 session
@@ -88,6 +92,16 @@ pub fn spawn(
                     let report = session.run_text(grok::prompt::user_query(&text)).await;
                     let _ = msg_tx.send(EngineMsg::RunFinished(Box::new(report)));
                 }
+                UiCommand::NewSession => match build_session(&cli, &registry, msg_tx.clone()) {
+                    Ok((fresh, model)) => {
+                        session = fresh;
+                        let _ = msg_tx.send(EngineMsg::SessionReset);
+                        let _ = msg_tx.send(EngineMsg::Ready { model });
+                    }
+                    Err(message) => {
+                        let _ = msg_tx.send(EngineMsg::BuildFailed(message));
+                    }
+                },
             }
         }
     });

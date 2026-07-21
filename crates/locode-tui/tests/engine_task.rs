@@ -47,18 +47,14 @@ fn text_turn(text: &str) -> Completion {
     }
 }
 
-/// A registry whose `mock` wire replays a fixed script — env-free (the
-/// builtin mock's `LOCODE_MOCK_SCRIPT` seam stays untouched here).
+/// A registry whose `mock` wire replays a fixed script. The factory clones
+/// the script each call so `/new` can rebuild the session (a fresh mock with
+/// the full script again). Env-free (the builtin mock's `LOCODE_MOCK_SCRIPT`
+/// seam stays untouched here).
 fn scripted_registry(turns: Vec<Completion>) -> ProviderRegistry {
-    let script = std::sync::Mutex::new(Some(turns));
     ProviderRegistry::new().register("mock", move |_init| {
-        let turns = script
-            .lock()
-            .unwrap()
-            .take()
-            .expect("factory called once per test");
         Ok(BuiltProvider {
-            provider: Arc::new(MockProvider::new(turns)),
+            provider: Arc::new(MockProvider::new(turns.clone())),
             model: "mock-scripted".to_string(),
         })
     })
@@ -101,7 +97,7 @@ async fn run_once(
 async fn submit_runs_to_completion_and_the_session_continues() {
     let dir = tempfile::tempdir().unwrap();
     let registry = scripted_registry(vec![text_turn("first answer"), text_turn("second answer")]);
-    let (tx, mut rx) = engine::spawn(&cli(&dir, "mock"), &registry);
+    let (tx, mut rx) = engine::spawn(cli(&dir, "mock"), registry);
 
     let EngineMsg::Ready { model } = recv(&mut rx).await else {
         panic!("first message must be Ready");
@@ -121,6 +117,28 @@ async fn submit_runs_to_completion_and_the_session_continues() {
     assert_eq!(report2.turns, 1, "per-run counters (ADR-0016)");
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn new_session_resets_and_a_fresh_run_starts_clean() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = scripted_registry(vec![text_turn("one"), text_turn("two")]);
+    let (tx, mut rx) = engine::spawn(cli(&dir, "mock"), registry);
+    assert!(matches!(recv(&mut rx).await, EngineMsg::Ready { .. }));
+
+    let (report, _, _) = run_once(&tx, &mut rx, "hi").await;
+    assert_eq!(report.final_message.as_deref(), Some("one"));
+
+    // /new → SessionReset then a fresh Ready.
+    tx.send(UiCommand::NewSession).unwrap();
+    assert!(matches!(recv(&mut rx).await, EngineMsg::SessionReset));
+    assert!(matches!(recv(&mut rx).await, EngineMsg::Ready { .. }));
+
+    // The next run starts a FRESH session (the rebuilt mock replays its script
+    // from the top, so turn 1 answers "one" again) — proving the reset.
+    let (report2, _, _) = run_once(&tx, &mut rx, "again").await;
+    assert_eq!(report2.final_message.as_deref(), Some("one"));
+    assert_eq!(report2.turns, 1);
+}
+
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn esc_cancels_a_running_turn_via_the_handle() {
@@ -132,7 +150,7 @@ async fn esc_cancels_a_running_turn_via_the_handle() {
         "run_terminal_cmd",
         json!({ "command": "sleep 30", "description": "hold the run open" }),
     )]);
-    let (tx, mut rx) = engine::spawn(&cli(&dir, "mock"), &registry);
+    let (tx, mut rx) = engine::spawn(cli(&dir, "mock"), registry);
 
     assert!(matches!(recv(&mut rx).await, EngineMsg::Ready { .. }));
     tx.send(UiCommand::Submit("go".into())).unwrap();
@@ -160,7 +178,7 @@ async fn esc_cancels_a_running_turn_via_the_handle() {
 #[tokio::test(flavor = "multi_thread")]
 async fn unknown_schema_fails_build_and_reports() {
     let dir = tempfile::tempdir().unwrap();
-    let (_tx, mut rx) = engine::spawn(&cli(&dir, "no-such-wire"), &ProviderRegistry::builtin());
+    let (_tx, mut rx) = engine::spawn(cli(&dir, "no-such-wire"), ProviderRegistry::builtin());
     let EngineMsg::BuildFailed(message) = recv(&mut rx).await else {
         panic!("must fail the build");
     };

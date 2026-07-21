@@ -67,7 +67,7 @@ async fn approval_allow_lets_the_tool_run() {
     let dir = tempfile::tempdir().unwrap();
     // Tool turn (echo), then a text turn to finish.
     let registry = scripted_registry(vec![tool_turn("c1", "echo approved"), text_turn("done")]);
-    let (tx, mut rx) = engine::spawn(&cli(&dir, false), &registry);
+    let (tx, mut rx) = engine::spawn(cli(&dir, false), registry);
     assert!(matches!(recv(&mut rx).await, EngineMsg::Ready { .. }));
     tx.send(UiCommand::Submit("go".into())).unwrap();
     assert!(matches!(recv(&mut rx).await, EngineMsg::RunStarted { .. }));
@@ -93,7 +93,7 @@ async fn approval_allow_lets_the_tool_run() {
 async fn approval_deny_records_denial_and_continues() {
     let dir = tempfile::tempdir().unwrap();
     let registry = scripted_registry(vec![tool_turn("c1", "echo blocked"), text_turn("done")]);
-    let (tx, mut rx) = engine::spawn(&cli(&dir, false), &registry);
+    let (tx, mut rx) = engine::spawn(cli(&dir, false), registry);
     assert!(matches!(recv(&mut rx).await, EngineMsg::Ready { .. }));
     tx.send(UiCommand::Submit("go".into())).unwrap();
     assert!(matches!(recv(&mut rx).await, EngineMsg::RunStarted { .. }));
@@ -121,7 +121,7 @@ async fn approval_deny_records_denial_and_continues() {
 async fn yolo_runs_tools_without_surfacing_approvals() {
     let dir = tempfile::tempdir().unwrap();
     let registry = scripted_registry(vec![tool_turn("c1", "echo yolo"), text_turn("done")]);
-    let (tx, mut rx) = engine::spawn(&cli(&dir, true), &registry);
+    let (tx, mut rx) = engine::spawn(cli(&dir, true), registry);
     assert!(matches!(recv(&mut rx).await, EngineMsg::Ready { .. }));
     tx.send(UiCommand::Submit("go".into())).unwrap();
 
