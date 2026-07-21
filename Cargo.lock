@@ -1072,8 +1072,12 @@ dependencies = [
 name = "locode-app"
 version = "0.1.4"
 dependencies = [
+ "assert_cmd",
  "locode-core",
  "locode-tui",
+ "predicates",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -1190,14 +1194,12 @@ dependencies = [
 name = "locode-tui"
 version = "0.1.4"
 dependencies = [
- "assert_cmd",
  "async-trait",
  "chrono",
  "clap",
  "crossterm",
  "locode-core",
  "locode-exec",
- "predicates",
  "pulldown-cmark",
  "ratatui",
  "serde_json",

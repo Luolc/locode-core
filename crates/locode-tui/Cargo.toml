@@ -32,5 +32,3 @@ chrono = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time", "test-util"] }
 tempfile = { workspace = true }
-assert_cmd = { workspace = true }
-predicates = { workspace = true }
