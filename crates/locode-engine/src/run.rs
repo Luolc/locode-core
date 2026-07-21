@@ -4,10 +4,19 @@ use locode_protocol::{ContentBlock, Event, Message, Report, ResultChunk, Role, T
 use locode_provider::{Completion, ConversationRequest, ProviderError};
 use locode_tools::{ToolCtx, ToolKind};
 use serde_json::Value;
+use tokio_util::sync::CancellationToken;
 
 use crate::approve::{ApprovalRequest, Decision};
 use crate::session::Session;
 use crate::terminal::{RunAcc, Terminal};
+
+/// Why a sample didn't produce a completion: the run was cancelled mid-await,
+/// or the provider failed after the bounded retry budget (ADR-0018 vs ADR-0007
+/// — cancellation is a structured stop, not a provider fault).
+enum SampleError {
+    Cancelled,
+    Provider(ProviderError),
+}
 
 impl Session {
     /// The driver behind [`Session::run`]. Infallible — all terminal conditions land
@@ -47,6 +56,12 @@ impl Session {
         let mut acc = RunAcc::default();
 
         let terminal = loop {
+            // (0) Cancellation check at the iteration top (ADR-0018): also the
+            // exit taken after a mid-batch cancel paired the rest of the batch.
+            if self.cancel.is_cancelled() {
+                break Terminal::Cancelled;
+            }
+
             // (a) Pre-send hygiene — unconditional, before every sample (ADR-0004).
             locode_provider::repair_pairing(&mut self.history);
 
@@ -59,7 +74,10 @@ impl Session {
             };
             let completion = match self.sample_nonempty(request).await {
                 Ok(completion) => completion,
-                Err(err) => {
+                // Cancelled mid-sample: no assistant message was appended —
+                // the history is unchanged since the last append.
+                Err(SampleError::Cancelled) => break Terminal::Cancelled,
+                Err(SampleError::Provider(err)) => {
                     break Terminal::ModelError {
                         error: err.to_string(),
                     };
@@ -131,6 +149,13 @@ impl Session {
         self.sink.emit(Event::Result {
             report: report.clone(),
         });
+
+        // Retire this run's cancel token and install a fresh one (ADR-0018
+        // Decision 1: per-run scope). A cancel landing after this point hits
+        // the retired token — a harmless no-op — and the next run starts
+        // uncancelled; frontends re-fetch `cancel_handle()` each turn.
+        self.cancel = CancellationToken::new();
+
         report
     }
 
@@ -159,6 +184,20 @@ impl Session {
                 results.push(synthetic_error(
                     &id,
                     "tool not executed: a prior tool in this batch aborted the turn",
+                ));
+                continue;
+            }
+
+            // Between-calls cancellation check (ADR-0018): the currently
+            // running tool finished (its own cooperative cancel produced a
+            // real result); the rest of the batch is paired synthetically —
+            // never recorded, never consulted for approval — and the loop top
+            // turns the cancel into the terminal state. These synthetics never
+            // carry `denial_reason` (deny and cancel stay separable).
+            if self.cancel.is_cancelled() {
+                results.push(synthetic_error(
+                    &id,
+                    "tool not executed: the run was cancelled",
                 ));
                 continue;
             }
@@ -223,7 +262,7 @@ impl Session {
     async fn sample_nonempty(
         &mut self,
         request: ConversationRequest,
-    ) -> Result<Completion, ProviderError> {
+    ) -> Result<Completion, SampleError> {
         let mut attempt: u32 = 0;
         loop {
             let completion = self.sample_with_retry(request.clone()).await?;
@@ -232,11 +271,11 @@ impl Session {
                 return Ok(completion);
             }
             if attempt >= self.config.resample_retries {
-                return Err(ProviderError::Decode(format!(
+                return Err(SampleError::Provider(ProviderError::Decode(format!(
                     "model returned an empty completion (no text, no tool calls; \
                      stop: {}) after {attempt} resample(s)",
                     stop_reason_str(&completion.stop)
-                )));
+                ))));
             }
             attempt += 1;
             self.sink.emit(Event::Error {
@@ -250,13 +289,24 @@ impl Session {
     }
 
     /// Sample once, retrying retryable provider errors up to the bounded budget.
+    ///
+    /// Both the provider await and the backoff sleep are guarded by a biased
+    /// `select!` on the run's cancel token (ADR-0018): sampling dominates
+    /// wall-clock, and dropping the in-flight future aborts the HTTP request
+    /// cleanly — the studied harnesses all abort the in-flight request.
     async fn sample_with_retry(
         &mut self,
         request: ConversationRequest,
-    ) -> Result<Completion, ProviderError> {
+    ) -> Result<Completion, SampleError> {
+        let cancel = self.cancel.clone();
         let mut attempt: u32 = 0;
         loop {
-            match self.provider.complete(&request).await {
+            let result = tokio::select! {
+                biased;
+                () = cancel.cancelled() => return Err(SampleError::Cancelled),
+                result = self.provider.complete(&request) => result,
+            };
+            match result {
                 Ok(completion) => return Ok(completion),
                 Err(err) if err.retryable() && attempt < self.config.resample_retries => {
                     attempt += 1;
@@ -268,11 +318,15 @@ impl Session {
                     });
                     let backoff = self.config.resample_backoff * attempt;
                     if !backoff.is_zero() {
-                        tokio::time::sleep(backoff).await;
+                        tokio::select! {
+                            biased;
+                            () = cancel.cancelled() => return Err(SampleError::Cancelled),
+                            () = tokio::time::sleep(backoff) => {}
+                        }
                     }
                     // The history didn't advance — resample the same request.
                 }
-                Err(err) => return Err(err),
+                Err(err) => return Err(SampleError::Provider(err)),
             }
         }
     }
@@ -281,7 +335,9 @@ impl Session {
         let status = terminal.status();
         let (final_message, error) = match terminal {
             Terminal::Completed { final_message } => (final_message, None),
-            Terminal::MaxTurns => (acc.last_assistant_text, None),
+            // Like MaxTurns: the last assistant text of this run, no error —
+            // cancelled is a structured stop, not a fault (ADR-0018).
+            Terminal::MaxTurns | Terminal::Cancelled => (acc.last_assistant_text, None),
             Terminal::ModelError { error } | Terminal::Error { error } => (None, Some(error)),
         };
         Report {

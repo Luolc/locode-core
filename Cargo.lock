@@ -909,6 +909,7 @@ dependencies = [
  "locode-protocol",
  "locode-provider",
  "locode-tools",
+ "serde_json",
 ]
 
 [[package]]

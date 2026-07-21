@@ -426,18 +426,19 @@ and still emit the report (partial turns/usage) before exiting — so timed-out 
 yield failure-case traces instead of nothing.
 
 **Acceptance criteria:**
-- [ ] SIGTERM during a run → exit with the normal artifact on stdout (`json`: one report with
+- [x] SIGTERM during a run → exit with the normal artifact on stdout (`json`: one report with
   a non-`completed` status; `stream-json`: the stream stays valid JSONL ending in `result`);
   transcript validity holds (every `tool_use` paired).
-- [ ] SIGTERM before the run starts → clean exit 1, nothing on stdout.
-- [ ] Integration test drives the binary, sends SIGTERM mid-run (slow mock tool), asserts the
+- [x] SIGTERM before the run starts → clean exit 1, nothing on stdout.
+- [x] Integration test drives the binary, sends SIGTERM mid-run (slow mock tool), asserts the
   report parses.
 
 > **Correction (2026-07-20):** these boxes were previously checked `[x]`, but no
-> signal-handling or cancellation code exists in the tree (verified: no
+> signal-handling or cancellation code existed in the tree (verified: no
 > `signal`/`SIGTERM` references in `locode-exec`, no implementing commit).
-> **Superseded by Task 24** (ADR-0018), which delivers this via the public
-> cancel handle + `cancelled` status.
+> **Superseded by Task 24** (ADR-0018) — and **delivered by it (2026-07-21)**:
+> the public cancel handle + `cancelled` status + exec SIGTERM handler, with
+> the mid-run/pre-run integration tests (env-scripted slow mock tool).
 
 **Dependencies:** Task 14
 **Scope:** S — folded into Task 24
@@ -480,12 +481,17 @@ once per session; per-run reports; `history()` accessor.
   (+ continue-after-`ModelError`/`Error` tests per the Resolution).
 **Dependencies:** none · **Scope:** S
 
-### Task 24: cancellation + `cancelled` status + SIGTERM (ADR-0018)
-`Session::cancel_handle()`; loop observes the token (iteration top, provider
-select, between batch calls with synthetic pairing); `Status::Cancelled`
-(additive envelope policy — ask-first); exec SIGTERM handler (delivers Task 21).
-- [ ] Mid-sample + mid-batch cancel tests; idempotent double-cancel; exec SIGTERM
-  integration test (report parses, exit 0, valid stream tail).
+### Task 24: cancellation + `cancelled` status + SIGTERM (ADR-0018) ✅ done
+`Session::cancel_handle()` (per-run token, retired at run end); loop observes
+the token (iteration top, provider select, backoff select, between batch calls
+with synthetic pairing); `Status::Cancelled` + `#[non_exhaustive]` + the
+written additive-evolution policy; exec SIGTERM handler + wildcard exit arm
+(delivers Task 21); `CancellationToken` re-exported. Enabler: keyless
+env-scripted mock (`LOCODE_MOCK_SCRIPT`) so integration tests can hold a run
+open.
+- [x] Mid-sample + mid-batch cancel tests; idempotent double-cancel;
+  cancel-then-next-run continues (fresh token); exec SIGTERM integration tests
+  (stream tail valid + paired, json single report, pre-run exit 1).
 **Dependencies:** Task 23 (one test only) · **Scope:** M
 
 ### Task 25: approval seam (ADR-0017) ✅ done

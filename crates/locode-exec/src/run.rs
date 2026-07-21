@@ -32,6 +32,12 @@ impl<E: std::fmt::Display> From<E> for PreRunError {
 /// unknown/misconfigured provider, empty prompt): stderr + exit 1, nothing on
 /// stdout.
 pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, PreRunError> {
+    // ---- 0. SIGTERM handler (ADR-0018, Task 21): installed before any
+    //         pre-run work so a pre-run SIGTERM exits 1 cleanly; armed with
+    //         the session's cancel handle once one exists. ----
+    #[cfg(unix)]
+    let cancel_slot = crate::signal::install_sigterm();
+
     // ---- 1. Prompt: positional, or stdin when absent / `-`. ----
     let prompt = resolve_prompt(cli.prompt.as_deref())?;
 
@@ -106,6 +112,8 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
 
     // ---- 6. Drive to a terminal state (infallible) and emit the artifact. ----
     let mut session = Session::new(provider, registry, preamble, config, sink);
+    #[cfg(unix)]
+    crate::signal::arm(&cancel_slot, session.cancel_handle());
     let report = session.run_text(user_prompt).await;
 
     match cli.output_format {
