@@ -98,3 +98,14 @@ Acceptance criteria:
 10. **(Regression guard)** Port grok's behavioral tests: hidden-file exclusion (gb file:710-726), gitignore on/off (gb file:1028-1072), big-dir summarization (gb file:667-692), budget skip-and-expand-later-sibling (gb file:834-867), cutoff notice (gb file:770-785), display-path cases (gb file:615-644), error-text cases (gb file:1205-1249); update ours file's module docs (ours file:4-6) to drop the "simplifications" caveat; run the mandatory triangle.
 
 Scope: **M** (one file rewrite ~450 lines of largely portable logic + tests; the only real design work is the ignore-filter host-seam decision in AC 2 and the dep-addition approval).
+
+## Plan finalization (user interview, 2026-07-21)
+
+- **Walker placement resolved (Q1 = Option A):** the gitignore-aware traversal
+  becomes a `locode-host` API (walk with `WalkOptions { respect_gitignore,
+  depth/budget, … }`); the **`ignore` crate is approved as a host dependency**
+  (ask-first satisfied). The pack consumes entries and keeps grok's
+  formatting/budgeting as pure logic — zero pack fs access, one-door invariant
+  intact. The same host work exposes `is_path_ignored(path)` for the
+  search_replace/read_file gitignore guards.
+- Unblocked; implement after the host-groundwork slice.

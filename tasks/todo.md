@@ -462,7 +462,9 @@ string instead of a closed `ValueEnum`.
 **Dependencies:** Task 14, Task 18
 **Scope:** M
 
-## Tasks 23–25: TUI core prerequisites (Workstream A) — ADRs accepted, ready to implement
+## Tasks 23–25: TUI core prerequisites (Workstream A) — ADRs accepted, **DELAYED after Task 26**
+> Sequencing decision (2026-07-21 plan interview): Task 26 (pack fidelity) runs first;
+> these ship afterwards as **0.1.4** (0.1.3 becomes the Task 26 fidelity release).
 Detailed plan: [`plans/task-23-25-tui-core-prereqs.md`](plans/task-23-25-tui-core-prereqs.md)
 (all open questions resolved in the 2026-07-20 user interview — see the plan's
 Resolutions section). Implementation order **23 → 25 → 24**; one 0.1.3 release
@@ -499,6 +501,17 @@ defeats the A/B. Restore full wire-exact schemas + behavior.
 
 **Per-tool audits (2026-07-20, source-verified):** [`tasks/audits/`](audits/) — one file
 per tool with verbatim schema diffs, behavior gaps, quirks, and a detailed fixing task.
+Plan finalized in the 2026-07-21 interview (resolutions in each audit's "Plan
+finalization" section). **Sequencing: host groundwork ∥ read_file → terminal-fg →
+search_replace → list_dir. Release: 0.1.3 = this task.**
+
+**Slice 0 — host groundwork (unblocks the three tools below):**
+- [ ] `ignore` crate → `locode-host` (approved 2026-07-21): gitignore-aware walk API
+  (`WalkOptions`: respect_gitignore, depth/budget) + `is_path_ignored(path)`.
+- [ ] Exec: combined interleaved capture + front/back char-cap retention; spill full
+  output to a host-owned temp/cache path (outside workspace — jailed-mode readability
+  is a recorded future TODO); optional per-request `shell` spec on `ExecRequest`
+  (program, arg style, cached login-PATH probe). Host defaults unchanged.
 
 **Acceptance criteria:**
 - [x] `grep` — FAITHFUL as of PR #51 ([audit](audits/grep.md); one documented
@@ -514,15 +527,15 @@ per tool with verbatim schema diffs, behavior gaps, quirks, and a detailed fixin
   description (PDF/image bullets trimmed + logged), **sparse `N→` numbering**,
   negative-offset tail-read, `total_lines` semantics, overflow messages (incl. grok's
   typo), exact error texts. Scope M, no new deps. ([audit](audits/read_file.md))
-- [ ] `search_replace` — **IMMEDIATE** once the target version is decided (**open
-  decision:** current grok default [recommended] vs the legacy-0.4.10 surface we match
-  today): overwrite semantics for empty `old_string`, grok's success text, 3-bullet
-  description. Lenient `replace_all` bool coercion **declined** (explicit user call
-  2026-07-20 — strict bool stays; deviation recorded in the audit). Scope M.
-  ([audit](audits/search_replace.md))
-- [ ] `list_dir` — **IMMEDIATE** once the `ignore`-crate dependency is approved (**open
-  decision**, ask-first): gitignore walker, BFS budget + subtree summaries, exact
-  formats/notices/error texts. Scope M. ([audit](audits/list_dir.md))
+- [ ] `search_replace` — **IMMEDIATE, target resolved: current-default grok**
+  (2026-07-21): DI toggles frozen as constants at grok defaults; default-off subsystems
+  omitted as recorded "unreachable at default config" deviations; user-edit +
+  nearest-match hints, CRLF normalization, overwrite semantics, grok's texts;
+  gitignore guard via host `is_path_ignored`. Lenient `replace_all` coercion declined
+  (type-strict). Scope S–M. ([audit](audits/search_replace.md))
+- [ ] `list_dir` — **IMMEDIATE, dependency approved** (2026-07-21): walker lives in
+  `locode-host` (Slice 0); pack keeps pure formatting/budgeting — BFS budget + subtree
+  summaries, exact formats/notices/error texts. Scope M. ([audit](audits/list_dir.md))
 - [ ] `run_terminal_cmd` — **IMMEDIATE: faithful foreground slice** (audit criteria
   1–8 + 11–12; see the audit's Split section): bg-disabled description variant
   (lenient timeout parsing **declined** — type-strict per user call, deviation

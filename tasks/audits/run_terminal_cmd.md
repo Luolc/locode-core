@@ -135,3 +135,20 @@ front/back char cap — truncation fidelity depends on it) and criterion 7
 must be omitted with the deviation documented, per criterion 4's note).
 
 Immediate scope: **M** (incl. the two host changes); deferred scope: **L**.
+
+## Plan finalization (user interview, 2026-07-21)
+
+- **Spill file resolved (Q4): spill outside the workspace** to a host-owned
+  temp/cache location (system temp or `~/.cache/locode`-class, host decides);
+  the faithful `- full output at: {path}` clause ships. No jail exemption is
+  added. Known limitation, accepted: in the usual headless YOLO mode
+  (`PathPolicy::Unrestricted`) the model reads the path freely; under the
+  jailed policy the hint points at an unreadable file — **recorded future
+  TODO** for the TUI/non-YOLO era (revisit jail treatment of host-generated
+  artifacts then).
+- **Shell invocation resolved (Q5):** `ExecRequest` gains an optional `shell`
+  spec (program, arg style, PATH-probe flag); the grok pack requests its
+  faithful shape (detected shell, `-c`, login-PATH probe) per call; the
+  PATH probe runs host-side, cached per host instance; host default behavior
+  is unchanged for all other consumers. Harness-specific shell shapes stay in
+  packs; execution stays behind the host door.

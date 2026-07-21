@@ -325,3 +325,11 @@ description must trim the PDF/PPTX/image bullets per its own rule (never ship
 claims the tool can't honor) and log the trim as part of this deferral.
 
 Immediate scope: **M**, pure-Rust, no new dependencies.
+
+## Plan finalization (user interview, 2026-07-21)
+
+- Description trimming confirmed (Q3 = Option A): deferred-capability bullets
+  (PDF/PPTX/image) are trimmed from `DESCRIPTION_FULL`, deviation logged —
+  never advertise behavior the tool can't honor.
+- Sequencing: this tool's text path is host-independent and starts immediately,
+  in parallel with the host-groundwork slice.
