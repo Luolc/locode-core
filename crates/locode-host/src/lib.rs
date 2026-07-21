@@ -16,7 +16,10 @@ mod walk;
 pub use fs::{DirEntry, FileRead, FileStat, FsError};
 pub use path::PathError;
 pub use rg::rg_program;
-pub use shell::{ExecError, ExecOutput, ExecRequest, FrontBackCapture, FrontBackSpec, ShellSpec};
+pub use shell::{
+    ExecError, ExecOutput, ExecRequest, FrontBackCapture, FrontBackSpec, SPILL_RETAIN_MAX,
+    ShellSpec,
+};
 pub use walk::{WalkEntry, WalkOptions};
 
 use std::path::{Path, PathBuf};
