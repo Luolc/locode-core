@@ -103,6 +103,8 @@ impl Tool for GrokRunTerminalCmd {
             cwd: ctx.cwd.clone(),
             timeout: Some(Duration::from_millis(timeout_ms)),
             env: Vec::new(),
+            shell: None,
+            front_back: None,
         };
         // Only a spawn/capture failure is a (soft) error; a non-zero exit / timeout is a
         // successful capture the model reads and reacts to (ADR-0004).

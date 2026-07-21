@@ -16,7 +16,7 @@ mod walk;
 pub use fs::{DirEntry, FileRead, FileStat, FsError};
 pub use path::PathError;
 pub use rg::rg_program;
-pub use shell::{ExecError, ExecOutput, ExecRequest};
+pub use shell::{ExecError, ExecOutput, ExecRequest, FrontBackCapture, FrontBackSpec, ShellSpec};
 pub use walk::{WalkEntry, WalkOptions};
 
 use std::path::{Path, PathBuf};
@@ -103,6 +103,8 @@ pub struct Host {
     pub(crate) login_shell: bool,
     /// Lazily-built workspace gitignore matcher (Task 26 Slice 0).
     pub(crate) gitignore: walk::GitignoreCache,
+    /// Once-probed login-shell PATH (Task 26 Slice 0b; grok's PATH probe).
+    pub(crate) login_path: std::sync::Arc<tokio::sync::OnceCell<Option<String>>>,
 }
 
 impl Host {
@@ -123,6 +125,7 @@ impl Host {
             shell_program: config.shell_program,
             login_shell: config.login_shell,
             gitignore: walk::GitignoreCache::new(),
+            login_path: std::sync::Arc::new(tokio::sync::OnceCell::new()),
         })
     }
 
