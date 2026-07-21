@@ -237,8 +237,13 @@ Acceptance criteria:
 1. Tool description replaced with the rendered `DESCRIPTION_FULL` 3-bullet
    text (gb/mod.rs:59-63 with `read_file`/`old_string`/`replace_all`
    substituted), verbatim including the `LINE_NUMBER→` bullet.
-2. `replace_all` accepts grok's lenient boolean forms (`serde_lenient.rs:12-60`):
-   custom deserializer, same accepted/rejected sets, absent key → false.
+2. ~~`replace_all` accepts grok's lenient boolean forms (`serde_lenient.rs:12-60`)~~
+   — **DECLINED (explicit user call, 2026-07-20): not ported.** `replace_all`
+   stays a strict `bool` (`#[serde(default)]`); string/number/null forms
+   (`"true"`, `"yes"`, `1`, `null`) get a deserialization error instead of
+   grok's coercion. Recorded deviation from schema issue 2 — a deliberate
+   exception to pack faithfulness, per the AGENTS.md rule that such exceptions
+   are noted explicitly.
 3. Empty `old_string` overwrites an existing non-empty file (default grok
    behavior, gb/mod.rs:293 + test :1264-1282); the invented
    "File already exists…" error is removed.
@@ -274,6 +279,7 @@ Acceptance criteria:
    non-`EditsApplied` variant is an error).
 10. Tests cover: creation, overwrite-by-empty-old-string, unique replace,
     replace_all, multi-match error text, no-match text incl. user-edit hint and
-    nearest-match hint, CRLF roundtrip, lenient `replace_all` parsing, same
+    nearest-match hint, CRLF roundtrip, strict `replace_all` parsing (a
+    string-typed value errors — pins the declined-deviation behavior), same
     old/new rejection — asserting exact strings (grok's own tests do:
     gb/mod.rs:1008-1016, 1173-1180, 1228-1236).

@@ -516,7 +516,9 @@ per tool with verbatim schema diffs, behavior gaps, quirks, and a detailed fixin
 - [ ] `search_replace` — **IMMEDIATE** once the target version is decided (**open
   decision:** current grok default [recommended] vs the legacy-0.4.10 surface we match
   today): overwrite semantics for empty `old_string`, grok's success text, 3-bullet
-  description, lenient bool coercion. Scope M. ([audit](audits/search_replace.md))
+  description. Lenient `replace_all` bool coercion **declined** (explicit user call
+  2026-07-20 — strict bool stays; deviation recorded in the audit). Scope M.
+  ([audit](audits/search_replace.md))
 - [ ] `list_dir` — **IMMEDIATE** once the `ignore`-crate dependency is approved (**open
   decision**, ask-first): gitignore walker, BFS budget + subtree summaries, exact
   formats/notices/error texts. Scope M. ([audit](audits/list_dir.md))
