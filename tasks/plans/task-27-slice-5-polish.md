@@ -121,3 +121,22 @@ Deviation/lesson: a PTY smoke initially failed because it ran a STALE
 to idle (notice while running) per the plan default.
 
 Next: 5b (markdown styling of assistant text).
+
+## Result — 5b (2026-07-21)
+
+Shipped: `ui/markdown.rs` — a pulldown-cmark pass rendering assistant text to
+styled `Line`s (headings bold, lists bulleted + nested-indented, ordered-list
+numbering, fenced/inline code dim + indented, block quotes `┃`, inline
+bold/italic, word-wrap to width). No syntect (SPEC-TUI non-goal). `Block::
+AssistantText` now routes through it; the old `wrap_text` is removed.
+
+All preset targets met: 340 workspace tests (7 markdown unit tests). Full
+gates + doc green (verified with the corrected FAILED-explicit check — the
+process doc now mandates grepping FAILED, added this PR after 5a's CI slip).
+Release-binary PTY smoke: an assistant reply with a heading, bold, a bulleted
+list, and a fenced code block all render correctly (code indented).
+
+Deviation: two renderer-internal fixes during impl — code-block styling moved
+from line-level to span-level for consistency (a test caught the split);
+`Writer::start` takes `&Tag` (clippy). Slice 5 (both 5a + 5b) is complete.
+Next: slice 6 (hardening + release decision).

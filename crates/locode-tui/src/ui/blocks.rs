@@ -63,8 +63,7 @@ impl Block {
             }
             Block::AssistantText(text) => {
                 let mut lines = vec![Line::from("")];
-                // Markdown styling lands in slice 5; plain wrapped text now.
-                lines.extend(wrap_text(text, width.max(4) as usize));
+                lines.extend(crate::ui::markdown::render(text, width.max(4) as usize));
                 lines
             }
             Block::ToolCall {
@@ -140,30 +139,6 @@ fn truncated_body(body: &str, width: u16) -> Vec<Line<'static>> {
     ));
     for l in &all[all.len() - tail..] {
         push(&mut out, l);
-    }
-    out
-}
-
-fn wrap_text(text: &str, width: usize) -> Vec<Line<'static>> {
-    let mut out = Vec::new();
-    for raw in text.lines() {
-        if raw.is_empty() {
-            out.push(Line::from(""));
-            continue;
-        }
-        let mut current = String::new();
-        for word in raw.split_whitespace() {
-            if !current.is_empty() && current.chars().count() + 1 + word.chars().count() > width {
-                out.push(Line::from(std::mem::take(&mut current)));
-            }
-            if !current.is_empty() {
-                current.push(' ');
-            }
-            current.push_str(word);
-        }
-        if !current.is_empty() {
-            out.push(Line::from(current));
-        }
     }
     out
 }

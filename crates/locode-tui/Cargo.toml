@@ -19,6 +19,7 @@ ratatui = { workspace = true }
 crossterm = { workspace = true }
 tui-textarea = { workspace = true }
 async-trait = { workspace = true }
+pulldown-cmark = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
 tokio-util = { workspace = true }

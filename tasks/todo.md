@@ -581,7 +581,7 @@ queue; robustness floor from slice 1.
 - [x] Slice 2 — drive a run (mock) — PR #78
 - [x] Slice 3 — cancel — PR #79
 - [x] Slice 4 — approvals — PR #80 (ADR-0017 gap handled approver-side; engine amendment still open)
-- [~] Slice 5 — conversation polish (5a interaction done PR #81; 5b markdown next)
+- [x] Slice 5 — conversation polish (5a #81 + 5b #82)
 - [ ] Slice 6 — hardening + release decision
 
 **Dependencies:** 0.1.4 seams (Tasks 23-25, done). New deps (ask-first, approved with
