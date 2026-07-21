@@ -12,42 +12,46 @@ impl Session {
     /// The driver behind [`Session::run`]. Infallible — all terminal conditions land
     /// in the returned [`Report`].
     pub(crate) async fn drive(&mut self, user_content: Vec<ContentBlock>) -> Report {
-        let mut history = self.preamble.clone();
-
-        // Init: the stream's self-sufficient header (ADR-0014).
-        let tools: Vec<Value> = self
-            .registry
-            .specs()
-            .iter()
-            .filter_map(|spec| serde_json::to_value(spec).ok())
-            .collect();
-        self.sink.emit(Event::Init {
-            session_id: self.config.session_id.clone(),
-            harness: self.config.harness.clone(),
-            api_schema: self.config.api_schema.clone(),
-            model: self.config.model.clone(),
-            cwd: self.config.cwd.to_string_lossy().into_owned(),
-            max_turns: self.config.max_turns,
-            preamble: self.preamble.clone(),
-            tools,
-        });
+        // Init: the stream's self-sufficient header (ADR-0014) — emitted once
+        // per session, on the first run only (ADR-0016). A follow-up run
+        // continues the same stream, which then carries one `Result` per run
+        // (ADR-0014 amendment 2026-07-21).
+        if self.turns_run == 0 {
+            let tools: Vec<Value> = self
+                .registry
+                .specs()
+                .iter()
+                .filter_map(|spec| serde_json::to_value(spec).ok())
+                .collect();
+            self.sink.emit(Event::Init {
+                session_id: self.config.session_id.clone(),
+                harness: self.config.harness.clone(),
+                api_schema: self.config.api_schema.clone(),
+                model: self.config.model.clone(),
+                cwd: self.config.cwd.to_string_lossy().into_owned(),
+                max_turns: self.config.max_turns,
+                preamble: self.preamble.clone(),
+                tools,
+            });
+        }
+        self.turns_run += 1;
 
         let user_msg = Message {
             role: Role::User,
             content: user_content,
         };
-        history.push(user_msg.clone());
+        self.history.push(user_msg.clone());
         self.sink.emit(Event::Message { message: user_msg });
 
         let mut acc = RunAcc::default();
 
         let terminal = loop {
             // (a) Pre-send hygiene — unconditional, before every sample (ADR-0004).
-            locode_provider::repair_pairing(&mut history);
+            locode_provider::repair_pairing(&mut self.history);
 
             // (b) Sample, with the bounded loop-level resample tier (ADR-0007).
             let request = ConversationRequest {
-                messages: history.clone(),
+                messages: self.history.clone(),
                 tools: self.registry.specs(),
                 sampling_args: self.config.sampling_args.clone(),
                 cache_hint: self.config.cache_hint,
@@ -82,7 +86,7 @@ impl Session {
                 role: Role::Assistant,
                 content: completion.content,
             };
-            history.push(assistant_msg.clone());
+            self.history.push(assistant_msg.clone());
             self.sink.emit(Event::Message {
                 message: assistant_msg,
             });
@@ -103,7 +107,7 @@ impl Session {
                 role: Role::User,
                 content: results,
             };
-            history.push(tool_msg.clone());
+            self.history.push(tool_msg.clone());
             self.sink.emit(Event::Message { message: tool_msg });
 
             // (g) Fatal ⇒ Error (transcript already valid — the batch is fully paired).

@@ -473,10 +473,11 @@ at the end. Task 25 additionally ships `Event::Approval` (+`wait_ms`),
 `Event`; Task 24 additionally ships `#[non_exhaustive]` on `Status` and the
 exec wildcard exit arm.
 
-### Task 23: session continuity (ADR-0016)
+### Task 23: session continuity (ADR-0016) ✅ done
 Multi-turn conversations: `Session` owns history across `run()` calls; `Init`
 once per session; per-run reports; `history()` accessor.
-- [ ] Two-run continuity + single-`Init` + per-run report + reconstruction golden tests.
+- [x] Two-run continuity + single-`Init` + per-run report + reconstruction golden tests
+  (+ continue-after-`ModelError`/`Error` tests per the Resolution).
 **Dependencies:** none · **Scope:** S
 
 ### Task 24: cancellation + `cancelled` status + SIGTERM (ADR-0018)

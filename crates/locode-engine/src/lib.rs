@@ -26,10 +26,12 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use locode_protocol::{
-        ContentBlock, Conversation, Event, ReasoningFormat, Role, Status, Usage,
+        ContentBlock, Conversation, Event, Message, ReasoningFormat, Role, Status, Usage,
         reconstruct_conversation,
     };
-    use locode_provider::{Completion, MockProvider, ProviderError, StopReason};
+    use locode_provider::{
+        Completion, ConversationRequest, MockProvider, Provider, ProviderError, StopReason,
+    };
     use locode_tools::{Registry, Tool, ToolCtx, ToolError, ToolKind, ToolOutput};
     use serde::Serialize;
     use serde_json::{Value, json};
@@ -407,6 +409,233 @@ mod tests {
             roles,
             vec![Role::User, Role::Assistant, Role::User, Role::Assistant]
         );
+    }
+
+    // ---- session continuity (ADR-0016) ----
+
+    /// A scripted provider that also records each request's message array, so a
+    /// test can assert what the model actually saw on a follow-up run.
+    struct CapturingProvider {
+        inner: MockProvider,
+        requests: Arc<Mutex<Vec<Vec<Message>>>>,
+    }
+    #[async_trait]
+    impl Provider for CapturingProvider {
+        #[allow(clippy::unnecessary_literal_bound)]
+        fn api_schema(&self) -> &str {
+            "mock"
+        }
+        async fn complete(
+            &self,
+            request: &ConversationRequest,
+        ) -> Result<Completion, ProviderError> {
+            self.requests.lock().unwrap().push(request.messages.clone());
+            self.inner.complete(request).await
+        }
+    }
+
+    /// Like `session_with`, but the provider records every request's messages.
+    #[allow(clippy::type_complexity)]
+    fn capturing_session_with(
+        script: Vec<Result<Completion, ProviderError>>,
+        registry: Registry,
+    ) -> (
+        Session,
+        Arc<Mutex<Vec<Vec<Message>>>>,
+        Arc<Mutex<Vec<Event>>>,
+    ) {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sink_events = Arc::clone(&events);
+        let sink = Box::new(FnSink(move |event| {
+            sink_events.lock().unwrap().push(event);
+        }));
+        let provider = Arc::new(CapturingProvider {
+            inner: MockProvider::with_results(script),
+            requests: Arc::clone(&requests),
+        });
+        let session = Session::new(provider, registry, vec![], config(), sink);
+        (session, requests, events)
+    }
+
+    fn user_text(message: &Message) -> Option<&str> {
+        match (message.role, message.content.as_slice()) {
+            (Role::User, [ContentBlock::Text { text }]) => Some(text.as_str()),
+            _ => None,
+        }
+    }
+
+    #[tokio::test]
+    async fn second_run_continues_the_conversation() {
+        let (mut s, requests, _e) = capturing_session_with(
+            vec![
+                Ok(text_turn("first answer")),
+                Ok(text_turn("second answer")),
+            ],
+            Registry::new(),
+        );
+        let r1 = s.run_text("q1").await;
+        let r2 = s.run_text("q2").await;
+        assert_eq!(r1.status, Status::Completed);
+        assert_eq!(r2.status, Status::Completed);
+        assert_eq!(r2.final_message.as_deref(), Some("second answer"));
+
+        // Run 2's request contains run 1's full exchange, then the new prompt.
+        let reqs = requests.lock().unwrap();
+        assert_eq!(reqs.len(), 2);
+        let run2 = &reqs[1];
+        assert_eq!(run2.len(), 3, "user q1, assistant, user q2: {run2:?}");
+        assert_eq!(user_text(&run2[0]), Some("q1"));
+        assert_eq!(run2[1].role, Role::Assistant);
+        assert_eq!(user_text(&run2[2]), Some("q2"));
+
+        // The public accessor exposes the same transcript (empty test preamble).
+        let roles: Vec<Role> = s.history().iter().map(|m| m.role).collect();
+        assert_eq!(
+            roles,
+            vec![Role::User, Role::Assistant, Role::User, Role::Assistant]
+        );
+    }
+
+    #[tokio::test]
+    async fn init_emitted_once_across_runs_with_one_result_each() {
+        let (mut s, events) = session_with(
+            vec![Ok(text_turn("one")), Ok(text_turn("two"))],
+            Registry::new(),
+            config(),
+        );
+        let _ = s.run_text("q1").await;
+        let _ = s.run_text("q2").await;
+        let evs = dump(&events);
+        let inits = evs
+            .iter()
+            .filter(|e| matches!(e, Event::Init { .. }))
+            .count();
+        let results = evs
+            .iter()
+            .filter(|e| matches!(e, Event::Result { .. }))
+            .count();
+        assert_eq!(inits, 1, "Init is once per session, not per run");
+        assert_eq!(results, 2, "one Result per run");
+        assert!(
+            matches!(evs.first(), Some(Event::Init { .. })),
+            "Init still opens the stream"
+        );
+    }
+
+    #[tokio::test]
+    async fn report_counts_are_per_run_not_cumulative() {
+        // Run 1: tool turn + text (2 turns, 1 tool call, 10/5 tokens).
+        // Run 2: text only (1 turn, 0 tool calls, 20/7 tokens).
+        let mut t1 = tool_turn("c1", "echo");
+        t1.usage = Usage {
+            input_tokens: 10,
+            output_tokens: 5,
+            ..Usage::default()
+        };
+        let t2 = text_turn("done one");
+        let mut t3 = text_turn("done two");
+        t3.usage = Usage {
+            input_tokens: 20,
+            output_tokens: 7,
+            ..Usage::default()
+        };
+        let (mut s, _e) = session_with(vec![Ok(t1), Ok(t2), Ok(t3)], echo_registry(), config());
+        let r1 = s.run_text("q1").await;
+        let r2 = s.run_text("q2").await;
+        assert_eq!(r1.turns, 2);
+        assert_eq!(r1.tool_calls.len(), 1);
+        assert_eq!(r2.turns, 1, "run 2 counts its own turns only");
+        assert!(r2.tool_calls.is_empty());
+        assert_eq!(r2.usage.input_tokens, 20, "usage is per-run");
+        assert_eq!(r2.usage.output_tokens, 7);
+    }
+
+    /// Golden: a two-run stream (`Init M+ Result M+ Result`) reconstructs the
+    /// full cross-run conversation (ADR-0014 amendment 2026-07-21).
+    #[tokio::test]
+    async fn two_run_stream_reconstructs_the_full_conversation() {
+        let (mut s, events) = session_with(
+            vec![
+                Ok(tool_turn("c1", "echo")),
+                Ok(text_turn("done one")),
+                Ok(text_turn("done two")),
+            ],
+            echo_registry(),
+            config(),
+        );
+        let _ = s.run_text("q1").await;
+        let _ = s.run_text("q2").await;
+        let rebuilt: Conversation = reconstruct_conversation(&dump(&events));
+        // Run 1: user, assistant(tool_use), user(tool_result), assistant(text);
+        // run 2: user, assistant(text).
+        let roles: Vec<Role> = rebuilt.messages.iter().map(|m| m.role).collect();
+        assert_eq!(
+            roles,
+            vec![
+                Role::User,
+                Role::Assistant,
+                Role::User,
+                Role::Assistant,
+                Role::User,
+                Role::Assistant,
+            ]
+        );
+        // And the reconstruction matches the session's own history exactly.
+        assert_eq!(rebuilt.messages.as_slice(), s.history());
+    }
+
+    /// Continuing after a `ModelError` run is allowed unconditionally
+    /// (ADR-0016 Resolution): the history simply didn't advance.
+    #[tokio::test]
+    async fn continues_after_model_error() {
+        let (mut s, requests, _e) = capturing_session_with(
+            vec![Err(ProviderError::ContextOverflow), Ok(text_turn("ok now"))],
+            Registry::new(),
+        );
+        let r1 = s.run_text("q1").await;
+        let r2 = s.run_text("q2").await;
+        assert_eq!(r1.status, Status::ModelError);
+        assert_eq!(r2.status, Status::Completed);
+        // Run 2's request: q1's user message survived; no phantom assistant turn.
+        let reqs = requests.lock().unwrap();
+        let run2 = &reqs[1];
+        assert_eq!(run2.len(), 2, "user q1 + user q2: {run2:?}");
+        assert_eq!(user_text(&run2[0]), Some("q1"));
+        assert_eq!(user_text(&run2[1]), Some("q2"));
+    }
+
+    /// Continuing after a fatal tool `Error` run: the transcript was fully
+    /// paired before the break, so the next sample sees a valid history.
+    #[tokio::test]
+    async fn continues_after_fatal_tool_error_with_valid_pairing() {
+        let mut reg = Registry::new();
+        reg.register("boom", Boom);
+        let (mut s, requests, _e) = capturing_session_with(
+            vec![Ok(tool_turn("c1", "boom")), Ok(text_turn("recovered"))],
+            reg,
+        );
+        let r1 = s.run_text("q1").await;
+        let r2 = s.run_text("q2").await;
+        assert_eq!(r1.status, Status::Error);
+        assert_eq!(r2.status, Status::Completed);
+
+        // Run 2's request replays the failed run intact: the boom tool_use is
+        // answered by its (is_error) tool_result.
+        let reqs = requests.lock().unwrap();
+        let run2 = &reqs[1];
+        assert_eq!(run2.len(), 4, "q1, assistant, tool_result, q2: {run2:?}");
+        assert!(
+            run2[1]
+                .content
+                .iter()
+                .any(|b| matches!(b, ContentBlock::ToolUse { id, .. } if id == "c1"))
+        );
+        assert!(run2[2].content.iter().any(|b| matches!(
+            b,
+            ContentBlock::ToolResult { tool_use_id, is_error: true, .. } if tool_use_id == "c1"
+        )));
+        assert_eq!(user_text(&run2[3]), Some("q2"));
     }
 
     #[tokio::test]
