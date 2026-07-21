@@ -520,7 +520,7 @@ search_replace → list_dir. Release: 0.1.3 = this task.**
   walker (needs `ignore` crate — **ask-first dependency**), depth-budgeted BFS +
   `[N files in subtree: …]` summaries, exact bullet/header format, truncation notices,
   four exact error texts. Scope M.
-- [ ] `read_file` — **IMMEDIATE: faithful text path** (audit criteria 1–8 + 10-as-
+- [x] `read_file` — **DONE (PR #55)**: faithful text path (audit criteria 1–8 + 10-as-
   deviation-note; see the audit's Split section): `pages`/`format` schema fields
   (verbatim; PDF-only behavior stays deferred), bare-integer schema shape (lenient
   `offset` coercion **declined** — type-strict per user call, deviation recorded),
