@@ -47,18 +47,14 @@ fn text_turn(text: &str) -> Completion {
     }
 }
 
-/// A registry whose `mock` wire replays a fixed script — env-free (the
-/// builtin mock's `LOCODE_MOCK_SCRIPT` seam stays untouched here).
+/// A registry whose `mock` wire replays a fixed script. The factory clones
+/// the script each call so `/new` can rebuild the session (a fresh mock with
+/// the full script again). Env-free (the builtin mock's `LOCODE_MOCK_SCRIPT`
+/// seam stays untouched here).
 fn scripted_registry(turns: Vec<Completion>) -> ProviderRegistry {
-    let script = std::sync::Mutex::new(Some(turns));
     ProviderRegistry::new().register("mock", move |_init| {
-        let turns = script
-            .lock()
-            .unwrap()
-            .take()
-            .expect("factory called once per test");
         Ok(BuiltProvider {
-            provider: Arc::new(MockProvider::new(turns)),
+            provider: Arc::new(MockProvider::new(turns.clone())),
             model: "mock-scripted".to_string(),
         })
     })
@@ -136,9 +132,10 @@ async fn new_session_resets_and_a_fresh_run_starts_clean() {
     assert!(matches!(recv(&mut rx).await, EngineMsg::SessionReset));
     assert!(matches!(recv(&mut rx).await, EngineMsg::Ready { .. }));
 
-    // The next run is turn 1 of a fresh session (the scripted mock's 2nd turn).
+    // The next run starts a FRESH session (the rebuilt mock replays its script
+    // from the top, so turn 1 answers "one" again) — proving the reset.
     let (report2, _, _) = run_once(&tx, &mut rx, "again").await;
-    assert_eq!(report2.final_message.as_deref(), Some("two"));
+    assert_eq!(report2.final_message.as_deref(), Some("one"));
     assert_eq!(report2.turns, 1);
 }
 
