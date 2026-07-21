@@ -119,6 +119,8 @@ mod tests {
         matches!(block, ContentBlock::ToolResult { is_error: true, .. })
     }
 
+    // Dispatches through the host's `-c`-style POSIX shell.
+    #[cfg(unix)]
     #[tokio::test]
     async fn run_terminal_cmd_echo() {
         let (_dir, registry, root) = setup();
@@ -136,6 +138,8 @@ mod tests {
         assert!(text.contains("hi"), "{text}");
     }
 
+    // Dispatches through the host's `-c`-style POSIX shell.
+    #[cfg(unix)]
     #[tokio::test]
     async fn run_terminal_cmd_nonzero_exit_is_soft() {
         let (_dir, registry, root) = setup();
@@ -152,6 +156,8 @@ mod tests {
         assert_eq!(out.record.output["exit_code"], json!(3));
     }
 
+    // Dispatches through the POSIX shell; also needs `seq`.
+    #[cfg(unix)]
     #[tokio::test]
     async fn run_terminal_cmd_truncates_front_back_with_grok_markers() {
         let (_dir, registry, root) = setup();
