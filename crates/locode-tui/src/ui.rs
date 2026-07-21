@@ -41,14 +41,21 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
 /// The single-row turn status (grok's shape at v1 scale:
 /// `⠧ run_terminal_cmd · 12s`).
 fn status_line(app: &App) -> Line<'static> {
-    let RunState::Running { started } = app.run else {
+    let RunState::Running {
+        started,
+        cancelling,
+    } = app.run
+    else {
         return Line::from("");
     };
     let spinner = SPINNER[(app.spinner_frame / 2) % SPINNER.len()];
-    let activity = app
-        .pending_tools
-        .last()
-        .map_or_else(|| "thinking".to_string(), |t| t.name.clone());
+    let activity = if cancelling {
+        "cancelling…".to_string()
+    } else {
+        app.pending_tools
+            .last()
+            .map_or_else(|| "thinking".to_string(), |t| t.name.clone())
+    };
     let elapsed = started.elapsed().as_secs();
     Line::styled(
         format!("{spinner} {activity} · {elapsed}s"),
@@ -62,6 +69,7 @@ fn footer_line(app: &App) -> Line<'static> {
         Some(Hint::QuitArmed) => "press ctrl+c again to quit".to_string(),
         Some(Hint::ClearArmed) => "press esc again to clear".to_string(),
         Some(Hint::RunInProgress) => "run in progress".to_string(),
+        Some(Hint::Cancelling) => "cancelling — esc again to retry".to_string(),
         None => {
             let base = "enter to send · alt+enter newline · ctrl+c quit";
             match &app.model {
@@ -117,6 +125,7 @@ mod tests {
         let mut app = App::new();
         app.run = RunState::Running {
             started: Instant::now(),
+            cancelling: false,
         };
         app.pending_tools.push(PendingTool {
             id: "c1".into(),

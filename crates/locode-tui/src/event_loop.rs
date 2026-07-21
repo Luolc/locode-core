@@ -9,7 +9,7 @@ use ratatui::text::Line;
 
 use crate::app::{App, Cmd, Msg};
 use crate::cli::Cli;
-use crate::engine::{self, UiCommand};
+use crate::engine::{self, EngineMsg, UiCommand};
 use crate::{term, ui};
 use locode_core::ProviderRegistry;
 
@@ -52,6 +52,10 @@ pub async fn run(cli: Cli, registry: &ProviderRegistry) -> Result<ExitCode, RunE
     let mut deferred_draw: Option<Instant> = None;
     let mut resize_at: Option<Instant> = None;
     let mut next_tick: Option<Instant> = None;
+    // The current run's cancel handle (ADR-0018): captured at RunStarted,
+    // fired on Cmd::CancelRun, cleared at RunFinished. Loop-owned so the
+    // reducer stays sans-IO.
+    let mut current_cancel: Option<locode_core::CancellationToken> = None;
 
     let exit_code = loop {
         if app.should_quit {
@@ -91,7 +95,7 @@ pub async fn run(cli: Cli, registry: &ProviderRegistry) -> Result<ExitCode, RunE
         tokio::select! {
             biased;
             _ = signal_rx.recv() => {
-                let _ = dispatch(&mut app, Msg::SignalQuit, &engine_tx);
+                dispatch(&mut app, Msg::SignalQuit, &engine_tx, current_cancel.as_ref());
             }
             // Engine arm gated on an empty input queue so a busy engine can
             // never starve keystrokes; bounded batch drain (grok's rule).
@@ -101,15 +105,13 @@ pub async fn run(cli: Cli, registry: &ProviderRegistry) -> Result<ExitCode, RunE
                     // app stays usable for quit keys.
                     continue;
                 };
-                let _ = dispatch(&mut app, Msg::Engine(Box::new(first)), &engine_tx);
+                route_engine(&mut app, first, &engine_tx, &mut current_cancel);
                 for _ in 1..ENGINE_DRAIN_MAX {
                     if !input_rx.is_empty() {
                         break;
                     }
                     match engine_rx.try_recv() {
-                        Ok(msg) => {
-                            let _ = dispatch(&mut app, Msg::Engine(Box::new(msg)), &engine_tx);
-                        }
+                        Ok(msg) => route_engine(&mut app, msg, &engine_tx, &mut current_cancel),
                         Err(_) => break,
                     }
                 }
@@ -123,7 +125,7 @@ pub async fn run(cli: Cli, registry: &ProviderRegistry) -> Result<ExitCode, RunE
                     resize_at = Some(Instant::now() + RESIZE_DEBOUNCE);
                     continue;
                 }
-                let _ = dispatch(&mut app, Msg::Input(Box::new(event)), &engine_tx);
+                dispatch(&mut app, Msg::Input(Box::new(event)), &engine_tx, current_cancel.as_ref());
             }
             () = sleep_until(timer), if timer.is_some() => {
                 let now = Instant::now();
@@ -134,7 +136,7 @@ pub async fn run(cli: Cli, registry: &ProviderRegistry) -> Result<ExitCode, RunE
                 }
                 if next_tick.is_some_and(|at| now >= at) {
                     next_tick = None; // rescheduled at loop top while running
-                    let _ = dispatch(&mut app, Msg::Tick, &engine_tx);
+                    dispatch(&mut app, Msg::Tick, &engine_tx, current_cancel.as_ref());
                 }
                 // A due deferred draw is handled by the top-of-loop paint.
             }
@@ -187,12 +189,34 @@ fn debug_log(line: &str) {
     }
 }
 
+/// Route an engine message: manage the loop-owned cancel handle around the
+/// run lifecycle (capture at start, clear at finish), then dispatch.
+fn route_engine(
+    app: &mut App,
+    msg: EngineMsg,
+    engine_tx: &tokio::sync::mpsc::UnboundedSender<UiCommand>,
+    current_cancel: &mut Option<locode_core::CancellationToken>,
+) {
+    match &msg {
+        EngineMsg::RunStarted { cancel } => *current_cancel = Some(cancel.clone()),
+        EngineMsg::RunFinished(_) => *current_cancel = None,
+        _ => {}
+    }
+    dispatch(
+        app,
+        Msg::Engine(Box::new(msg)),
+        engine_tx,
+        current_cancel.as_ref(),
+    );
+}
+
 /// Run the reducer and execute the returned commands (all IO lives here).
 fn dispatch(
     app: &mut App,
     msg: Msg,
     engine_tx: &tokio::sync::mpsc::UnboundedSender<UiCommand>,
-) -> Vec<Cmd> {
+    current_cancel: Option<&locode_core::CancellationToken>,
+) {
     debug_log(&format!("msg: {msg:?}"));
     let cmds = app.update(msg, Instant::now());
     for cmd in &cmds {
@@ -201,9 +225,15 @@ fn dispatch(
             Cmd::Submit(text) => {
                 let _ = engine_tx.send(UiCommand::Submit(text.clone()));
             }
+            // Fire the run's cancel handle (idempotent — ADR-0018). A late
+            // fire after the run retired the token is a harmless no-op.
+            Cmd::CancelRun => {
+                if let Some(cancel) = current_cancel {
+                    cancel.cancel();
+                }
+            }
         }
     }
-    cmds
 }
 
 async fn sleep_until(deadline: Option<Instant>) {

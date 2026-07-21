@@ -5,8 +5,8 @@
 use std::sync::Arc;
 
 use locode_core::{
-    CacheHint, EngineConfig, EventSink, FnSink, Host, HostConfig, PackContext, PathPolicy,
-    ProviderInit, ProviderRegistry, Report, SamplingArgs, Session, grok,
+    CacheHint, CancellationToken, EngineConfig, EventSink, FnSink, Host, HostConfig, PackContext,
+    PathPolicy, ProviderInit, ProviderRegistry, Report, SamplingArgs, Session, grok,
 };
 
 use crate::cli::Cli;
@@ -28,8 +28,13 @@ pub enum EngineMsg {
     },
     /// Session assembly failed pre-run (bad schema, missing key, …).
     BuildFailed(String),
-    /// A run is about to start.
-    RunStarted,
+    /// A run is about to start; carries the run's cancel handle (ADR-0018 —
+    /// per-run token, cloned before the run, retired at run end so a late
+    /// fire is a harmless no-op).
+    RunStarted {
+        /// Fire to interrupt this run (Esc/Ctrl+C).
+        cancel: CancellationToken,
+    },
     /// One engine event (message/error/approval …) from the run's sink
     /// (boxed — `Event` is large).
     Event(Box<locode_core::Event>),
@@ -72,7 +77,10 @@ pub fn spawn(
         while let Some(command) = cmd_rx.recv().await {
             match command {
                 UiCommand::Submit(text) => {
-                    let _ = msg_tx.send(EngineMsg::RunStarted);
+                    // Clone the handle BEFORE run() (ADR-0018 mandate — run
+                    // takes &mut self, so nothing is callable mid-run).
+                    let cancel = session.cancel_handle();
+                    let _ = msg_tx.send(EngineMsg::RunStarted { cancel });
                     // Pack-faithful prompt shaping, as locode-exec does.
                     let report = session.run_text(grok::prompt::user_query(&text)).await;
                     let _ = msg_tx.send(EngineMsg::RunFinished(Box::new(report)));

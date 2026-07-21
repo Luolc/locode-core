@@ -35,6 +35,8 @@ pub enum Msg {
 pub enum Cmd {
     /// Forward this prompt to the engine task.
     Submit(String),
+    /// Fire the current run's cancel handle (the loop holds it — ADR-0018).
+    CancelRun,
     /// Tear down and exit.
     Quit,
 }
@@ -48,6 +50,9 @@ pub enum Hint {
     ClearArmed,
     /// "run in progress" (Enter while running; queueing is slice 5)
     RunInProgress,
+    /// "cancelling…" (Esc/Ctrl+C fired the cancel handle; awaiting the
+    /// terminal report).
+    Cancelling,
 }
 
 /// Whether a run is active.
@@ -59,6 +64,8 @@ pub enum RunState {
     Running {
         /// When the run started (UI-side clock, for elapsed display).
         started: Instant,
+        /// The cancel handle was fired; awaiting the terminal report.
+        cancelling: bool,
     },
 }
 
@@ -180,8 +187,13 @@ impl App {
                     "engine unavailable: {message} (ctrl+c to quit)"
                 )));
             }
-            EngineMsg::RunStarted => {
-                self.run = RunState::Running { started: now };
+            // The loop captures the cancel handle; the reducer only tracks
+            // that a run is active (sans-IO — no token stored here).
+            EngineMsg::RunStarted { .. } => {
+                self.run = RunState::Running {
+                    started: now,
+                    cancelling: false,
+                };
                 self.hint = None;
             }
             EngineMsg::Event(event) => self.on_event(*event),
@@ -269,7 +281,7 @@ impl App {
             });
         }
         let elapsed = match self.run {
-            RunState::Running { started } => now.duration_since(started).as_secs(),
+            RunState::Running { started, .. } => now.duration_since(started).as_secs(),
             RunState::Idle => 0,
         };
         self.outbox.push(turn_end(report, elapsed));
@@ -279,22 +291,30 @@ impl App {
     fn on_key(&mut self, key: KeyEvent, now: Instant) -> Vec<Cmd> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match (key.code, ctrl) {
-            // Ctrl+C: clear a non-empty draft first (grok's two-step,
+            // Ctrl+C: (spec) first press cancels a running turn AND arms the
+            // quit hint; a second press within the window quits. At idle:
+            // clear a non-empty draft first (grok's two-step,
             // `agent_view/mod.rs:22-26`), else arm-then-quit (codex's
             // arm/confirm, `interaction.rs:360-414`).
             (KeyCode::Char('c'), true) => {
-                if !self.composer.is_empty() {
-                    self.composer.clear();
-                    self.disarm();
-                    return vec![];
-                }
                 if Self::is_armed(self.quit_armed_until, now) {
                     self.should_quit = true;
                     return vec![Cmd::Quit];
                 }
+                let mut cmds = Vec::new();
+                if self.is_running() {
+                    cmds.push(self.begin_cancel());
+                } else if !self.composer.is_empty() {
+                    // Idle with a draft: clear it, don't arm quit.
+                    self.composer.clear();
+                    self.disarm();
+                    return vec![];
+                }
                 self.quit_armed_until = Some(now + ARM_WINDOW);
-                self.hint = Some(Hint::QuitArmed);
-                vec![]
+                if !self.is_running() {
+                    self.hint = Some(Hint::QuitArmed);
+                }
+                cmds
             }
             // Ctrl+D: quit only on an empty composer (codex,
             // `interaction.rs:420-445`); otherwise ignored in v1.
@@ -306,10 +326,14 @@ impl App {
                     vec![]
                 }
             }
-            // Esc at idle: double-press clears a non-empty draft (grok's
-            // 800 ms TTL, `agent_view/prompt.rs:751-830`). Cancel-run Esc
-            // lands in slice 3.
+            // Esc while running: cancel the turn (spec) — first press,
+            // idempotent re-fire on a stuck run (grok's retry rule,
+            // `dispatch/turn.rs:68-95`). Esc at idle: double-press clears a
+            // non-empty draft (grok's 800 ms TTL).
             (KeyCode::Esc, _) => {
+                if self.is_running() {
+                    return vec![self.begin_cancel()];
+                }
                 if self.composer.is_empty() {
                     self.disarm();
                     return vec![];
@@ -353,6 +377,16 @@ impl App {
                 vec![]
             }
         }
+    }
+
+    /// Mark the current run as cancelling and ask the loop to fire the handle
+    /// (idempotent — safe to call repeatedly on a stuck run).
+    fn begin_cancel(&mut self) -> Cmd {
+        if let RunState::Running { cancelling, .. } = &mut self.run {
+            *cancelling = true;
+        }
+        self.hint = Some(Hint::Cancelling);
+        Cmd::CancelRun
     }
 
     fn is_armed(armed_until: Option<Instant>, now: Instant) -> bool {
@@ -399,6 +433,11 @@ mod tests {
             KeyCode::Enter,
             KeyModifiers::ALT,
         ))))
+    }
+    fn run_started() -> Msg {
+        Msg::Engine(Box::new(EngineMsg::RunStarted {
+            cancel: locode_core::CancellationToken::new(),
+        }))
     }
     fn type_str(app: &mut App, s: &str, now: Instant) {
         for ch in s.chars() {
@@ -554,7 +593,7 @@ mod tests {
 
         // Running: Enter keeps the draft, hint shown.
         let mut app = ready_app();
-        let _ = app.update(Msg::Engine(Box::new(EngineMsg::RunStarted)), t0);
+        let _ = app.update(run_started(), t0);
         type_str(&mut app, "queued later", t0);
         assert_eq!(app.update(key(KeyCode::Enter), t0), vec![]);
         assert_eq!(app.hint, Some(Hint::RunInProgress));
@@ -565,7 +604,7 @@ mod tests {
     fn assistant_events_become_blocks_and_pending_tools() {
         let mut app = ready_app();
         let t0 = Instant::now();
-        let _ = app.update(Msg::Engine(Box::new(EngineMsg::RunStarted)), t0);
+        let _ = app.update(run_started(), t0);
         let _ = app.update(
             Msg::Engine(Box::new(EngineMsg::Event(Box::new(Event::Message {
                 message: Message {
@@ -636,7 +675,7 @@ mod tests {
     fn run_finished_flushes_pending_and_appends_separator() {
         let mut app = ready_app();
         let t0 = Instant::now();
-        let _ = app.update(Msg::Engine(Box::new(EngineMsg::RunStarted)), t0);
+        let _ = app.update(run_started(), t0);
         app.pending_tools.push(PendingTool {
             id: "c9".into(),
             name: "grep".into(),
@@ -676,5 +715,89 @@ mod tests {
         assert!(matches!(&app.outbox[0], Block::Notice(n) if n.contains("no key")));
         type_str(&mut app, "hi", t0);
         assert_eq!(app.update(key(KeyCode::Enter), t0), vec![]);
+    }
+
+    // ---- slice 3: cancel ----
+
+    #[test]
+    fn esc_while_running_cancels_idempotently() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        let _ = app.update(run_started(), t0);
+
+        // First Esc cancels; state shows cancelling.
+        assert_eq!(app.update(key(KeyCode::Esc), t0), vec![Cmd::CancelRun]);
+        assert!(matches!(
+            app.run,
+            RunState::Running {
+                cancelling: true,
+                ..
+            }
+        ));
+        assert_eq!(app.hint, Some(Hint::Cancelling));
+
+        // Second Esc re-fires (idempotent retry on a stuck run).
+        assert_eq!(app.update(key(KeyCode::Esc), t0), vec![Cmd::CancelRun]);
+    }
+
+    #[test]
+    fn esc_at_idle_still_clears_draft_not_cancel() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        type_str(&mut app, "draft", t0);
+        // Not running: Esc arms clear, no CancelRun.
+        assert_eq!(app.update(key(KeyCode::Esc), t0), vec![]);
+        assert_eq!(app.hint, Some(Hint::ClearArmed));
+    }
+
+    #[test]
+    fn ctrl_c_while_running_cancels_and_arms_quit() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        let _ = app.update(run_started(), t0);
+
+        // First Ctrl+C: cancel the run AND arm quit (spec).
+        assert_eq!(app.update(ctrl('c'), t0), vec![Cmd::CancelRun]);
+        assert!(matches!(
+            app.run,
+            RunState::Running {
+                cancelling: true,
+                ..
+            }
+        ));
+
+        // Second Ctrl+C within the window: quit.
+        assert_eq!(
+            app.update(ctrl('c'), t0 + Duration::from_millis(200)),
+            vec![Cmd::Quit]
+        );
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn cancelled_run_settles_to_idle_with_cancelled_separator() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        let _ = app.update(run_started(), t0);
+        let _ = app.update(key(KeyCode::Esc), t0);
+
+        // The engine settles the run with a Cancelled report (ADR-0018).
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::RunFinished(Box::new(report(
+                Status::Cancelled,
+            ))))),
+            t0 + Duration::from_secs(3),
+        );
+        assert!(
+            matches!(app.run, RunState::Idle),
+            "settles only on the report"
+        );
+        assert!(matches!(
+            app.outbox.last(),
+            Some(Block::TurnEnd {
+                status: Status::Cancelled,
+                ..
+            })
+        ));
     }
 }
