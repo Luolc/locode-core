@@ -15,6 +15,7 @@ use locode_core::{
 };
 use locode_tui::cli::Cli;
 use locode_tui::engine::{self, EngineMsg, UiCommand};
+use serde_json::json;
 
 fn cli(dir: &tempfile::TempDir, api_schema: &str) -> Cli {
     Cli {
@@ -23,6 +24,18 @@ fn cli(dir: &tempfile::TempDir, api_schema: &str) -> Cli {
         cwd: Some(dir.path().to_path_buf()),
         dangerously_skip_permissions: false,
         strip_identity: false,
+    }
+}
+
+fn tool_turn(id: &str, name: &str, input: serde_json::Value) -> Completion {
+    Completion {
+        content: vec![ContentBlock::ToolUse {
+            id: id.into(),
+            name: name.into(),
+            input,
+        }],
+        usage: Usage::default(),
+        stop: StopReason::ToolUse,
     }
 }
 
@@ -65,7 +78,7 @@ async fn run_once(
     prompt: &str,
 ) -> (Box<locode_core::Report>, bool, bool) {
     tx.send(UiCommand::Submit(prompt.into())).unwrap();
-    assert!(matches!(recv(rx).await, EngineMsg::RunStarted));
+    assert!(matches!(recv(rx).await, EngineMsg::RunStarted { .. }));
     let (mut saw_user, mut saw_assistant) = (false, false);
     loop {
         match recv(rx).await {
@@ -106,6 +119,42 @@ async fn submit_runs_to_completion_and_the_session_continues() {
     assert_eq!(report2.status, Status::Completed);
     assert_eq!(report2.final_message.as_deref(), Some("second answer"));
     assert_eq!(report2.turns, 1, "per-run counters (ADR-0016)");
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn esc_cancels_a_running_turn_via_the_handle() {
+    let dir = tempfile::tempdir().unwrap();
+    // Turn 1 asks the grok terminal tool to sleep; the run parks in dispatch
+    // until we fire the cancel handle (real host cooperative cancel).
+    let registry = scripted_registry(vec![tool_turn(
+        "c1",
+        "run_terminal_cmd",
+        json!({ "command": "sleep 30", "description": "hold the run open" }),
+    )]);
+    let (tx, mut rx) = engine::spawn(&cli(&dir, "mock"), &registry);
+
+    assert!(matches!(recv(&mut rx).await, EngineMsg::Ready { .. }));
+    tx.send(UiCommand::Submit("go".into())).unwrap();
+
+    // Capture the run's cancel handle from RunStarted, then fire it after the
+    // dispatch has had a beat to spawn the sleep.
+    let cancel = match recv(&mut rx).await {
+        EngineMsg::RunStarted { cancel } => cancel,
+        other => panic!("expected RunStarted, got {other:?}"),
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    cancel.cancel();
+
+    // The run settles with a cancelled report (not a fault) within seconds —
+    // far short of the 30s sleep.
+    let report = loop {
+        if let EngineMsg::RunFinished(report) = recv(&mut rx).await {
+            break report;
+        }
+    };
+    assert_eq!(report.status, Status::Cancelled);
+    assert_eq!(report.error, None);
 }
 
 #[tokio::test(flavor = "multi_thread")]
