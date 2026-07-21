@@ -87,6 +87,27 @@ impl Session {
         &self.history
     }
 
+    /// The cancellation handle for the **current run** (ADR-0018).
+    ///
+    /// Clone it *before* calling [`Session::run`] (mandatory — `run` takes
+    /// `&mut self`, so nothing is callable mid-run) and move it into an Esc
+    /// handler, signal handler, or timeout. Firing it stops the run at the
+    /// next observation point — mid-sample (the in-flight request is
+    /// aborted), between batch calls (the rest of the batch is paired
+    /// synthetically), or at the loop top — and the run returns a report with
+    /// [`Status::Cancelled`](locode_protocol::Status). Partial work is
+    /// preserved: with session continuity, the next `run()` continues the
+    /// same conversation.
+    ///
+    /// The token is **per-run, replaced when `run` returns**: a cancel landing
+    /// after the run ended hits the retired token — a harmless no-op — so the
+    /// Esc-lands-late race is resolved by construction. Re-fetch the handle
+    /// each turn. `cancel()` is idempotent; there is no reset.
+    #[must_use]
+    pub fn cancel_handle(&self) -> CancellationToken {
+        self.cancel.clone()
+    }
+
     /// Drive the loop to a terminal state and return the run's [`Report`].
     pub async fn run(&mut self, user: Vec<ContentBlock>) -> Report {
         self.drive(user).await

@@ -211,8 +211,18 @@ pub struct Report {
 }
 
 /// The terminal state of a run. Serializes to the exact strings in ADR-0009.
+///
+/// **Envelope evolution policy at `schema_version: 1` (ADR-0018):** additions
+/// — new status values, new optional record/report fields — are
+/// **non-breaking** and do not bump `schema_version`; renames and removals
+/// are breaking and would. JSON consumers should therefore treat an
+/// unrecognized status string as "unknown terminal state", not a parse
+/// error; Rust consumers get the same discipline from `#[non_exhaustive]`
+/// (match with a wildcard arm — `locode-exec` maps unknown statuses to
+/// exit 1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Status {
     /// The model finished with a text answer and no further tool calls.
     Completed,
@@ -222,6 +232,11 @@ pub enum Status {
     ModelError,
     /// A fatal (`Tool`/host) error aborted the run.
     Error,
+    /// The run was cancelled through the session's cancel handle (Esc, a
+    /// SIGTERM-driven timeout, …) — a **structured** terminal state, distinct
+    /// from failure (ADR-0018): partial work is preserved and the report is
+    /// still emitted.
+    Cancelled,
 }
 
 /// A report-side record of one tool call (distinct from the in-conversation
@@ -676,6 +691,18 @@ mod tests {
         });
         let back: ToolCallRecord = serde_json::from_value(old).unwrap();
         assert_eq!(back.denial_reason, None);
+    }
+
+    /// `Status::Cancelled` (ADR-0018) rides the wire as `"cancelled"` — an
+    /// additive value at `schema_version: 1` per the documented policy.
+    #[test]
+    fn cancelled_status_wire_string() {
+        assert_eq!(
+            serde_json::to_value(Status::Cancelled).unwrap(),
+            json!("cancelled")
+        );
+        let back: Status = serde_json::from_value(json!("cancelled")).unwrap();
+        assert_eq!(back, Status::Cancelled);
     }
 
     /// `Event::Approval` (ADR-0017): grok's journal shape, `snake_case`

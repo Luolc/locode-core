@@ -41,12 +41,16 @@ pub fn error_line(message: &str) {
 }
 
 /// ADR-0009 exit-code mapping: 0 for any **structured** terminal state
-/// (`completed`/`max_turns` — the run produced a valid report), 1 for fatal
-/// (`model_error`/`error`); clap owns exit 2 for usage errors.
+/// (`completed`/`max_turns`/`cancelled` — the run produced a valid report,
+/// ADR-0018), 1 for fatal (`model_error`/`error`); clap owns exit 2 for usage
+/// errors. `Status` is `#[non_exhaustive]` under the additive envelope policy
+/// (`schema_version: 1`): unknown future statuses map conservatively to 1.
 pub fn exit_code(status: Status) -> ExitCode {
     match status {
-        Status::Completed | Status::MaxTurns => ExitCode::SUCCESS,
-        Status::ModelError | Status::Error => ExitCode::from(1),
+        Status::Completed | Status::MaxTurns | Status::Cancelled => ExitCode::SUCCESS,
+        // `model_error`/`error` — and, per the additive policy, any unknown
+        // future status — map conservatively to failure.
+        _ => ExitCode::from(1),
     }
 }
 
@@ -55,9 +59,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn exit_codes_map_all_four_statuses() {
+    fn exit_codes_map_all_statuses() {
         assert_eq!(exit_code(Status::Completed), ExitCode::SUCCESS);
         assert_eq!(exit_code(Status::MaxTurns), ExitCode::SUCCESS);
+        assert_eq!(exit_code(Status::Cancelled), ExitCode::SUCCESS);
         assert_eq!(exit_code(Status::ModelError), ExitCode::from(1));
         assert_eq!(exit_code(Status::Error), ExitCode::from(1));
     }

@@ -12,6 +12,8 @@ pub(crate) enum Terminal {
     ModelError { error: String },
     /// A `Dispatched.fatal` aborted the turn.
     Error { error: String },
+    /// The run's cancel token fired (ADR-0018) — a structured stop, not a fault.
+    Cancelled,
 }
 
 impl Terminal {
@@ -21,6 +23,7 @@ impl Terminal {
             Terminal::MaxTurns => Status::MaxTurns,
             Terminal::ModelError { .. } => Status::ModelError,
             Terminal::Error { .. } => Status::Error,
+            Terminal::Cancelled => Status::Cancelled,
         }
     }
 }

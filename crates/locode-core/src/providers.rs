@@ -75,6 +75,13 @@ impl ProviderRegistry {
 
     /// The built-in wires: `anthropic`, `openai-responses`, and the keyless
     /// `mock` (one scripted no-tool text turn → `completed`, for CI).
+    ///
+    /// The `mock` script is overridable via the `LOCODE_MOCK_SCRIPT` env var —
+    /// a JSON array of turns, each `{"text": "…"}` (a final text turn) or
+    /// `{"tool": "<name>", "input": {…}}` (a `tool_use` turn) — so keyless
+    /// integration tests can drive multi-turn/tool runs (e.g. the SIGTERM
+    /// test holds a run open with a slow shell command). A malformed script
+    /// fails pre-run.
     #[must_use]
     pub fn builtin() -> Self {
         Self::new()
@@ -100,15 +107,19 @@ impl ProviderRegistry {
                 })
             })
             .register("mock", |_init| {
-                let provider = MockProvider::new(vec![Completion {
-                    content: vec![ContentBlock::Text {
-                        text: "Mock run complete.".to_string(),
+                let script = match std::env::var("LOCODE_MOCK_SCRIPT") {
+                    Ok(json) => mock_script(&json)
+                        .map_err(|e| ProviderBuildError(format!("LOCODE_MOCK_SCRIPT: {e}")))?,
+                    Err(_) => vec![Completion {
+                        content: vec![ContentBlock::Text {
+                            text: "Mock run complete.".to_string(),
+                        }],
+                        usage: Usage::default(),
+                        stop: StopReason::EndTurn,
                     }],
-                    usage: Usage::default(),
-                    stop: StopReason::EndTurn,
-                }]);
+                };
                 Ok(BuiltProvider {
-                    provider: Arc::new(provider),
+                    provider: Arc::new(MockProvider::new(script)),
                     model: "mock-1".to_string(),
                 })
             })
@@ -165,4 +176,52 @@ impl Default for ProviderRegistry {
     fn default() -> Self {
         Self::builtin()
     }
+}
+
+/// Parse a `LOCODE_MOCK_SCRIPT` value into mock completions.
+///
+/// Format: a JSON array; each element is `{"text": "…"}` (an end-turn text
+/// completion) or `{"tool": "<name>", "input": {…}}` (a single `tool_use`
+/// completion — `input` defaults to `{}`, ids are `call_0`, `call_1`, …).
+fn mock_script(json: &str) -> Result<Vec<Completion>, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("invalid JSON: {e}"))?;
+    let turns = value
+        .as_array()
+        .ok_or_else(|| "expected a JSON array of turns".to_string())?;
+    if turns.is_empty() {
+        return Err("expected at least one turn".to_string());
+    }
+    turns
+        .iter()
+        .enumerate()
+        .map(|(i, turn)| {
+            if let Some(text) = turn.get("text").and_then(serde_json::Value::as_str) {
+                Ok(Completion {
+                    content: vec![ContentBlock::Text {
+                        text: text.to_string(),
+                    }],
+                    usage: Usage::default(),
+                    stop: StopReason::EndTurn,
+                })
+            } else if let Some(tool) = turn.get("tool").and_then(serde_json::Value::as_str) {
+                Ok(Completion {
+                    content: vec![ContentBlock::ToolUse {
+                        id: format!("call_{i}"),
+                        name: tool.to_string(),
+                        input: turn
+                            .get("input")
+                            .cloned()
+                            .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new())),
+                    }],
+                    usage: Usage::default(),
+                    stop: StopReason::ToolUse,
+                })
+            } else {
+                Err(format!(
+                    "turn {i}: expected {{\"text\": …}} or {{\"tool\": …, \"input\": …}}"
+                ))
+            }
+        })
+        .collect()
 }

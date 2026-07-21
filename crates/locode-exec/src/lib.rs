@@ -28,6 +28,8 @@ pub mod cli;
 mod logging;
 mod output;
 pub mod run;
+#[cfg(unix)]
+mod signal;
 
 pub use locode_core::ProviderRegistry;
 

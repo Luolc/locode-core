@@ -18,6 +18,9 @@ pub use approve::{AllowAll, ApprovalRequest, Approver, Decision};
 pub use config::EngineConfig;
 pub use session::Session;
 pub use sink::{EventSink, FnSink, NullSink};
+// The type `Session::cancel_handle` returns (ADR-0018) — re-exported so
+// frontends need no direct tokio-util dependency.
+pub use tokio_util::sync::CancellationToken;
 
 #[cfg(test)]
 mod tests {
@@ -673,6 +676,185 @@ mod tests {
         );
         // And denial_reason is absent on ordinary success records.
         assert_eq!(report.tool_calls[0].denial_reason, None);
+    }
+
+    // ---- cancellation (ADR-0018) ----
+
+    /// A provider whose sample never returns on its own — cancellation is the
+    /// only way out (models a long in-flight request).
+    struct HangingProvider;
+    #[async_trait]
+    impl Provider for HangingProvider {
+        #[allow(clippy::unnecessary_literal_bound)]
+        fn api_schema(&self) -> &str {
+            "mock"
+        }
+        async fn complete(
+            &self,
+            _request: &ConversationRequest,
+        ) -> Result<Completion, ProviderError> {
+            tokio::time::sleep(Duration::from_hours(1)).await;
+            Err(ProviderError::Transport("unreachable".into()))
+        }
+    }
+
+    /// A tool that parks on its ctx cancel token and returns cleanly once it
+    /// fires — the cooperative-cancel shape the host implements for real.
+    struct WaitsForCancel;
+    #[async_trait]
+    impl Tool for WaitsForCancel {
+        type Args = Value;
+        type Output = EchoOut;
+        fn kind(&self) -> ToolKind {
+            ToolKind::Shell
+        }
+        fn description(&self) -> &str {
+            "waits"
+        }
+        async fn run(&self, ctx: &ToolCtx, _args: Value) -> Result<EchoOut, ToolError> {
+            ctx.cancel.cancelled().await;
+            Ok(EchoOut {
+                echoed: "stopped cooperatively".into(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn cancel_mid_sample_yields_cancelled_report() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sink_events = Arc::clone(&events);
+        let sink = Box::new(FnSink(move |event| {
+            sink_events.lock().unwrap().push(event);
+        }));
+        let mut s = Session::new(
+            Arc::new(HangingProvider),
+            Registry::new(),
+            vec![],
+            config(),
+            sink,
+        );
+        let handle = s.cancel_handle();
+        let canceller = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            handle.cancel();
+            handle.cancel(); // idempotent double-cancel
+        });
+        let report = s.run_text("go").await;
+        canceller.await.expect("canceller");
+
+        assert_eq!(report.status, Status::Cancelled);
+        assert_eq!(report.error, None, "cancelled is a stop, not a fault");
+        assert_eq!(report.final_message, None, "no assistant text this run");
+        assert_eq!(report.turns, 0, "no completion was accepted");
+        // No assistant message was appended: history is user-prompt only.
+        let roles: Vec<Role> = s.history().iter().map(|m| m.role).collect();
+        assert_eq!(roles, vec![Role::User]);
+        // The stream still terminates in a Result carrying the same report.
+        let evs = dump(&events);
+        assert!(
+            matches!(evs.last(), Some(Event::Result { report }) if report.status == Status::Cancelled)
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_mid_batch_pairs_the_rest_synthetically() {
+        // One turn asks for TWO tools: a cooperative waiter, then echo. The
+        // cancel fires while the waiter runs → its own result is real; echo is
+        // never run (no approval consult, no record) but still paired.
+        let mut reg = Registry::new();
+        reg.register("waits", WaitsForCancel);
+        reg.register("echo", Echo);
+        let batch = Completion {
+            content: vec![
+                ContentBlock::ToolUse {
+                    id: "c_wait".into(),
+                    name: "waits".into(),
+                    input: json!({}),
+                },
+                ContentBlock::ToolUse {
+                    id: "c_echo".into(),
+                    name: "echo".into(),
+                    input: json!({}),
+                },
+            ],
+            usage: Usage::default(),
+            stop: StopReason::ToolUse,
+        };
+        let (s, events) = session_with(vec![Ok(batch)], reg, config());
+        let mut s = s; // provider script has ONE turn: cancel must end the run
+        let handle = s.cancel_handle();
+        let canceller = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            handle.cancel();
+        });
+        let report = s.run_text("go").await;
+        canceller.await.expect("canceller");
+
+        assert_eq!(report.status, Status::Cancelled);
+        // The waiter executed (cooperatively) and is the only record; no
+        // cancellation synthetic ever carries denial_reason.
+        assert_eq!(report.tool_calls.len(), 1);
+        assert_eq!(report.tool_calls[0].id, "c_wait");
+        assert!(report.tool_calls[0].ok);
+        assert_eq!(report.tool_calls[0].denial_reason, None);
+
+        // Both tool_use ids are answered: real result + cancellation synthetic.
+        let pairs: Vec<(String, bool)> = dump(&events)
+            .iter()
+            .filter_map(|e| match e {
+                Event::Message { message } if message.role == Role::User => Some(&message.content),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|b| match b {
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    is_error,
+                    ..
+                } => Some((tool_use_id.clone(), *is_error)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![("c_wait".into(), false), ("c_echo".into(), true)]
+        );
+        // Only the executed call was consulted for approval.
+        assert_eq!(
+            approvals(&events),
+            vec![("c_wait".into(), "waits".into(), "allow".into())]
+        );
+    }
+
+    /// The token is per-run (ADR-0018 Decision 1): a cancelled run 1 must not
+    /// poison run 2, and run 2 continues the same conversation (with ADR-0016).
+    #[tokio::test]
+    async fn cancelled_session_continues_on_the_next_run_with_a_fresh_token() {
+        let mut reg = Registry::new();
+        reg.register("waits", WaitsForCancel);
+        let (s, _e) = session_with(
+            vec![Ok(tool_turn("c1", "waits")), Ok(text_turn("second run"))],
+            reg,
+            config(),
+        );
+        let mut s = s;
+        let handle1 = s.cancel_handle();
+        let canceller = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            handle1.cancel();
+        });
+        let r1 = s.run_text("q1").await;
+        canceller.await.expect("canceller");
+        assert_eq!(r1.status, Status::Cancelled);
+
+        // The retired handle stays cancelled, but the session got a fresh
+        // token at run end — run 2 must not see the old cancel.
+        assert!(!s.cancel_handle().is_cancelled());
+        let r2 = s.run_text("q2").await;
+        assert_eq!(r2.status, Status::Completed);
+        assert_eq!(r2.final_message.as_deref(), Some("second run"));
+        // Continuity intact: q1's turns are still in the history.
+        assert!(s.history().len() >= 4, "history: {:?}", s.history().len());
     }
 
     // ---- session continuity (ADR-0016) ----

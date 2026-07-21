@@ -19,3 +19,4 @@ locode-packs = { workspace = true }
 locode-provider = { workspace = true }
 locode-host = { workspace = true }
 locode-engine = { workspace = true }
+serde_json = { workspace = true }
