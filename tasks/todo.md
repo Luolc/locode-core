@@ -527,7 +527,7 @@ search_replace → list_dir. Release: 0.1.3 = this task.**
   description (PDF/image bullets trimmed + logged), **sparse `N→` numbering**,
   negative-offset tail-read, `total_lines` semantics, overflow messages (incl. grok's
   typo), exact error texts. Scope M, no new deps. ([audit](audits/read_file.md))
-- [ ] `search_replace` — **IMMEDIATE, target resolved: current-default grok**
+- [x] `search_replace` — **DONE: current-default grok**
   (2026-07-21): DI toggles frozen as constants at grok defaults; default-off subsystems
   omitted as recorded "unreachable at default config" deviations; user-edit +
   nearest-match hints, CRLF normalization, overwrite semantics, grok's texts;

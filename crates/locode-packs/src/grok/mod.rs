@@ -2,6 +2,9 @@
 //! to headless-minimal (ADR-0012), over `locode-host`. Task 13 renders its real system
 //! prompt; all five grok tools are wired here.
 
+// Verbatim grok port — keeps gb's code shape; lint exceptions scoped to it.
+#[allow(clippy::pedantic, clippy::unwrap_used)]
+mod confusables;
 mod grep;
 mod list_dir;
 pub mod prompt;
@@ -379,6 +382,132 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(root.join("f.txt")).unwrap(),
             "b b b"
+        );
+    }
+
+    #[tokio::test]
+    async fn search_replace_empty_old_string_overwrites_existing() {
+        // grok's default: empty old_string OVERWRITES a non-empty file
+        // (gb:283-293 + test gb:1264-1282); the Task 11 error was invented.
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("f.txt"), "previous content").unwrap();
+        let out = edit(
+            &registry,
+            &root,
+            json!({ "file_path": "f.txt", "old_string": "", "new_string": "fresh" }),
+        )
+        .await;
+        assert!(out.record.ok);
+        assert_eq!(
+            result_text(&out.tool_result),
+            "The file f.txt has been created successfully."
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("f.txt")).unwrap(),
+            "fresh"
+        );
+    }
+
+    #[tokio::test]
+    async fn search_replace_success_texts_match_grok_current() {
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("f.txt"), "one two one").unwrap();
+        let out = edit(
+            &registry,
+            &root,
+            json!({ "file_path": "f.txt", "old_string": "two", "new_string": "TWO" }),
+        )
+        .await;
+        assert_eq!(
+            result_text(&out.tool_result),
+            "The file f.txt has been updated successfully."
+        );
+        let out = edit(
+            &registry,
+            &root,
+            json!({ "file_path": "f.txt", "old_string": "one", "new_string": "ONE", "replace_all": true }),
+        )
+        .await;
+        assert_eq!(
+            result_text(&out.tool_result),
+            "The file f.txt has been updated. All occurrences were successfully replaced."
+        );
+    }
+
+    #[tokio::test]
+    async fn search_replace_no_match_carries_current_era_hints() {
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("f.txt"), "alpha\nthe quick fox\n").unwrap();
+        let out = edit(
+            &registry,
+            &root,
+            json!({ "file_path": "f.txt", "old_string": "the quick cat", "new_string": "x" }),
+        )
+        .await;
+        assert!(!out.record.ok);
+        let text = result_text(&out.tool_result);
+        assert!(
+            text.starts_with(
+                "The string to replace was not found in the file, use the read_file tool to see the correct string. The user may have changed the file since you last read it."
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("\n\nNearest match: line 2: the quick fox"),
+            "{text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn search_replace_crlf_roundtrip() {
+        // gb:553-563, 688-692: LF-normalized matching, CRLF re-expanded write.
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("f.txt"), "line one\r\nline two\r\n").unwrap();
+        let out = edit(
+            &registry,
+            &root,
+            json!({ "file_path": "f.txt", "old_string": "one\nline two", "new_string": "1\nline 2" }),
+        )
+        .await;
+        assert!(out.record.ok, "{:?}", result_text(&out.tool_result));
+        assert_eq!(
+            std::fs::read_to_string(root.join("f.txt")).unwrap(),
+            "line 1\r\nline 2\r\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn search_replace_gitignore_guard_blocks_edit() {
+        let (_dir, registry, root) = setup();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        std::fs::write(root.join(".gitignore"), "*.log\n").unwrap();
+        std::fs::write(root.join("app.log"), "data").unwrap();
+        let out = edit(
+            &registry,
+            &root,
+            json!({ "file_path": "app.log", "old_string": "data", "new_string": "x" }),
+        )
+        .await;
+        assert!(!out.record.ok);
+        assert_eq!(
+            result_text(&out.tool_result),
+            "Error: app.log is ignored by .gitignore and cannot be edited."
+        );
+    }
+
+    #[tokio::test]
+    async fn search_replace_not_found_uses_current_text() {
+        let (_dir, registry, root) = setup();
+        let out = edit(
+            &registry,
+            &root,
+            json!({ "file_path": "missing.txt", "old_string": "a", "new_string": "b" }),
+        )
+        .await;
+        assert!(!out.record.ok);
+        assert_eq!(
+            result_text(&out.tool_result),
+            "Error: missing.txt does not exist."
         );
     }
 
