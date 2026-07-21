@@ -161,6 +161,8 @@ mod tests {
         assert!(matches!(err, PathError::Escape(_)));
     }
 
+    // `/etc/hostname` and rootless absolute-path semantics are unix-only.
+    #[cfg(unix)]
     #[tokio::test]
     async fn unrestricted_allows_escapes() {
         let dir = tempdir().unwrap();
