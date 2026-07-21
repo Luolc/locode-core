@@ -533,7 +533,7 @@ search_replace → list_dir. Release: 0.1.3 = this task.**
   nearest-match hints, CRLF normalization, overwrite semantics, grok's texts;
   gitignore guard via host `is_path_ignored`. Lenient `replace_all` coercion declined
   (type-strict). Scope S–M. ([audit](audits/search_replace.md))
-- [ ] `list_dir` — **IMMEDIATE, dependency approved** (2026-07-21): walker lives in
+- [x] `list_dir` — **DONE**: walker lives in
   `locode-host` (Slice 0); pack keeps pure formatting/budgeting — BFS budget + subtree
   summaries, exact formats/notices/error texts. Scope M. ([audit](audits/list_dir.md))
 - [x] `run_terminal_cmd` — **DONE (foreground slice)** (audit criteria
@@ -543,7 +543,7 @@ search_replace → list_dir. Release: 0.1.3 = this task.**
   killed (…)` variants, ANSI-strip/soft-wrap, trailing-`&` rejection (active in our
   configuration **today**), + two host changes (combined capture w/ front/back cap;
   spill file). Scope M. ([audit](audits/run_terminal_cmd.md))
-- [ ] Sweep the pack for any remaining dropped-field comments; none left un-tasked.
+- [x] Sweep the pack for any remaining dropped-field comments — clean (2026-07-21): no `dropped in v0` / `reserved seam` / simplification markers remain.
 
 **Deferred (user decision, 2026-07-20):**
 - `read_file` binary/image/PDF/PPTX tier (audit criteria 9 + 11) — binary reads emit
