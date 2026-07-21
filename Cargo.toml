@@ -43,6 +43,10 @@ tokio = { version = "1" }
 nix = { version = "0.29", features = ["signal", "process"] }
 # Real temp workspace trees for host/jail tests (dev-only).
 tempfile = "3"
+# Gitignore-aware traversal + single-path ignore checks in the host seam
+# (Task 26 Slice 0; grok's list_dir walker and GitignoreFilter both use it).
+# Approved as a host-only dependency in the 2026-07-21 plan interview.
+ignore = "0.4"
 # Backoff jitter for the wire's transport retry (codex retry.rs precedent).
 rand = "0.9"
 # Prompt-template rendering — grok's own renderer with its custom `${{ }}` syntax

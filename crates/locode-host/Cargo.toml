@@ -14,6 +14,7 @@ workspace = true
 
 [dependencies]
 thiserror = { workspace = true }
+ignore = { workspace = true }
 tokio = { workspace = true, features = ["process", "io-util", "fs", "time", "rt", "macros"] }
 tokio-util = { workspace = true }
 

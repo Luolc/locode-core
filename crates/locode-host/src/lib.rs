@@ -11,11 +11,13 @@ mod fs;
 mod path;
 mod rg;
 mod shell;
+mod walk;
 
 pub use fs::{DirEntry, FileRead, FileStat, FsError};
 pub use path::PathError;
 pub use rg::rg_program;
 pub use shell::{ExecError, ExecOutput, ExecRequest};
+pub use walk::{WalkEntry, WalkOptions};
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -99,6 +101,8 @@ pub struct Host {
     pub(crate) limits: ExecLimits,
     pub(crate) shell_program: String,
     pub(crate) login_shell: bool,
+    /// Lazily-built workspace gitignore matcher (Task 26 Slice 0).
+    pub(crate) gitignore: walk::GitignoreCache,
 }
 
 impl Host {
@@ -118,6 +122,7 @@ impl Host {
             limits: config.exec,
             shell_program: config.shell_program,
             login_shell: config.login_shell,
+            gitignore: walk::GitignoreCache::new(),
         })
     }
 
