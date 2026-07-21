@@ -565,14 +565,40 @@ mod tests {
             .dispatch("list_dir", json!({ "target_directory": "." }), &ctx(&root))
             .await;
         assert!(out.record.ok);
+        // grok's Current format: `- {display}/` header + `- ` bullets, merged
+        // case-insensitive sort, dirs suffixed `/` (gb:198, 243-246, 569).
         let text = result_text(&out.tool_result);
-        assert!(text.contains("src/"), "{text}");
-        assert!(text.contains("main.rs"), "{text}");
-        assert!(text.contains("Cargo.toml"), "{text}");
+        assert_eq!(
+            text,
+            format!(
+                "- {}/\n  - Cargo.toml\n  - src/\n    - main.rs",
+                root.display()
+            ),
+            "{text}"
+        );
     }
 
     #[tokio::test]
-    async fn list_dir_missing_is_soft_error() {
+    async fn list_dir_hides_dotfiles_and_respects_gitignore() {
+        let (_dir, registry, root) = setup();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        std::fs::write(root.join(".gitignore"), "target/\n").unwrap();
+        std::fs::write(root.join(".hidden"), "").unwrap();
+        std::fs::create_dir(root.join("target")).unwrap();
+        std::fs::write(root.join("target/out.o"), "").unwrap();
+        std::fs::write(root.join("visible.rs"), "").unwrap();
+        let out = registry
+            .dispatch("list_dir", json!({ "target_directory": "." }), &ctx(&root))
+            .await;
+        let text = result_text(&out.tool_result);
+        assert!(text.contains("- visible.rs"), "{text}");
+        assert!(!text.contains(".hidden"), "dot-files hidden: {text}");
+        assert!(!text.contains(".gitignore"), "dot-files hidden: {text}");
+        assert!(!text.contains("target"), "gitignored excluded: {text}");
+    }
+
+    #[tokio::test]
+    async fn list_dir_missing_is_soft_error_with_grok_text() {
         let (_dir, registry, root) = setup();
         let out = registry
             .dispatch(
@@ -583,5 +609,56 @@ mod tests {
             .await;
         assert!(!out.record.ok);
         assert!(is_error(&out.tool_result));
+        assert_eq!(
+            result_text(&out.tool_result),
+            format!("Error: {}/nope does not exist.", root.display())
+        );
+    }
+
+    #[tokio::test]
+    async fn list_dir_file_target_is_soft_error_with_grok_text() {
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("f.txt"), "x").unwrap();
+        let out = registry
+            .dispatch(
+                "list_dir",
+                json!({ "target_directory": "f.txt" }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(!out.record.ok);
+        assert_eq!(
+            result_text(&out.tool_result),
+            format!(
+                "Error: {}/f.txt is a file, not a directory.",
+                root.display()
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn list_dir_summarizes_fat_subdir() {
+        let (_dir, registry, root) = setup();
+        std::fs::create_dir(root.join("fat")).unwrap();
+        // ~230 files * ~14 chars/line ≈ 3.2k chars... use enough to overflow
+        // the 10k budget so `fat/` collapses to a summary.
+        for i in 0..900 {
+            std::fs::write(root.join("fat").join(format!("file-{i:04}.rs")), "").unwrap();
+        }
+        std::fs::write(root.join("small.txt"), "").unwrap();
+        let out = registry
+            .dispatch("list_dir", json!({ "target_directory": "." }), &ctx(&root))
+            .await;
+        let text = result_text(&out.tool_result);
+        assert!(text.contains("- fat/"), "{text}");
+        assert!(
+            text.contains("[900 files in subtree: 900 *.rs]"),
+            "collapsed summary: {text}"
+        );
+        assert!(
+            !text.contains("file-0000.rs"),
+            "children not listed: {text}"
+        );
+        assert!(text.contains("- small.txt"), "{text}");
     }
 }
