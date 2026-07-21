@@ -535,6 +535,8 @@ mod tests {
         assert_eq!(out.exit_code, Some(3));
     }
 
+    // Needs `sleep` + unix process-group kill semantics.
+    #[cfg(unix)]
     #[tokio::test]
     async fn timeout_kills_sleeper() {
         let dir = tempdir().unwrap();
@@ -561,6 +563,8 @@ mod tests {
         );
     }
 
+    // Needs `sleep` + unix process-group kill semantics.
+    #[cfg(unix)]
     #[tokio::test]
     async fn cancellation_kills_running_command() {
         let dir = tempdir().unwrap();
@@ -580,6 +584,8 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(5));
     }
 
+    // Needs `seq` (POSIX userland).
+    #[cfg(unix)]
     #[tokio::test]
     async fn output_over_cap_is_truncated() {
         let dir = tempdir().unwrap();
@@ -609,6 +615,8 @@ mod tests {
         );
     }
 
+    // Needs `seq` (POSIX userland).
+    #[cfg(unix)]
     #[tokio::test]
     async fn front_back_retains_head_and_tail_and_spills() {
         let dir = tempdir().unwrap();
@@ -658,6 +666,8 @@ mod tests {
         assert!(capture.spill_path.is_none());
     }
 
+    // The login-PATH probe runs `<shell> -lc` — a unix login-shell concept.
+    #[cfg(unix)]
     #[tokio::test]
     async fn shell_spec_c_arg_and_path_probe() {
         let dir = tempdir().unwrap();
@@ -687,6 +697,8 @@ mod tests {
         assert_eq!(out.stdout, out2.stdout);
     }
 
+    // Needs `cat` (POSIX userland).
+    #[cfg(unix)]
     #[tokio::test]
     async fn null_stdin_does_not_hang() {
         let dir = tempdir().unwrap();
