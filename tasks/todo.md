@@ -491,6 +491,28 @@ select, between batch calls with synthetic pairing); `Status::Cancelled`
 - [ ] Deny/mixed-batch/async-approver/kind tests; golden default-approver run.
 **Dependencies:** none · **Scope:** M
 
+## Task 26: grok pack schema fidelity — undo the Task 11 "v0 seam" cuts
+**Description:** The Task 11 port silently dropped schema fields from three grok tools
+("reserved seams"), violating the faithful-mimicry rule (AGENTS.md; ADR-0012): a model
+that cannot see `-C`/`head_limit`/`output_mode` cannot reproduce grok's behavior, which
+defeats the A/B. Restore full wire-exact schemas + behavior.
+
+**Acceptance criteria:**
+- [x] `grep`: full `GrepSearchInput` port — flag-literal wire names (`-B`/`-A`/`-C`/`-i`),
+  schema-hidden-but-wire-accepted `output_mode` quirk, `type`/`head_limit`/`multiline`,
+  head-limit defaults 200/500 + caps 2000/10000, faithful rg arg order incl.
+  `-e PATTERN PATH --max-filesize 5M`, grok's real multi-bullet description template.
+  Schema asserted by test (wire names present, `output_mode` absent, still deserializes).
+- [ ] `read_file`: restore `pages`/`format` (verify exact schema + behavior in
+  `gb/read_file` source first) and resolve the negative-offset gap.
+- [ ] `run_terminal_cmd`: restore `is_background` (needs host support for background
+  process tracking — verify grok's real semantics in source; scope may warrant its own
+  plan section).
+- [ ] Sweep the pack for any remaining dropped-field comments; none left un-tasked.
+
+**Dependencies:** none (independent of Tasks 23–25)
+**Scope:** grep S (done) · read M · terminal M–L
+
 ## Deferred (reserved seams, not scheduled)
 parallel tool batches (RwLock read/write) · compaction · OS sandbox · MCP · streaming events
 (SSE seams reserved in each wire plan) · `--json-schema` answers · JSONL session durability ·
