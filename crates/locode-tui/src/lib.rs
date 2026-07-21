@@ -1,12 +1,14 @@
-//! locode-tui — terminal UI components and the runnable interactive app
-//! (SPEC-TUI; ADR-0001 amendment 2026-07-21).
+//! locode-tui — terminal UI components and the runnable `locode` app
+//! (SPEC-TUI; ADR-0001/0019 amendments 2026-07-21).
 //!
 //! One library crate carrying the whole app behind [`main_with`]; the product
-//! binary (`locode-app`, command `locode`) is flag-free composition. The
-//! architecture is the study-distilled shape (`docs/research/
+//! binary (`locode-app`, command `locode`) is flag-free composition. Default
+//! is the interactive TUI — the study-distilled shape (`docs/research/
 //! tui-harness-study.md`): inline viewport + print-once transcript, a
 //! dedicated input thread, one biased `select!` loop, and a sans-IO
-//! `Msg → update → Cmd` reducer.
+//! `Msg → update → Cmd` reducer. Under `-p`/`--print` the same binary runs a
+//! headless one-shot (Claude Code's shape), reusing `locode-exec`'s engine
+//! (Task 28).
 
 use std::process::ExitCode;
 
@@ -32,6 +34,13 @@ mod event_loop;
 #[allow(clippy::needless_pass_by_value)]
 pub fn main_with(registry: ProviderRegistry) -> ExitCode {
     let cli = cli::Cli::parse(); // clap usage errors exit 2 on their own
+
+    // `-p`/`--print`: run the headless one-shot and exit — no TUI, no terminal
+    // setup (Claude Code detects `-p` in its entry the same way). Reuses
+    // locode-exec's engine + `--output-format` emit + SIGTERM handler.
+    if cli.print {
+        return locode_exec::run_headless(cli.to_headless(), registry);
+    }
 
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()

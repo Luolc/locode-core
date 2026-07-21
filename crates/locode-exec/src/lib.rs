@@ -31,6 +31,7 @@ pub mod run;
 #[cfg(unix)]
 mod signal;
 
+pub use cli::{Cli, Harness, OutputFormat};
 pub use locode_core::ProviderRegistry;
 
 /// Parse the CLI, install logging, and drive one session to its exit code —
@@ -42,6 +43,19 @@ pub use locode_core::ProviderRegistry;
 #[allow(clippy::needless_pass_by_value)]
 pub fn main_with(registry: ProviderRegistry) -> ExitCode {
     let cli = cli::Cli::parse(); // clap usage errors exit 2 on their own
+    run_headless(cli, registry)
+}
+
+/// Drive one headless run from an already-parsed [`Cli`] — installs logging,
+/// builds the runtime, runs the engine, and emits per `--output-format`.
+///
+/// Split out of [`main_with`] so a unified front-end (the `locode` binary's
+/// `-p` mode) can reuse the exact headless engine without re-parsing argv.
+/// When `locode-exec` retires, this logic migrates into the front-end crate
+/// (ADR-0019 amendment 2026-07-21).
+#[must_use]
+#[allow(clippy::needless_pass_by_value)]
+pub fn run_headless(cli: cli::Cli, registry: ProviderRegistry) -> ExitCode {
     logging::init();
 
     // `ExitCode` return (not `process::exit`) so buffered stdout is flushed —

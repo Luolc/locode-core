@@ -128,7 +128,7 @@ fn build_session(
     }
     let host = Arc::new(Host::new(host_config).map_err(|e| e.to_string())?);
 
-    let pack = locode_core::resolve(&cli.harness).map_err(|e| e.to_string())?;
+    let pack = locode_core::resolve(cli.harness.as_str()).map_err(|e| e.to_string())?;
     let registry_tools = pack.build_registry(&host);
     let pack_ctx = PackContext {
         cwd: cwd.clone(),
@@ -153,7 +153,7 @@ fn build_session(
 
     let config = EngineConfig {
         session_id,
-        harness: cli.harness.clone(),
+        harness: cli.harness.as_str().to_string(),
         api_schema: provider.api_schema().to_string(),
         model: model.clone(),
         cwd: cwd.clone(),

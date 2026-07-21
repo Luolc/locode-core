@@ -588,6 +588,20 @@ queue; robustness floor from slice 1.
 the spec review): ratatui, crossterm, tui-textarea, pulldown-cmark.
 **Scope:** L (sliced)
 
+## Task 28: unified `locode` binary — `-p` headless mode ✅ done
+**Description:** `locode` is now the single entry: interactive TUI by default, headless
+one-shot under `-p`/`--print` (Claude-Code shape). `locode_tui::main_with` dispatches;
+`-p` reuses `locode-exec`'s engine via `run_headless(cli, registry)`. Unified CLI shares
+`Harness`/`OutputFormat`; a bare positional prompt pre-fills the composer in TUI mode.
+- [x] `run_headless` extracted from `locode-exec::main_with` (behavior-preserving);
+  unified `locode-tui::cli::Cli` with `-p`/positional-prompt/`--output-format`/`--max-turns`;
+  `main_with` print-dispatch; composer pre-fill; ADR-0019 amendment + SPEC reconcile.
+- [x] 3 `-p` process integration tests (json/text/pre-run-fail) + `with_draft` reducer test;
+  exec's own tests unchanged (346 workspace tests).
+**Retire plan (user-gated):** drop the `locode-exec` binary + switch installers to `locode`
+after this version; the headless logic then migrates out of locode-exec.
+**Dependencies:** Task 27 (TUI). **Scope:** M
+
 ## Deferred (reserved seams, not scheduled)
 parallel tool batches (RwLock read/write) · compaction · OS sandbox · MCP · streaming events
 (SSE seams reserved in each wire plan) · `--json-schema` answers · JSONL session durability ·
