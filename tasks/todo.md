@@ -536,7 +536,7 @@ search_replace → list_dir. Release: 0.1.3 = this task.**
 - [ ] `list_dir` — **IMMEDIATE, dependency approved** (2026-07-21): walker lives in
   `locode-host` (Slice 0); pack keeps pure formatting/budgeting — BFS budget + subtree
   summaries, exact formats/notices/error texts. Scope M. ([audit](audits/list_dir.md))
-- [ ] `run_terminal_cmd` — **IMMEDIATE: faithful foreground slice** (audit criteria
+- [x] `run_terminal_cmd` — **DONE (foreground slice)** (audit criteria
   1–8 + 11–12; see the audit's Split section): bg-disabled description variant
   (lenient timeout parsing **declined** — type-strict per user call, deviation
   recorded), 20k-char front/back truncation + exact markers, `exit:
