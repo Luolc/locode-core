@@ -497,21 +497,36 @@ select, between batch calls with synthetic pairing); `Status::Cancelled`
 that cannot see `-C`/`head_limit`/`output_mode` cannot reproduce grok's behavior, which
 defeats the A/B. Restore full wire-exact schemas + behavior.
 
+**Per-tool audits (2026-07-20, source-verified):** [`tasks/audits/`](audits/) — one file
+per tool with verbatim schema diffs, behavior gaps, quirks, and a detailed fixing task.
+
 **Acceptance criteria:**
-- [x] `grep`: full `GrepSearchInput` port — flag-literal wire names (`-B`/`-A`/`-C`/`-i`),
-  schema-hidden-but-wire-accepted `output_mode` quirk, `type`/`head_limit`/`multiline`,
-  head-limit defaults 200/500 + caps 2000/10000, faithful rg arg order incl.
-  `-e PATTERN PATH --max-filesize 5M`, grok's real multi-bullet description template.
-  Schema asserted by test (wire names present, `output_mode` absent, still deserializes).
-- [ ] `read_file`: restore `pages`/`format` (verify exact schema + behavior in
-  `gb/read_file` source first) and resolve the negative-offset gap.
-- [ ] `run_terminal_cmd`: restore `is_background` (needs host support for background
-  process tracking — verify grok's real semantics in source; scope may warrant its own
-  plan section).
+- [x] `grep` — FAITHFUL as of PR #51 ([audit](audits/grep.md); one documented
+  output-equivalent deviation: post-capture head-limit).
+- [ ] `list_dir` — DRIFT, 8 behavior issues ([audit](audits/list_dir.md)): gitignore
+  walker (needs `ignore` crate — **ask-first dependency**), depth-budgeted BFS +
+  `[N files in subtree: …]` summaries, exact bullet/header format, truncation notices,
+  four exact error texts. Scope M.
+- [ ] `read_file` — DRIFT, 4 schema + 10 behavior ([audit](audits/read_file.md)):
+  `pages`/`format`, bare-integer schema shape + lenient coercion, grok's five-bullet
+  description, **sparse `N→` numbering (first + every 10th line)**, negative-offset
+  tail-read, overflow message variants (incl. grok's own typo). Scope M (L with
+  images/PDF tier — defer multimodal).
+- [ ] `search_replace` — DRIFT, 2 schema + 8 behavior ([audit](audits/search_replace.md)):
+  currently matches grok's **legacy-0.4.10** surface, not current default — **decide
+  target version first** (recommend: current); empty-`old_string` overwrite semantics,
+  grok's success text (no counts, echoes model path), 3-bullet description, lenient
+  bool coercion. Scope M.
+- [ ] `run_terminal_cmd` — DRIFT, 3 schema + 11 behavior ([audit](audits/run_terminal_cmd.md)):
+  20k-char front/back truncation with grok's exact markers + spill file, detected-shell
+  `-c` + login-PATH probe, ANSI-strip/soft-wrap, `exit: killed (…)` variants, trailing-`&`
+  rejection (active in background-disabled config — applies to us today), and full
+  background mode (`is_background` + `get_task_output`/`kill_task` companion tools —
+  needs new `locode-host` surface). Scope M foreground / L background.
 - [ ] Sweep the pack for any remaining dropped-field comments; none left un-tasked.
 
 **Dependencies:** none (independent of Tasks 23–25)
-**Scope:** grep S (done) · read M · terminal M–L
+**Scope:** grep S (done) · list_dir M · read M · search_replace M · terminal M–L
 
 ## Deferred (reserved seams, not scheduled)
 parallel tool batches (RwLock read/write) · compaction · OS sandbox · MCP · streaming events
