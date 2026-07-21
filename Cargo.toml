@@ -69,7 +69,10 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls", "j
 # ---- TUI workstream deps (SPEC-TUI, approved with the spec 2026-07-21) ----
 # Terminal UI framework + backend — stock crates, no forks (SPEC-TUI: our v1
 # uses Viewport::Inline + insert_before, not the forked scrolling-region path).
-ratatui = "0.29"
+# `scrolling-regions`: insert_before via DECSTBM scroll regions — the only
+# inline-history path with NO cursor-position query (a CPR query deadlocks
+# against the dedicated input-reader thread; found in the slice-2 smoke).
+ratatui = { version = "0.29", features = ["scrolling-regions"] }
 crossterm = { version = "0.28", features = ["bracketed-paste"] }
 # Multiline composer widget (grok forked one; the stock crate suffices for v1
 # behind our own Composer wrapper).

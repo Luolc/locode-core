@@ -1190,11 +1190,13 @@ dependencies = [
 name = "locode-tui"
 version = "0.1.4"
 dependencies = [
+ "chrono",
  "clap",
  "crossterm",
  "locode-core",
  "ratatui",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-util",
  "tui-textarea",

@@ -1,8 +1,8 @@
 //! Rendering: the live region (bottom-anchored) and its widgets.
 //!
 //! The live region is the ONLY repainted surface (SPEC-TUI rendering model);
-//! finalized transcript blocks are printed once into native scrollback
-//! (slice 2). Blank rows above the composer read as margin.
+//! finalized transcript blocks are printed once into native scrollback via
+//! `insert_before`. Blank rows above the status row read as margin.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
@@ -10,22 +10,50 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
-use crate::app::{App, Hint};
+use crate::app::{App, Hint, RunState};
 
+pub mod blocks;
 pub mod composer;
 
-/// Draw the live region: flexible blank space, then composer, then footer.
+/// Braille spinner frames (the four-harness standard).
+const SPINNER: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+/// Draw the live region: flexible blank space, then status row (while
+/// running), then composer, then footer.
 pub fn draw(frame: &mut Frame<'_>, app: &App) {
     let composer_height = app.composer.desired_height(frame.area().width);
-    let [_, composer_area, footer_area] = Layout::vertical([
+    let status_height = u16::from(app.is_running());
+    let [_, status_area, composer_area, footer_area] = Layout::vertical([
         Constraint::Fill(1),
+        Constraint::Length(status_height),
         Constraint::Length(composer_height),
         Constraint::Length(1),
     ])
     .areas(frame.area());
 
+    if app.is_running() {
+        frame.render_widget(Paragraph::new(status_line(app)), status_area);
+    }
     app.composer.render(frame, composer_area);
     frame.render_widget(Paragraph::new(footer_line(app)), footer_area);
+}
+
+/// The single-row turn status (grok's shape at v1 scale:
+/// `⠧ run_terminal_cmd · 12s`).
+fn status_line(app: &App) -> Line<'static> {
+    let RunState::Running { started } = app.run else {
+        return Line::from("");
+    };
+    let spinner = SPINNER[(app.spinner_frame / 2) % SPINNER.len()];
+    let activity = app
+        .pending_tools
+        .last()
+        .map_or_else(|| "thinking".to_string(), |t| t.name.clone());
+    let elapsed = started.elapsed().as_secs();
+    Line::styled(
+        format!("{spinner} {activity} · {elapsed}s"),
+        Style::default().add_modifier(Modifier::BOLD),
+    )
 }
 
 fn footer_line(app: &App) -> Line<'static> {
@@ -33,7 +61,14 @@ fn footer_line(app: &App) -> Line<'static> {
     let text = match app.hint {
         Some(Hint::QuitArmed) => "press ctrl+c again to quit".to_string(),
         Some(Hint::ClearArmed) => "press esc again to clear".to_string(),
-        None => "enter to send · alt+enter newline · ctrl+c quit".to_string(),
+        Some(Hint::RunInProgress) => "run in progress".to_string(),
+        None => {
+            let base = "enter to send · alt+enter newline · ctrl+c quit";
+            match &app.model {
+                Some(model) => format!("{base} · {model}"),
+                None => base.to_string(),
+            }
+        }
     };
     Line::styled(text, dim)
 }
@@ -41,8 +76,10 @@ fn footer_line(app: &App) -> Line<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::PendingTool;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use std::time::Instant;
 
     fn buffer_text(terminal: &Terminal<TestBackend>) -> String {
         let buffer = terminal.backend().buffer();
@@ -70,9 +107,33 @@ mod tests {
             text.contains("enter to send"),
             "footer hints on the last row: {text}"
         );
-        // Bottom-anchored: the first rows stay blank (margin).
         let first_row: String = text.lines().next().unwrap().trim().to_string();
         assert!(first_row.is_empty(), "top row is margin: {first_row:?}");
+    }
+
+    #[test]
+    fn status_row_shows_spinner_and_active_tool_while_running() {
+        let mut terminal = Terminal::new(TestBackend::new(50, 10)).unwrap();
+        let mut app = App::new();
+        app.run = RunState::Running {
+            started: Instant::now(),
+        };
+        app.pending_tools.push(PendingTool {
+            id: "c1".into(),
+            name: "run_terminal_cmd".into(),
+            args: "{}".into(),
+        });
+
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let text = buffer_text(&terminal);
+        assert!(text.contains("run_terminal_cmd ·"), "{text}");
+
+        // Idle: no status row.
+        app.run = RunState::Idle;
+        app.pending_tools.clear();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let text = buffer_text(&terminal);
+        assert!(!text.contains("thinking"), "{text}");
     }
 
     #[test]

@@ -15,6 +15,7 @@ use locode_core::ProviderRegistry;
 
 pub mod app;
 pub mod cli;
+pub mod engine;
 pub mod term;
 pub mod ui;
 

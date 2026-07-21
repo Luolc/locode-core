@@ -578,7 +578,7 @@ queue; robustness floor from slice 1.
 
 **Acceptance criteria:** SPEC-TUI.md "Success criteria" section.
 - [x] Slice 1 — shell, both crate scaffolds (+ ADR-0019, SPEC.md pointer) — PR #77
-- [ ] Slice 2 — drive a run (mock)
+- [x] Slice 2 — drive a run (mock) — PR #78
 - [ ] Slice 3 — cancel
 - [ ] Slice 4 — approvals (+ possible ADR-0017 amendment: decide() await observes the cancel token)
 - [ ] Slice 5 — conversation polish
