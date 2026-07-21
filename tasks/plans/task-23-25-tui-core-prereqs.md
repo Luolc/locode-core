@@ -1,8 +1,10 @@
 # Tasks 23–25: TUI core prerequisites (Workstream A)
 
 The three engine seams the future TUI app needs, per ADR-0016/0017/0018
-(all **Proposed — review before implementing**). Ordered so each slice is
-independently shippable; together they release as **0.1.3**.
+(all **Accepted**, 2026-07-20 interview). Ordered so each slice is
+independently shippable; together they release as **0.1.4** (renumbered from
+0.1.3 — the 2026-07-21 sequencing decision gave 0.1.3 to the Task 26 fidelity
+release).
 
 Source grounding for the designs lives in the ADRs; this plan holds the
 implementation detail: touch points, edge cases, test matrix, and the open
@@ -164,8 +166,8 @@ that test deferred).
    `schema_version: 1` incl. unknown-value tolerance (ADR-0018 addenda).
 5. **(25)** **`Event::Approval` ships in v1** — grok-shaped
    `{ tool_use_id, tool_name, decision, wait_ms }` (ADR-0017 Decision 4).
-6. **(release)** **One 0.1.3** after all three slices. Implementation order:
-   **23 → 25 → 24**.
+6. **(release)** **One release** after all three slices (0.1.4 after the
+   2026-07-21 renumbering). Implementation order: **23 → 25 → 24**.
 7. **Broad `#[non_exhaustive]`** on `Status`/`Event`/`ApprovalRequest`/
    `Decision`; exec status match gains a wildcard arm → exit 1 (ADR-0018
    addenda). Lands with Task 24 (`Status`) and Task 25 (the rest).

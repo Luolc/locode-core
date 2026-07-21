@@ -66,3 +66,14 @@ included.
   JSONL round-trip + reconstruction test as the contract.
 - Reserve turn markers (`turn.started`/`turn.completed{usage}`, cf. Codex) and message deltas as
   future `Event` variants.
+
+## Amendment (2026-07-21): one stream, multiple runs (session continuity)
+
+With ADR-0016, a `Session` outlives a single run, and so does its event stream:
+`Init` is emitted **once per session** (on the first run), then `Message` events
+continue across runs with **one `Result` per run** — the stream shape is
+`Init M+ Result (M+ Result)*`. `Result` is a *run* terminator, not a stream
+terminator. `reconstruct_conversation` is unaffected (it folds `Message` events
+in order and ignores `Result`/`Error`); the contract is pinned by a two-run
+golden test in `locode-engine`
+(`two_run_stream_reconstructs_the_full_conversation`).

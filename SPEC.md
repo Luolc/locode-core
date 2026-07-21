@@ -14,7 +14,7 @@ These are the assumptions this spec is built on. Correct any that are wrong befo
 3. **v0 is the `grok` harness pack** — a faithful port of Grok Build's real tools (ADR-0012). Other packs (`codex`/`claude`/`opencode`) and our own `locode` pack are the next milestone — real per-harness implementations, not re-skins.
 4. **Single-user, trusted-workspace threat model for v0.** A `workspace_root` path jail (**default**, on the first-class FS tools) + shell timeout/output caps is the security posture. The jail is a **configurable host `PathPolicy`** (`Jailed`, default / `Unrestricted`), skippable via `--dangerously-skip-permissions` (alias `--yolo`) for the harnesses' full-access behavior — the shell caps stay on regardless (ADR-0008 amendment). The shell tool is *not* path-jailed. OS sandboxing (Seatbelt/Landlock/seccomp) is a deferred extension behind the one dispatch door, not a v0 requirement.
 5. **Non-streaming model calls in v0.** Buffer each assistant turn fully before dispatching tools. Streaming is an additive optimization, not a second loop.
-6. **Ephemeral sessions in v0.** History lives in memory for one run; durable JSONL session files are deferred.
+6. **In-memory sessions.** History lives in memory on the `Session` and persists across `run()` calls — a second `run()` continues the same conversation, with `Init` emitted once per session and one per-run `Report` each (multi-turn continuity, ADR-0016). Durable JSONL session files are deferred.
 7. **Rust stable, current pinned toolchain**, `tokio` async runtime, `reqwest` HTTP.
 
 ## Objective
