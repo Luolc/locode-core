@@ -56,3 +56,28 @@ OpenSSL-free by design (`rustls`, SPEC/ADR-0007). The release procedure is:
 version-bump PR → auto-merge on green → `cargo publish` in dependency order →
 `git tag vX.Y.Z && git push origin vX.Y.Z`. macOS/Windows artifacts are an
 easy later addition to the same matrix if wanted.
+
+## Amendment (2026-07-21): curl installer + macOS release targets
+
+The release matrix additionally builds `x86_64-apple-darwin` and
+`aarch64-apple-darwin` (native on the macOS runner — the cross-toolchain step
+is Linux-only; `upload-rust-binary-action` installs the Rust target itself).
+A hand-rolled `install.sh` at the repo root gives macOS/Linux users a single
+install-and-update command:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/luolc/locode-core/main/install.sh | bash
+```
+
+The script is modeled on the grok-build and opencode installers (survey
+submodules: `xai-grok-pager/scripts/install.sh`, `opencode/install`) but uses
+GitHub Releases directly (`releases/latest/download/…`, opencode-style — no
+version-pointer infrastructure) and adds sha256 verification, which neither
+reference does: platform detect → download → checksum verify → `--version`
+smoke test → atomic swap into `~/.locode/bin` → marker-delimited PATH block
+(idempotent re-runs; re-running the one-liner *is* the update mechanism,
+grok-style). Windows is out of scope (user decision, 2026-07-21). cargo-dist
+was considered and declined for now: the hand-rolled workflow already exists
+and the script is ~170 lines; revisit if Homebrew/MSI/self-update surfaces
+are wanted. macOS installs resolve `latest` to the first release tagged after
+this amendment (earlier releases carry Linux assets only).
