@@ -157,11 +157,14 @@ mod tests {
             .dispatch("read_file", json!({ "target_file": "f.txt" }), &ctx(&root))
             .await;
         assert!(out.record.ok);
-        assert_eq!(out.record.output["lines"], json!(3));
+        // grok's `matches('\n') + 1` semantics: the trailing newline yields a
+        // phantom 4th line (gb:442).
+        assert_eq!(out.record.output["lines"], json!(4));
         assert_eq!(out.record.output["truncated"], json!(false));
+        // Sparse numbering (gb:249-256): only the first visible line is
+        // anchored here; lines 2-3 are bare; the phantom renders as `\n`.
         let text = result_text(&out.tool_result);
-        assert!(text.contains("1→alpha"), "{text}");
-        assert!(text.contains("3→gamma"), "{text}");
+        assert_eq!(text, "1→alpha\nbeta\ngamma\n");
     }
 
     #[tokio::test]
@@ -181,12 +184,22 @@ mod tests {
             )
             .await;
         assert!(out.record.ok);
-        assert_eq!(out.record.output["lines"], json!(1500));
+        // 1500 lines + trailing newline = 1501 by grok's phantom counting.
+        assert_eq!(out.record.output["lines"], json!(1501));
         assert_eq!(out.record.output["truncated"], json!(true));
-        // Body holds the first 1000 numbered lines only.
+        // Body holds the first 1000 lines, sparse-numbered: decade anchors
+        // only (gb:249-256).
         let text = result_text(&out.tool_result);
+        assert!(
+            text.starts_with("1→line 1\nline 2\n"),
+            "first anchor + bare"
+        );
         assert!(text.contains("1000→line 1000"), "capped at 1000");
-        assert!(!text.contains("1001→"), "line 1001 excluded");
+        assert!(
+            !text.contains("990→line 990\nline 991\n991→"),
+            "no double anchors"
+        );
+        assert!(!text.contains("line 1001"), "line 1001 excluded");
     }
 
     #[tokio::test]
