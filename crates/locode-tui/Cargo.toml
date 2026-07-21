@@ -1,0 +1,27 @@
+[package]
+name = "locode-tui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+# Not published until v1 stabilizes (SPEC-TUI; flipping later is non-breaking).
+publish = false
+description = "Terminal UI components and runnable app for the locode coding agent"
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+locode-core = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+tui-textarea = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
+tokio-util = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "time", "test-util"] }

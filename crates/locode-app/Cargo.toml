@@ -1,0 +1,24 @@
+[package]
+name = "locode-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+# Not published until v1 stabilizes (SPEC-TUI).
+publish = false
+description = "The locode coding agent - interactive terminal app"
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[lints]
+workspace = true
+
+# The user-facing command is `locode` (bin names are not namespaced on
+# crates.io; the `locode` *crate* name being taken does not block this).
+[[bin]]
+name = "locode"
+path = "src/main.rs"
+
+[dependencies]
+locode-tui = { workspace = true }
+locode-core = { workspace = true }
