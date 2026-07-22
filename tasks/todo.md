@@ -682,16 +682,36 @@ reviews PRs. Tier B/C (core-touching) live below / in ADR-0021.
   narrate more). No Tier-A change.
 
 Tier C (core, ADR-first): **streaming** → [ADR-0021](../docs/decisions/ADR-0021-live-token-streaming.md)
-(unblocks markdown study Phase 4 + live intermediate narration); subagents;
-plugins. Tier B (short ADR then mostly-autonomous): background bash commands,
+**— ACCEPTED 2026-07-22, scheduled as 3 slices** (unblocks markdown study Phase 4
++ live intermediate narration); subagents; plugins. Tier B (short ADR then
+mostly-autonomous): background bash commands,
 AGENTS.md/CLAUDE.md loading, custom slash-command files, **`/model` switching**
 (ADR-0015 model-selection seam) + **config-file persistence** (new ADR, XDG
 `~/.config/locode/`). (The dynamic composer viewport — previously listed here —
 shipped in ADR-0022.)
 
+## Task 29: live token streaming (ADR-0021, Accepted 2026-07-22)
+
+Core-public-surface change (`Provider::stream` + default fallback,
+`Event::MessageDelta`, engine sample step) layered over the existing loop — **not**
+a second loop. Each wire's SSE gets its own plan + golden tests. Resolved design
+in [ADR-0021](../docs/decisions/ADR-0021-live-token-streaming.md); three slices:
+
+- [ ] **Slice 1** — the seam end-to-end on one wire: `Provider::stream` +
+  `CompletionDelta` + default fallback, `mock` streaming, **Anthropic SSE**
+  (`content_block_delta`), engine forwards deltas via a **callback** into the
+  existing `EventSink` as `Event::MessageDelta`, cancel-mid-stream aborts the SSE
+  read + discards the partial, and a **minimal plain-text newline-gated** TUI
+  streaming cell. Pacing rides the existing 32-drain + 16 ms loop (no new channel).
+- [ ] **Slice 2** — OpenAI-Responses SSE (`response.*.delta`).
+- [ ] **Slice 3** — codex-style incremental-markdown re-parse in the streaming
+  cell (unblocks markdown study **Phase 4**).
+- Deferred within streaming: `--include-deltas` trace flag, inline/transcript
+  thinking UI, the 120 Hz typing animation, the long-line flush timer.
+
 ## Deferred (reserved seams, not scheduled)
-parallel tool batches (RwLock read/write) · compaction · OS sandbox · MCP · streaming events
-(SSE seams reserved in each wire plan) · `--json-schema` answers · JSONL session durability ·
+parallel tool batches (RwLock read/write) · compaction · OS sandbox · MCP ·
+`--json-schema` answers · JSONL session durability ·
 multi-platform `rg` bundle matrix + macOS notarization/sidecar (packaging, ADR-0011) ·
 pack session-start file context (AGENTS.md/CLAUDE.md loading — plans 19 Q4 / 20 Q3) ·
 codex unified exec (PTY) / `view_image` / hosted `web_search` · Claude Code
