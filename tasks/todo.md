@@ -638,9 +638,12 @@ reviews PRs. Tier B/C (core-touching) live below / in ADR-0021.
   (bottom-right, red), each corner bold; separators removed. cwd color matches the
   user's `ccstatusline` `current-working-dir: brightBlue`. ADR-0019 reconciled.
 - [ ] **P2 OSC-8 hyperlinks** — clickable links (iTerm2 supports them).
-- [ ] **Built-in slash commands (no-persistence subset)** — `/help`, `/clear`
-  (+ current `/new` `/quit` `/exit`). Pure UI, no core surface. **`/model` is NOT
-  in this subset** — it needs seams we don't have yet (see the finding below).
+- [ ] **Built-in slash commands** — **deferred pending a careful, holistic
+  design pass** (user decision, 2026-07-22): do NOT implement piecemeal. Before
+  adding any (`/help`, `/clear`, `/model`, …) beyond the current `/new` `/quit`
+  `/exit`, design the command surface as a whole — discovery/registry, syntax,
+  which are pure-UI vs. seam- or persistence-backed (`/model`, see the finding
+  below), and how they compose. Revisit when scheduled.
 
 ### Findings from the 2026-07-22 vibe-check (flagged, NOT auto-implemented)
 
@@ -665,9 +668,10 @@ reviews PRs. Tier B/C (core-touching) live below / in ADR-0021.
      `~/.claude/settings.json`); we have **no config-file design**. Remembering a
      `/model` pick across restarts needs a new "config file" ADR (XDG
      `~/.config/locode/`, mirroring how `ccstatusline` uses `~/.config/`).
-  **Recommendation:** ship a **read-only `/model`** now (Tier A — just prints the
-  active model + api-schema from `app.model`), and defer *switching* (seam ADR)
-  and *persistence* (config-file ADR) to Tier B, each behind an explicit go.
+  **Status (user decision, 2026-07-22):** `/model` is **deferred** — not even the
+  read-only form ships yet; it's folded into the holistic slash-command design
+  pass above. When taken up: read-only `/model` is Tier A; *switching* needs the
+  ADR-0015 seam; *persistence* needs the config-file ADR.
 - **"Intermediate model messages aren't rendered" — NOT a bug.** The engine emits
   an `Event::Message` per assistant turn (`locode-engine/src/run.rs:104`) and the
   TUI's `on_event` renders every assistant `Text` block (verified + tested,
