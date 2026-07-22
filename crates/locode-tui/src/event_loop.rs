@@ -224,7 +224,9 @@ fn paint<B: ratatui::backend::Backend>(
         // `commit_scrollback`), so the right transcript lands in scrollback even
         // when those lines aren't currently on screen — then drop exactly those.
         let commit_lines: Vec<Line<'static>> = tail[..overflow].to_vec();
-        terminal.commit_scrollback(&commit_lines)?;
+        // Protect the bottom `non_tail` rows (status + queue + composer + footer)
+        // from the scroll so the composer is never smeared into the transcript.
+        terminal.commit_scrollback(&commit_lines, non_tail)?;
         tail.drain(..overflow);
         *committed = true;
     }
@@ -507,8 +509,7 @@ mod tests {
 
         // 8 transcript lines; with an empty composer (3 rows) + footer, tail_cap
         // is 8 — they all fit, nothing committed.
-        let mut tail: Vec<Line<'static>> =
-            (0..8).map(|i| Line::from(format!("T{i:02}"))).collect();
+        let mut tail: Vec<Line<'static>> = (0..8).map(|i| Line::from(format!("T{i:02}"))).collect();
         paint(&mut t, &mut app, &mut tail, &mut committed).unwrap();
         assert!(rows(&t).iter().any(|l| l == "T00"), "T00 shown initially");
         let sb0 = scrollback(&t).iter().filter(|l| !l.is_empty()).count();

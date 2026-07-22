@@ -122,45 +122,61 @@ impl<B: Backend> FrameTerminal<B> {
     }
 
     /// Commit `lines` to native scrollback (the oldest transcript scrolling off
-    /// the top of the frame). Draws the lines into the top rows and immediately
-    /// `scroll_region_up`s them out of view, so the **correct** lines land in
-    /// scrollback regardless of what the frame currently shows there (unlike a
-    /// bare [`scroll_up`](Self::scroll_up), which commits whatever rows happen to
-    /// be on screen — wrong when the frame wasn't full, e.g. the first big
-    /// response). Chunked by screen height so a burst taller than the screen
-    /// still commits every line. The diff baseline is shifted to match, so the
-    /// next [`draw`](Self::draw) repaints only real changes.
+    /// the top of the frame), scrolling **only the transcript region** — the
+    /// bottom `keep_bottom` rows (status + composer + footer) are left untouched,
+    /// so the composer's rules never get scrolled up and smeared across the
+    /// transcript. `scroll_region_up` with a region that starts at row 0 still
+    /// feeds native scrollback (verified against `TestBackend`).
+    ///
+    /// Each chunk is drawn into the top rows **diffed against what's actually on
+    /// screen there** (so a shorter line clears the longer line it replaces — no
+    /// stale trailing garbage in the committed row), then scrolled out of view.
+    /// Chunked by the region height so a burst taller than the region still
+    /// commits every line. Not flushed: the caller always follows with `draw`, so
+    /// commit-then-repaint is one atomic flush (no intermediate frame).
     ///
     /// # Errors
-    /// Propagates backend draw/scroll/flush failures.
-    pub fn commit_scrollback(&mut self, lines: &[ratatui::text::Line<'_>]) -> io::Result<()> {
+    /// Propagates backend draw/scroll failures.
+    pub fn commit_scrollback(
+        &mut self,
+        lines: &[ratatui::text::Line<'_>],
+        keep_bottom: u16,
+    ) -> io::Result<()> {
         let v = self.size.height;
         let w = self.size.width;
-        if v == 0 || w == 0 || lines.is_empty() {
+        let region_end = v.saturating_sub(keep_bottom);
+        if region_end == 0 || w == 0 || lines.is_empty() {
             return Ok(());
         }
         let mut i = 0usize;
         while i < lines.len() {
-            let end = (i + usize::from(v)).min(lines.len());
+            let end = (i + usize::from(region_end)).min(lines.len());
             let chunk = &lines[i..end];
-            let n = u16::try_from(chunk.len()).unwrap_or(v).min(v);
+            let n = u16::try_from(chunk.len())
+                .unwrap_or(region_end)
+                .min(region_end);
             let area = Rect::new(0, 0, w, n);
             let mut buf = Buffer::empty(area);
             ratatui::widgets::Paragraph::new(chunk.to_vec()).render(area, &mut buf);
-            let updates: Vec<(u16, u16, Cell)> = Buffer::empty(area)
+            // Diff against the current top `n` rows so trailing cells of a longer
+            // previous line are cleared (not left as garbage in the committed row).
+            let mut base = Buffer::empty(area);
+            for y in 0..n {
+                for x in 0..w {
+                    base[(x, y)] = self.screen[(x, y)].clone();
+                }
+            }
+            let updates: Vec<(u16, u16, Cell)> = base
                 .diff(&buf)
                 .into_iter()
                 .map(|(x, y, cell)| (x, y, cell.clone()))
                 .collect();
             self.backend
                 .draw(updates.iter().map(|(x, y, cell)| (*x, *y, cell)))?;
-            self.backend.scroll_region_up(0..v, n)?;
-            shift_buffer_up(&mut self.screen, n);
+            self.backend.scroll_region_up(0..region_end, n)?;
+            shift_region_up(&mut self.screen, region_end, n);
             i = end;
         }
-        // Deliberately NOT flushed: the caller always follows with `draw`, so the
-        // commit-then-repaint is one atomic flush (no intermediate frame where the
-        // frame content is scrolled up with a blank bottom → no flicker).
         Ok(())
     }
 
@@ -252,17 +268,25 @@ impl<B: Backend> FrameTerminal<B> {
 }
 
 /// Shift a full-screen buffer's rows up by `n`, blanking the freed bottom rows —
-/// the in-memory mirror of a `scroll_region_up` so the diff baseline stays true.
+/// the in-memory mirror of a full-screen `scroll_region_up`.
 fn shift_buffer_up(buf: &mut Buffer, n: u16) {
-    let w = buf.area.width;
     let h = buf.area.height;
-    let n = n.min(h);
+    shift_region_up(buf, h, n);
+}
+
+/// Shift rows `[0, region_end)` up by `n`, blanking the freed rows just above
+/// `region_end`, leaving `[region_end, height)` untouched — the in-memory mirror
+/// of `scroll_region_up(0..region_end, n)` so the diff baseline stays true.
+fn shift_region_up(buf: &mut Buffer, region_end: u16, n: u16) {
+    let w = buf.area.width;
+    let region_end = region_end.min(buf.area.height);
+    let n = n.min(region_end);
     if n == 0 || w == 0 {
         return;
     }
-    for y in 0..h {
+    for y in 0..region_end {
         for x in 0..w {
-            let cell = if y + n < h {
+            let cell = if y + n < region_end {
                 buf[(x, y + n)].clone()
             } else {
                 Cell::default()
@@ -423,6 +447,37 @@ mod tests {
         t.draw(|f| f.render_widget(Paragraph::new("fresh"), Rect::new(0, 3, 20, 1)))
             .unwrap();
         assert_eq!(rows(&t)[3], "fresh");
+    }
+
+    /// `commit_scrollback` leaves the protected bottom rows (the composer)
+    /// untouched and commits clean lines — no composer smear (bug B), no stale
+    /// trailing garbage from the longer line it replaced (bug A).
+    #[test]
+    fn commit_scrollback_protects_composer_and_clears_trailing() {
+        let mut t = term(20, 8);
+        t.draw(|f| {
+            // Transcript rows 0..4, then a two-row "composer" of rules at 6,7.
+            for i in 0..4u16 {
+                f.render_widget(Paragraph::new(format!("TT{i}")), Rect::new(0, i, 20, 1));
+            }
+            f.render_widget(Paragraph::new("──────"), Rect::new(0, 6, 20, 1));
+            f.render_widget(Paragraph::new("──────"), Rect::new(0, 7, 20, 1));
+        })
+        .unwrap();
+        let before = rows(&t);
+
+        // Commit two SHORT lines (shorter than the TT rows they draw over),
+        // protecting the bottom 2 rows (the composer).
+        t.commit_scrollback(&[Line::from("C0"), Line::from("C1")], 2)
+            .unwrap();
+
+        let after = rows(&t);
+        assert_eq!(after[6], before[6], "composer row 6 not scrolled/smeared");
+        assert_eq!(after[7], before[7], "composer row 7 not scrolled/smeared");
+        let sb = scrollback(&t);
+        // Clean commit (== "C0", not "C00" with a leftover digit from "TT0").
+        assert!(sb.iter().any(|r| r == "C0"), "C0 committed clean: {sb:?}");
+        assert!(sb.iter().any(|r| r == "C1"), "C1 committed clean: {sb:?}");
     }
 
     #[test]
