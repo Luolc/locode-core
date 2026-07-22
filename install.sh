@@ -122,7 +122,8 @@ if ! path_has_dir "$BIN_DIR"; then
 fi
 
 # Also persist BIN_DIR on PATH for future sessions via a marker-delimited
-# block in the shell rc file (replaced on re-runs, never duplicated).
+# block in the shell rc file. On re-runs the block is replaced *in place*
+# (position-stable) — never duplicated, never relocated to the end.
 marker_open="# >>> locode installer >>>"
 marker_close="# <<< locode installer <<<"
 shell_name="$(basename "${SHELL:-}")"
@@ -141,15 +142,22 @@ if [ -n "$rc_file" ]; then
         block="export PATH=\"$BIN_DIR:\$PATH\""
     fi
     if [ -f "$rc_file" ] && grep -qs "$marker_open" "$rc_file"; then
+        # Replace the body between the markers where it already sits, keeping
+        # the block in its current position (so a re-run/update never moves it
+        # to the end of the file). Malformed (open marker, no close) → the
+        # tail is left intact; the block is rewritten from the open marker on.
         rc_tmp="$rc_file.tmp.$$"
-        awk -v m1="$marker_open" -v m2="$marker_close" '
-            $0 == m1 { skip=1; next }
-            $0 == m2 { skip=0; next }
-            !skip { print }
+        awk -v m1="$marker_open" -v m2="$marker_close" -v body="$block" '
+            $0 == m1 { print; print body; skip=1; next }
+            $0 == m2 { skip=0; print; next }
+            skip     { next }
+            { print }
         ' "$rc_file" > "$rc_tmp" && mv "$rc_tmp" "$rc_file"
+        echo "Updated $BIN_DIR in PATH in $rc_file" >&2
+    else
+        printf '\n%s\n%s\n%s\n' "$marker_open" "$block" "$marker_close" >> "$rc_file"
+        echo "Added $BIN_DIR to PATH in $rc_file" >&2
     fi
-    printf '\n%s\n%s\n%s\n' "$marker_open" "$block" "$marker_close" >> "$rc_file"
-    echo "Added $BIN_DIR to PATH in $rc_file" >&2
     # macOS login shells read .bash_profile, not .bashrc.
     if [ "$shell_name" = "bash" ] && [ "$(uname -s)" = "Darwin" ] \
         && [ -f "$HOME/.bash_profile" ] && ! grep -qs 'bashrc' "$HOME/.bash_profile"; then
