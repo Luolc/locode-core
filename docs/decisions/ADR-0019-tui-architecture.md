@@ -28,6 +28,11 @@ the load-bearing architectural decisions so they survive the spec's churn.
    overlay). Grok's Minimal mode / codex's signature, chosen against Claude
    Code's documented repaint-region failure (59 GB RSS post-mortem). No
    alt-screen, no owned scrollback, no terminal forks.
+   **→ Superseded by [ADR-0022](ADR-0022-vendored-terminal-relative-frame.md)
+   (2026-07-22):** to get Claude Code's dynamic bottom-pinned composer, the
+   fixed-height inline + `insert_before` model is replaced by a minimal
+   *vendored* terminal running a relative-frame render (LF-commit to native
+   scrollback, erase-up on shrink). Everything else in this ADR stands.
 3. **Runtime**: dedicated input-reader OS thread (`poll+read` → mpsc; never
    `EventStream` in `select!` — crossterm #936); one biased `tokio::select!`;
    engine-event arm gated on an empty input queue with bounded batch drain;
@@ -108,3 +113,19 @@ release only the unified `locode`. Done in this change:
 locode-exec` edge — is deferred; it is a mechanical move with no user-visible
 change, scheduled when the headless/TUI split is next touched. Until then the
 `locode-exec` *crate* remains, only its binary target is no longer released.
+
+## Amendment (2026-07-22): rendering decision superseded by ADR-0022
+
+The **Rendering** decision (§Decision.2) — fixed-height `Viewport::Inline` +
+`insert_before`, "no terminal forks", with dynamic height deferred and
+codex-style DECSTBM writes rejected — is **superseded by
+[ADR-0022](ADR-0022-vendored-terminal-relative-frame.md)**. To deliver Claude
+Code's dynamic, bottom-pinned composer (grow/shrink with the transcript, caret
+glued to the bottom line, no scrollback blanks), `locode-tui` gains a **minimal
+vendored terminal** running a *relative-frame* render: the composer is painted
+last (bottom-pinning is emergent), growth commits overflow to native scrollback
+via `LF`, and shrink erases up + repaints (never a reverse scroll). Two
+incremental attempts on this ADR's model — `scroll_region_down` (scrollback
+blanks) and tail-in-viewport (streaming collision) — are documented there as
+rejected. The crate shape, reducer loop, runtime, and robustness decisions of
+this ADR are unchanged; only the rendering substrate moves.
