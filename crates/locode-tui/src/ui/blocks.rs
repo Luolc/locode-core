@@ -18,6 +18,15 @@ const GUTTER: usize = 2;
 /// nothing hugs the terminal edge). User request 2026-07-22.
 const MARGIN: u16 = 2;
 
+/// Background of the user-prompt band (grok's `RenderBlock::UserPrompt`
+/// full-pane fill; codex's `user_message_bg`). We follow the terminal theme
+/// rather than a hard RGB: `Color::DarkGray` is the ANSI bright-black palette
+/// slot, so the band renders as "one step above the background" under whatever
+/// theme the user runs — the same palette-relative trick the code highlighter
+/// uses (`ui/highlight.rs`). When a real color-theme system lands we can swap
+/// this for a dedicated band color or codex's terminal-bg blend.
+const BAND_BG: Color = Color::DarkGray;
+
 /// Prepend the left margin to a rendered line, preserving its line-level style.
 fn with_left_margin(line: Line<'static>) -> Line<'static> {
     let mut spans = Vec::with_capacity(line.spans.len() + 1);
@@ -68,6 +77,11 @@ impl Block {
     /// `MARGIN + 2` (the same column as the composer's input text).
     #[must_use]
     pub fn render(&self, width: u16) -> Vec<Line<'static>> {
+        // The user prompt is a full-bleed shaded band (edge-to-edge bg fill), so
+        // it bypasses the inset-margin path the other blocks share.
+        if let Block::UserPrompt(text) = self {
+            return render_user_prompt(text, width);
+        }
         let inner = width.saturating_sub(2 * MARGIN);
         self.render_inner(inner)
             .into_iter()
@@ -78,17 +92,8 @@ impl Block {
     fn render_inner(&self, width: u16) -> Vec<Line<'static>> {
         let dim = Style::default().add_modifier(Modifier::DIM);
         match self {
-            Block::UserPrompt(text) => {
-                let mut lines = vec![Line::from("")];
-                for (i, l) in text.lines().enumerate() {
-                    let prefix = if i == 0 { "❯ " } else { "  " };
-                    lines.push(Line::styled(
-                        format!("{prefix}{l}"),
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ));
-                }
-                lines
-            }
+            // Rendered by `render` as a full-width band (never reaches here).
+            Block::UserPrompt(_) => unreachable!("UserPrompt renders as a band"),
             Block::AssistantText(text) => {
                 // A leading ● bullet on the first line, the rest hanging-indented
                 // under it (Claude Code's message hierarchy). The 2-col gutter is
@@ -160,6 +165,85 @@ impl Block {
     }
 }
 
+/// Render the user prompt as a full-width shaded band (grok's
+/// `RenderBlock::UserPrompt`; codex's `UserHistoryCell`): a leading unshaded
+/// separator, one blank shaded row (vpad), the `❯ `-prefixed wrapped text, and
+/// one closing blank shaded row. Every band row is padded with spaces to the
+/// full `width` so the [`BAND_BG`] fill spans edge-to-edge (ratatui only styles
+/// the cells a span covers — the pad is what carries the bg to the right edge).
+/// Text stays at column 4 (2-col margin + `❯ `), aligning with the assistant
+/// bullet and the composer input; a 2-col right margin keeps prose off the
+/// band's right edge. No timestamp in v1 (grok's is off by default).
+fn render_user_prompt(text: &str, width: u16) -> Vec<Line<'static>> {
+    let band = Style::default().bg(BAND_BG);
+    let total = usize::from(width);
+    // Left inset = MARGIN + `❯ ` (= col 4); right inset = MARGIN. What's left is
+    // the wrap width for the prompt text.
+    let content_width = total
+        .saturating_sub(usize::from(MARGIN) * 2 + GUTTER)
+        .max(4);
+
+    let band_row = |body: String| -> Line<'static> {
+        let pad = total.saturating_sub(body.chars().count());
+        let mut spans = vec![Span::styled(body, band)];
+        if pad > 0 {
+            spans.push(Span::styled(" ".repeat(pad), band));
+        }
+        Line::from(spans)
+    };
+
+    // Leading unshaded separator + top vpad, then content, then bottom vpad.
+    let mut lines = vec![Line::from(""), band_row(String::new())];
+    for (i, physical) in wrap_plain(text, content_width).into_iter().enumerate() {
+        let lead = if i == 0 { "  ❯ " } else { "    " };
+        lines.push(band_row(format!("{lead}{physical}")));
+    }
+    lines.push(band_row(String::new()));
+    lines
+}
+
+/// Greedy word-wrap of plain text to `width` columns, preserving the user's hard
+/// line breaks (`\n`) and hard-splitting any word longer than `width`. Runs of
+/// intra-line whitespace collapse to single spaces (this is an echo, not an
+/// editor). Operates on `char`s so multi-byte input never slices mid-codepoint.
+fn wrap_plain(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut out = Vec::new();
+    for src in text.split('\n') {
+        let mut cur = String::new();
+        let mut cur_len = 0usize;
+        let flush = |cur: &mut String, cur_len: &mut usize, out: &mut Vec<String>| {
+            out.push(std::mem::take(cur));
+            *cur_len = 0;
+        };
+        for word in src.split_whitespace() {
+            let mut word: Vec<char> = word.chars().collect();
+            while word.len() > width {
+                if cur_len > 0 {
+                    flush(&mut cur, &mut cur_len, &mut out);
+                }
+                out.push(word[..width].iter().collect());
+                word.drain(..width);
+            }
+            let wlen = word.len();
+            if cur_len == 0 {
+                cur.extend(&word);
+                cur_len = wlen;
+            } else if cur_len + 1 + wlen <= width {
+                cur.push(' ');
+                cur.extend(&word);
+                cur_len += 1 + wlen;
+            } else {
+                flush(&mut cur, &mut cur_len, &mut out);
+                cur.extend(&word);
+                cur_len = wlen;
+            }
+        }
+        out.push(cur);
+    }
+    out
+}
+
 /// Tool body, head/tail-kept with a middle marker past the cap (codex's
 /// shape: `… +N lines`), each line dimmed and indented.
 fn truncated_body(body: &str, width: u16) -> Vec<Line<'static>> {
@@ -228,10 +312,53 @@ mod tests {
     }
 
     #[test]
-    fn user_prompt_renders_with_prefix_and_multiline_indent() {
-        let lines = text_of(&Block::UserPrompt("a\nb".into()).render(40));
-        // 2-col global margin, then the ❯ prefix (text lands at col 4).
-        assert_eq!(lines, vec!["  ", "  ❯ a", "    b"]);
+    fn user_prompt_renders_as_full_width_shaded_band() {
+        let block = Block::UserPrompt("a\nb".into());
+        let lines = block.render(40);
+        let s = text_of(&lines);
+        // Unshaded separator, top vpad, two content rows, bottom vpad.
+        assert_eq!(s.len(), 5, "{s:?}");
+        assert_eq!(s[0], "", "leading separator is unshaded");
+        assert!(s[1].trim().is_empty(), "top vpad row: {:?}", s[1]);
+        // `❯` sits at col 2, text at col 4 (2-col margin + prefix).
+        assert!(s[2].starts_with("  ❯ a"), "{:?}", s[2]);
+        assert!(
+            s[3].starts_with("    b"),
+            "continuation indents to col 4: {:?}",
+            s[3]
+        );
+        assert!(s[4].trim().is_empty(), "bottom vpad row: {:?}", s[4]);
+        // Every band row is padded to the full width so the fill spans edge-to-edge.
+        for row in &s[1..] {
+            assert_eq!(row.chars().count(), 40, "band row full width: {row:?}");
+        }
+        // The band carries the theme-relative background on its shaded rows.
+        assert_eq!(lines[2].spans[0].style.bg, Some(BAND_BG), "content row bg");
+        assert_eq!(lines[1].spans[0].style.bg, Some(BAND_BG), "vpad row bg");
+        assert_eq!(
+            lines[0].spans.first().and_then(|s| s.style.bg),
+            None,
+            "separator unshaded"
+        );
+    }
+
+    #[test]
+    fn user_prompt_wraps_long_lines_within_the_band() {
+        let block = Block::UserPrompt("one two three four five six seven".into());
+        let lines = block.render(20);
+        let s = text_of(&lines);
+        // Content wraps to width; every band row stays exactly 20 wide.
+        for row in &s[1..] {
+            assert_eq!(row.chars().count(), 20, "band row full width: {row:?}");
+        }
+        // More than one content row was produced (it wrapped).
+        let content_rows = s[2..s.len() - 1].len();
+        assert!(content_rows > 1, "should wrap: {s:?}");
+        assert!(
+            s[2].starts_with("  ❯ "),
+            "first row keeps the prompt prefix: {:?}",
+            s[2]
+        );
     }
 
     #[test]

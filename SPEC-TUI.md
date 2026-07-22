@@ -126,7 +126,10 @@ their source text).
 **Blocks.** `Block` enum, each owning its source and rendering to `Vec<Line>`
 at a given width:
 
-- `UserPrompt(text)` — `❯ `-prefixed, dim accent.
+- `UserPrompt(text)` — a **full-width shaded band** (`Color::DarkGray`,
+  theme-relative), `❯ `-prefixed text at col 4 with a blank shaded row of
+  vertical padding above and below (grok's `RenderBlock::UserPrompt` fill +
+  codex's `user_message_bg`; ADR-0019 amendment 2026-07-22). No timestamp in v1.
 - `AssistantText(markdown)` — pulldown-cmark styling.
 - `ToolCall { name, one_line_args, outcome }` — **one shape in v1**: a
   compact line `• run_terminal_cmd cargo test — ok (1.2s)`, with the

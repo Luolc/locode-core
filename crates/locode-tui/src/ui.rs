@@ -6,9 +6,10 @@
 //! loop's `scroll_up` (no `insert_before`). Blank rows above the tail read as
 //! margin.
 
+use chrono::{DateTime, Local};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Modifier, Style};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::{App, Hint, RunState};
@@ -80,7 +81,10 @@ pub fn draw(
         frame.render_widget(Paragraph::new(queue_lines(app)), queue_area);
     }
     app.composer.render(frame, composer_area);
-    frame.render_widget(Paragraph::new(footer_line(app)), footer_area);
+    frame.render_widget(
+        Paragraph::new(footer_line(app, footer_area.width)),
+        footer_area,
+    );
 }
 
 /// The non-tail geometry for the next frame: the screen-capped composer height
@@ -173,20 +177,62 @@ fn status_line(app: &App) -> Line<'static> {
     )
 }
 
+/// A 2-col right margin for the footer clock, mirroring the transcript's left
+/// margin so the time doesn't hug the terminal edge.
+const FOOTER_RIGHT_MARGIN: usize = 2;
+
 /// The bottom status line: `cwd · model · N tok` when idle (user choice,
-/// 2026-07-22), replaced by the transient armed-key hints when one is active.
-/// Git branch and cost/usage-with-cap are deferred (named extension points).
-fn footer_line(app: &App) -> Line<'static> {
+/// 2026-07-22) on the left, replaced by the transient armed-key hints when one
+/// is active; the current local date+time is right-aligned on the same row
+/// (user request 2026-07-22). Git branch and cost/usage-with-cap are deferred
+/// (named extension points).
+fn footer_line(app: &App, width: u16) -> Line<'static> {
     let dim = Style::default().add_modifier(Modifier::DIM);
-    let text = match app.hint {
+    let left = match app.hint {
         Some(Hint::QuitArmed) => "press ctrl+c again to quit".to_string(),
         Some(Hint::ClearArmed) => "press esc again to clear".to_string(),
         Some(Hint::Cancelling) => "cancelling — esc again to retry".to_string(),
         None => status_text(app),
     };
-    // 4-space left margin so the status text starts at the same column as the
-    // composer's input text (2 margin + "❯ ") — user request 2026-07-22.
-    Line::styled(format!("    {text}"), dim)
+    compose_footer(&left, &footer_clock(&Local::now()), width, dim)
+}
+
+/// Format a clock stamp for the footer: full local date + `HH:MM` + timezone.
+/// Minute precision (not seconds) because the UI has zero idle repaints
+/// (`event_loop`: animation ticks only while a run is active) — the clock
+/// refreshes on the next paint, like a shell prompt, so a ticking-seconds
+/// display would look frozen between keystrokes. `chrono::Local` honors the
+/// `TZ` env var and `/etc/localtime`, so `TZ=America/Los_Angeles locode` (or a
+/// shell that exports `TZ`) sets the zone — matching a zsh status bar; no
+/// in-app timezone config needed.
+fn footer_clock<Tz: chrono::TimeZone>(now: &DateTime<Tz>) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    now.format("%Y-%m-%d %H:%M %Z")
+        .to_string()
+        .trim_end()
+        .to_string()
+}
+
+/// Lay out the footer: 4-space left margin + `left` status, then the
+/// right-aligned `clock`. The 4-space margin aligns the status text with the
+/// composer's input column (2 margin + `❯ `). When the row is too narrow to fit
+/// both without touching, the clock is dropped and only the status shows.
+fn compose_footer(left: &str, clock: &str, width: u16, style: Style) -> Line<'static> {
+    let left_s = format!("    {left}");
+    let total = usize::from(width);
+    let left_len = left_s.chars().count();
+    let clock_len = clock.chars().count();
+    if clock.is_empty() || total < left_len + clock_len + FOOTER_RIGHT_MARGIN + 1 {
+        return Line::styled(left_s, style);
+    }
+    let pad = total - left_len - clock_len - FOOTER_RIGHT_MARGIN;
+    Line::from(vec![
+        Span::styled(left_s, style),
+        Span::styled(" ".repeat(pad), style),
+        Span::styled(clock.to_string(), style),
+    ])
 }
 
 /// Assemble the idle status text from whatever fields are known.
@@ -264,11 +310,47 @@ mod tests {
         app.cwd = Some("~/proj".into());
         app.model = Some("opus".into());
         app.session_tokens = 3100;
-        // 4-space left margin (aligns with the composer's input text).
-        assert_eq!(
-            footer_line(&app).to_string(),
-            "    ~/proj · opus · 3.1k tok"
+        // 4-space left margin (aligns with the composer's input text); the clock
+        // is appended on the right so the left segment is a prefix.
+        let s = footer_line(&app, 80).to_string();
+        assert!(
+            s.starts_with("    ~/proj · opus · 3.1k tok"),
+            "status is the left segment: {s:?}"
         );
+        assert!(s.contains(':'), "right-aligned clock present: {s:?}");
+    }
+
+    #[test]
+    fn footer_clock_formats_full_local_date() {
+        use chrono::{TimeZone, Utc};
+        let dt = Utc.with_ymd_and_hms(2026, 7, 22, 0, 53, 7).unwrap();
+        // Full date, minute precision (no seconds), timezone label.
+        assert_eq!(footer_clock(&dt), "2026-07-22 00:53 UTC");
+    }
+
+    #[test]
+    fn compose_footer_right_aligns_the_clock() {
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let line = compose_footer("~/proj", "2026-07-22 00:53 UTC", 40, dim);
+        let s = line.to_string();
+        assert_eq!(
+            s.chars().count(),
+            40 - FOOTER_RIGHT_MARGIN,
+            "clock ends 2 cols from the edge"
+        );
+        assert!(s.starts_with("    ~/proj"), "left segment first: {s:?}");
+        assert!(
+            s.ends_with("2026-07-22 00:53 UTC"),
+            "clock is right-aligned: {s:?}"
+        );
+    }
+
+    #[test]
+    fn compose_footer_drops_clock_when_too_narrow() {
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        // Width can't fit both — only the left status shows, no panic.
+        let line = compose_footer("~/proj", "2026-07-22 00:53 UTC", 20, dim);
+        assert_eq!(line.to_string(), "    ~/proj");
     }
 
     #[test]
@@ -303,7 +385,7 @@ mod tests {
     fn footer_swaps_to_armed_hints() {
         let mut app = App::new();
         app.hint = Some(Hint::QuitArmed);
-        let line = footer_line(&app);
+        let line = footer_line(&app, 80);
         assert!(line.to_string().contains("again to quit"));
     }
 }
