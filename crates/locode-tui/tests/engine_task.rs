@@ -103,10 +103,11 @@ async fn submit_runs_to_completion_and_the_session_continues() {
     let registry = scripted_registry(vec![text_turn("first answer"), text_turn("second answer")]);
     let (tx, mut rx) = engine::spawn(cli(&dir, "mock"), registry);
 
-    let EngineMsg::Ready { model } = recv(&mut rx).await else {
+    let EngineMsg::Ready { model, cwd } = recv(&mut rx).await else {
         panic!("first message must be Ready");
     };
     assert_eq!(model, "mock-scripted");
+    assert!(!cwd.is_empty(), "cwd is reported for the status line");
 
     let (report, saw_user, saw_assistant) = run_once(&tx, &mut rx, "say hi").await;
     assert!(saw_user && saw_assistant, "both turns streamed");
