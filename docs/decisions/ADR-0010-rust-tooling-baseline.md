@@ -81,3 +81,15 @@ was considered and declined for now: the hand-rolled workflow already exists
 and the script is ~170 lines; revisit if Homebrew/MSI/self-update surfaces
 are wanted. macOS installs resolve `latest` to the first release tagged after
 this amendment (earlier releases carry Linux assets only).
+
+## Amendment (2026-07-21): 0.1.5 ships `locode`; the installer switches to it
+
+From 0.1.5, the release workflow builds **both** the unified `locode` agent
+(interactive TUI + `-p` headless; Task 28 / ADR-0019 amendment) and
+`locode-exec`, attaching each per target with sha256. `install.sh` now installs
+**`locode`** (asset `locode-<target>.tar.gz` → `~/.locode/bin/locode`); the
+one-liner and update flow are otherwise unchanged. `locode-exec` binaries stay
+in the release this version for existing users; the binary's retirement is the
+ADR-0019 follow-up. Source-build fallback for the agent is
+`cargo install --git … locode-app` (locode-app is `publish = false`);
+`locode-exec` remains `cargo install`-able from crates.io.

@@ -17,7 +17,7 @@ tools into their own agent loop without using our engine.
 
 ## Install
 
-Prebuilt `locode-exec` binaries for macOS and Linux (one command to install,
+Prebuilt `locode` binaries for macOS and Linux (one command to install,
 re-run it to update):
 
 ```sh
@@ -26,11 +26,13 @@ curl -fsSL https://raw.githubusercontent.com/luolc/locode-core/main/install.sh |
 
 The script installs to `~/.locode/bin` (override with `LOCODE_BIN_DIR`),
 verifies the sha256 checksum, and puts the binary on your PATH. Pass a version
-for a specific release: `… | bash -s 0.1.4`. The search tools shell out to
-[ripgrep](https://github.com/BurntSushi/ripgrep) — have `rg` on PATH or point
-`LOCODE_RG_PATH` at a binary.
+for a specific release: `… | bash -s 0.1.5`. Then run `locode` for the
+interactive agent or `locode -p "task"` for a headless one-shot. The search
+tools shell out to [ripgrep](https://github.com/BurntSushi/ripgrep) — have `rg`
+on PATH or point `LOCODE_RG_PATH` at a binary.
 
-Or build from source: `cargo install locode-exec`.
+Or build from source: `cargo install --git https://github.com/Luolc/locode-core locode-app`.
+(The minimal headless binary is also published: `cargo install locode-exec`.)
 
 ## Quick start
 

@@ -45,9 +45,12 @@ jobs:
         if: startsWith(matrix.os, 'ubuntu')
         with:
           target: ${{ matrix.target }}
+      # Ship both the unified `locode` agent (TUI + `-p` headless; the
+      # installer's binary from 0.1.5) and `locode-exec` (retained this
+      # release for existing users; retire planned — ADR-0019 amendment).
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
-          bin: locode-exec
+          bin: locode,locode-exec
           target: ${{ matrix.target }}
           tar: unix
           checksum: sha256
