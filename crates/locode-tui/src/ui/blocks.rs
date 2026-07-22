@@ -14,6 +14,20 @@ const TOOL_BODY_MAX_LINES: usize = 6;
 /// Left gutter width for the message bullet (`● `) and hanging indent.
 const GUTTER: usize = 2;
 
+/// Uniform left/right margin for transcript content (columns of blank space so
+/// nothing hugs the terminal edge). User request 2026-07-22.
+const MARGIN: u16 = 2;
+
+/// Prepend the left margin to a rendered line, preserving its line-level style.
+fn with_left_margin(line: Line<'static>) -> Line<'static> {
+    let mut spans = Vec::with_capacity(line.spans.len() + 1);
+    spans.push(Span::raw(" ".repeat(MARGIN as usize)));
+    spans.extend(line.spans);
+    let mut out = Line::from(spans);
+    out.style = line.style;
+    out
+}
+
 /// One finalized transcript entry.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Block {
@@ -48,9 +62,20 @@ pub enum Block {
 }
 
 impl Block {
-    /// Render to pre-wrapped lines at `width` for `insert_before`.
+    /// Render to pre-wrapped lines at `width` for `insert_before`, with a
+    /// uniform left/right margin so content doesn't hug the terminal edge. Every
+    /// block's `● `/`❯ ` prefix then sits at the margin, so text aligns at
+    /// `MARGIN + 2` (the same column as the composer's input text).
     #[must_use]
     pub fn render(&self, width: u16) -> Vec<Line<'static>> {
+        let inner = width.saturating_sub(2 * MARGIN);
+        self.render_inner(inner)
+            .into_iter()
+            .map(with_left_margin)
+            .collect()
+    }
+
+    fn render_inner(&self, width: u16) -> Vec<Line<'static>> {
         let dim = Style::default().add_modifier(Modifier::DIM);
         match self {
             Block::UserPrompt(text) => {
@@ -69,7 +94,7 @@ impl Block {
                 // under it (Claude Code's message hierarchy). The 2-col gutter is
                 // the left margin; keep a right margin too so prose doesn't hug
                 // either edge.
-                let content_width = usize::from(width).saturating_sub(GUTTER + 2).max(4);
+                let content_width = usize::from(width).saturating_sub(GUTTER).max(4);
                 let mut lines = vec![Line::from("")];
                 for (i, line) in crate::ui::markdown::render(text, content_width)
                     .into_iter()
@@ -198,7 +223,8 @@ mod tests {
     #[test]
     fn user_prompt_renders_with_prefix_and_multiline_indent() {
         let lines = text_of(&Block::UserPrompt("a\nb".into()).render(40));
-        assert_eq!(lines, vec!["", "❯ a", "  b"]);
+        // 2-col global margin, then the ❯ prefix (text lands at col 4).
+        assert_eq!(lines, vec!["  ", "  ❯ a", "    b"]);
     }
 
     #[test]
@@ -252,7 +278,12 @@ mod tests {
             .iter()
             .find(|l| l.to_string().contains("first"))
             .expect("content line");
-        assert!(first.to_string().starts_with("● "), "{:?}", text_of(&lines));
+        // 2-col global margin, then the ● bullet.
+        assert!(
+            first.to_string().starts_with("  ● "),
+            "{:?}",
+            text_of(&lines)
+        );
     }
 
     #[test]
