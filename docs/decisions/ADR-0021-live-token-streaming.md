@@ -93,6 +93,44 @@ codex `sse/responses.rs:331-380`, `session/turn.rs:2062,2159-2176`; grok-build
 `chat_completions.rs:212-255`, `events.ts:46-64`; opencode `tool-stream.ts:52-78`,
 `protocol/anthropic-messages.ts:661-768`.)
 
+## Streaming pacing / coalescing in the reference harnesses
+
+Granularity (above) is *what* streams; pacing is *how fast it reaches the
+screen*. A second source pass (2026-07-22) on the delta→render cadence:
+
+| Harness | Display / flush boundary | Redraw throttle | Channel |
+|---|---|---|---|
+| codex | newline-gate → completed lines to a FIFO, partial line kept as a mutable "tail" cell; queued lines revealed by a **120 Hz commit-tick** (1 line/tick smooth, adaptive **batch-drain** on backlog ≥8 lines / 120 ms) | 8.33 ms tick + 120 fps redraw coalescing | **unbounded, no backpressure** |
+| grok-build | append chunk; **batch-drain ≤32** queued ACP msgs, abort on a pending keystroke | **16 ms** min-draw + deferred coalesced repaint | **unbounded** mpsc; smoothing at the drain/throttle layer |
+| claude-code | display = substring up to last `\n` (line-by-line) | Ink's **~16 ms** render batch | no queue; React state batching |
+| opencode | per-delta, no gating | none (Solid fine-grained reactivity) | unbounded; only a >100-message eviction cap |
+
+Two patterns are near-universal and drive §Decision.3–4:
+
+1. **No channel is bounded and none applies backpressure toward the model.**
+   Bounding risks stalling the SSE read; coalescing lives entirely on the
+   *consumer* side.
+2. **Coalescing = drain all pending deltas, then one repaint per ~16 ms frame**
+   (grok: batch-drain ≤32 + 16 ms min-draw + deferred draw; claude via Ink's
+   ~16 ms; codex via frame coalescing). Newline-gating the *display* (codex +
+   claude) is a render-layer choice, not a channel concern.
+
+**Key consequence for us: `locode-tui`'s event loop already implements grok's
+pattern** — `ENGINE_DRAIN_MAX = 32` batch-drain, `MIN_DRAW_INTERVAL = 16 ms`, and
+`deferred_draw` coalescing (`crates/locode-tui/src/event_loop.rs`). A token flood
+already collapses to ≤1 repaint per 16 ms frame *for free*, so the first slice
+needs **no channel bound and no engine-side coalescing** — deltas flow through the
+loop we already built, and the only new pacing work is **newline-gating in the
+render layer**. Codex's 120 Hz line-reveal "typing animation" is optional polish,
+deferred.
+
+(Citations: codex `streaming/mod.rs`, `streaming/controller.rs`,
+`markdown_stream.rs:87` (newline gate), `streaming/chunking.rs:85-116` (adaptive
+policy), `app.rs:392-396` (commit tick); grok-build `app/event_loop.rs:1704-1737`
+(batch-drain + deferred draw), `display_refresh.rs:12` (16 ms default); claude-code
+`src/utils/messages.ts:3048-3054`, `src/screens/REPL.tsx:1458-1473` (Ink throttle +
+newline gate); opencode `session/processor.ts:499-509`, `tui/src/context/sync.tsx:392-408`.)
+
 ## Decision (proposed)
 
 Add token streaming as an **opt-in capability layered over the existing loop**,
@@ -143,11 +181,16 @@ Streaming is **display-only** for assistant text/thinking; tool execution is
 unaffected.
 
 ### 4. TUI layer — a streaming cell + incremental markdown (study Phase 4)
-Consume `Event::MessageDelta` into a live "streaming cell" in the bounded live
-region; finalize to `insert_before` on turn end. Adopt **codex's markdown
-streaming model** (from the study): buffer deltas, re-parse the whole buffer
-gated at newline boundaries, stable-prefix / mutable-tail. Simplest design with
-a provable "streamed frame == final frame" guarantee.
+Consume `Event::MessageDelta` into a live "streaming cell" in the live region;
+finalize to scrollback (ADR-0022) on turn end. Adopt **codex's markdown streaming
+model** (from the study): buffer deltas, re-parse the whole buffer gated at
+newline boundaries, stable-prefix / mutable-tail. Simplest design with a provable
+"streamed frame == final frame" guarantee. **Pacing rides the loop we already
+have** (see the pacing section): deltas coalesce through the existing
+`ENGINE_DRAIN_MAX = 32` batch-drain + `MIN_DRAW_INTERVAL = 16 ms` + `deferred_draw`
+paint (grok's pattern) — no channel bound, no engine-side coalescing. The only new
+pacing work is newline-gating the display; codex's 120 Hz typing animation is
+deferred polish.
 
 ## Alternatives Considered
 
@@ -177,15 +220,34 @@ a provable "streamed frame == final frame" guarantee.
   deltas and read the final `Report`.
 
 ## Open Questions (for review)
+
+*Review 2026-07-22 (user): Q1–Q3 resolved below; Q4–Q6 still open.*
+
 1. **`stream-json` output**: keep it whole-message (trace stability) and treat
-   deltas as a TUI-only concern, or add an opt-in `--include-deltas`? *Lean:
-   keep whole-message; deltas are live-only.*
+   deltas as a TUI-only concern, or add an opt-in `--include-deltas`?
+   **→ RESOLVED: keep whole-message; deltas are live-only.** This is exactly
+   Claude Code's behavior — `--output-format stream-json` emits whole messages by
+   default, and token-level chunks are opt-in behind `--include-partial-messages`
+   (claude-code `src/main.tsx:976`, env `CLAUDE_CODE_INCLUDE_PARTIAL_MESSAGES`).
+   A future `--include-deltas` mirroring that flag is the additive extension
+   (behind the `#[non_exhaustive]` `Event` enum); not built in the first slice.
 2. **Cancellation mid-stream**: the cancel token must abort the in-flight SSE
-   read, not just between turns. Confirm the wire's HTTP client drops the
-   response stream on cancel (ADR-0018 interaction).
+   read, not just between turns.
+   **→ RESOLVED: abort immediately, discard the partial.** A mid-stream cancel
+   drops the HTTP response stream the moment the ADR-0018 token trips (race the
+   SSE read against the token in the wire; dropping the `reqwest` response future
+   closes the connection — no new cancel surface). The partial assistant text is
+   **discarded** (not appended to history); the final `Report` still reads
+   `Status::Cancelled`. "Cancel = this turn didn't happen."
 3. **Event volume / backpressure**: deltas are many small events on the
-   currently-unbounded engine→UI channel. Bound it, or coalesce deltas
-   (e.g. flush per newline / per ~16 ms) at the engine boundary?
+   currently-unbounded engine→UI channel. Bound it, or coalesce at the engine?
+   **→ RESOLVED: neither — lean on the existing paint loop.** Per the pacing
+   section, no reference harness bounds its channel or backpressures the model;
+   coalescing is consumer-side, and `locode-tui`'s loop already does grok's
+   version of it (`ENGINE_DRAIN_MAX = 32` + `MIN_DRAW_INTERVAL = 16 ms` +
+   `deferred_draw`). So: keep the channel unbounded, add **no** engine-side
+   coalescing, and newline-gate at the render layer. Codex's 120 Hz typing
+   animation is deferred polish.
 4. **Thinking deltas**: stream reasoning text live (like the reply) or keep
    thinking collapsed until done? *Lean: stream, dimmed, collapsible later.*
 5. **Ordering vs. the delta callback's `&mut dyn FnMut`**: is a callback the
