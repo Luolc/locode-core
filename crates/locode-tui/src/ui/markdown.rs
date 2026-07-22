@@ -2,18 +2,19 @@
 //!
 //! A pulldown-cmark pass covering the constructs an agent actually emits:
 //! headings (bold), lists (bulleted/ordered, nested, hanging-indented),
-//! fenced/inline code, block quotes, and inline bold/italic/strikethrough.
-//! **No syntect yet** — code is styled cyan/dim, not highlighted (a separate,
-//! dependency-gated slice). The pattern follows codex's `markdown_render.rs`:
-//! parse to events, collect inline content **preserving exact whitespace**, and
-//! width-wrap per block with a first-line prefix + hanging continuation indent.
+//! inline code (cyan), fenced code (syntect-highlighted via `super::highlight`),
+//! block quotes, inline bold/italic/strikethrough, and GFM tables (aligned
+//! columns, bold header + dim rule; `render_table`). The pattern follows codex's
+//! `markdown_render.rs`: parse to events, collect inline content **preserving
+//! exact whitespace**, and width-wrap per block with a first-line prefix + a
+//! hanging continuation indent.
 //!
 //! Whitespace correctness is the load-bearing property here: inline styling
 //! (code, bold) must not add or drop spaces around a span. We therefore never
 //! reconstruct spacing from `split_whitespace`; we keep the source text verbatim
 //! in styled segments and only collapse whitespace at the word-wrap boundary.
 
-use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Alignment, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
@@ -21,7 +22,7 @@ use ratatui::text::{Line, Span};
 #[must_use]
 pub fn render(text: &str, width: usize) -> Vec<Line<'static>> {
     let mut w = Writer::new(width);
-    let parser = Parser::new_ext(text, Options::ENABLE_STRIKETHROUGH);
+    let parser = Parser::new_ext(text, Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES);
     for event in parser {
         w.event(event);
     }
@@ -34,6 +35,11 @@ struct Seg {
     text: String,
     style: Style,
 }
+
+/// A styled word: a run of non-space chars, each carrying its own style.
+type Word = Vec<(char, Style)>;
+/// One table cell's content, tokenized into styled words.
+type CellWords = Vec<Word>;
 
 /// Accumulates inline segments per block, then wraps them into styled lines.
 struct Writer {
@@ -56,6 +62,15 @@ struct Writer {
     /// Marker to render before the first line of the current list item.
     item_marker: Option<String>,
     quote_depth: u32,
+    /// Table accumulation (pulldown emits cells as inline runs; we lay them out
+    /// as aligned columns at the closing `Table`). Column alignments, the rows
+    /// collected so far (each cell = its inline segments), the row being built,
+    /// and how many leading rows are the header.
+    table_aligns: Vec<Alignment>,
+    table_rows: Vec<Vec<Vec<Seg>>>,
+    table_row: Vec<Vec<Seg>>,
+    table_head_rows: usize,
+    in_table_cell: bool,
 }
 
 impl Writer {
@@ -74,6 +89,11 @@ impl Writer {
             list_stack: Vec::new(),
             item_marker: None,
             quote_depth: 0,
+            table_aligns: Vec::new(),
+            table_rows: Vec::new(),
+            table_row: Vec::new(),
+            table_head_rows: 0,
+            in_table_cell: false,
         }
     }
 
@@ -172,6 +192,19 @@ impl Writer {
                 self.gap();
                 self.quote_depth += 1;
             }
+            Tag::Table(aligns) => {
+                self.flush_inline();
+                self.gap();
+                self.table_aligns.clone_from(aligns);
+                self.table_rows.clear();
+                self.table_row.clear();
+                self.table_head_rows = 0;
+            }
+            Tag::TableHead | Tag::TableRow => self.table_row = Vec::new(),
+            Tag::TableCell => {
+                self.in_table_cell = true;
+                self.inline.clear();
+            }
             Tag::Paragraph if self.list_stack.is_empty() && self.quote_depth == 0 => {
                 self.gap();
             }
@@ -200,6 +233,17 @@ impl Writer {
                 self.flush_inline();
                 self.quote_depth = self.quote_depth.saturating_sub(1);
             }
+            TagEnd::TableCell => {
+                self.in_table_cell = false;
+                let cell = std::mem::take(&mut self.inline);
+                self.table_row.push(cell);
+            }
+            TagEnd::TableHead => {
+                self.table_rows.push(std::mem::take(&mut self.table_row));
+                self.table_head_rows = self.table_rows.len();
+            }
+            TagEnd::TableRow => self.table_rows.push(std::mem::take(&mut self.table_row)),
+            TagEnd::Table => self.render_table(),
             _ => {}
         }
     }
@@ -235,6 +279,86 @@ impl Writer {
             for raw in code.split('\n') {
                 self.out
                     .push(Line::from(Span::styled(format!("    {raw}"), dim)));
+            }
+        }
+    }
+
+    /// Lay out the accumulated table as aligned columns: natural column widths
+    /// shrunk proportionally to fit, cells wrapped, header bold with a dim rule
+    /// under it. No box borders (Claude-Code-style clean columns).
+    fn render_table(&mut self) {
+        let rows = std::mem::take(&mut self.table_rows);
+        let aligns = std::mem::take(&mut self.table_aligns);
+        let head_rows = std::mem::take(&mut self.table_head_rows);
+        if rows.is_empty() {
+            return;
+        }
+        let n_cols = rows.iter().map(Vec::len).max().unwrap_or(0).max(1);
+
+        // Words per cell + each column's natural (unwrapped) width.
+        let mut cells: Vec<Vec<CellWords>> = Vec::with_capacity(rows.len());
+        let mut col_natural = vec![1usize; n_cols];
+        for row in &rows {
+            let mut rw = Vec::with_capacity(n_cols);
+            for (c, natural_w) in col_natural.iter_mut().enumerate() {
+                let words = row.get(c).map(|s| segs_to_words(s)).unwrap_or_default();
+                let natural =
+                    words.iter().map(Vec::len).sum::<usize>() + words.len().saturating_sub(1);
+                *natural_w = (*natural_w).max(natural);
+                rw.push(words);
+            }
+            cells.push(rw);
+        }
+
+        // Fit: use natural widths if they fit, else shrink proportionally (min 3).
+        let sep = 2usize;
+        let overhead = sep * (n_cols - 1);
+        let natural_sum: usize = col_natural.iter().sum();
+        let col_width: Vec<usize> = if natural_sum + overhead <= self.width || natural_sum == 0 {
+            col_natural.clone()
+        } else {
+            let target = self.width.saturating_sub(overhead).max(n_cols * 3);
+            col_natural
+                .iter()
+                .map(|&w| (w * target / natural_sum).max(3))
+                .collect()
+        };
+        let total: usize = col_width.iter().sum::<usize>() + overhead;
+
+        for (ri, row) in cells.iter().enumerate() {
+            let is_head = ri < head_rows;
+            let cell_lines: Vec<Vec<Line<'static>>> = (0..n_cols)
+                .map(|c| {
+                    let mut lines = wrap_words(&row[c], &[], &[], col_width[c]);
+                    if is_head {
+                        for line in &mut lines {
+                            for span in &mut line.spans {
+                                span.style = span.style.add_modifier(Modifier::BOLD);
+                            }
+                        }
+                    }
+                    lines
+                })
+                .collect();
+            let height = cell_lines.iter().map(Vec::len).max().unwrap_or(1).max(1);
+            let empty = Line::from("");
+            for r in 0..height {
+                let mut spans: Vec<Span<'static>> = Vec::new();
+                for c in 0..n_cols {
+                    if c > 0 {
+                        spans.push(Span::raw("  "));
+                    }
+                    let line = cell_lines[c].get(r).unwrap_or(&empty);
+                    let align = aligns.get(c).copied().unwrap_or(Alignment::None);
+                    pad_into(&mut spans, line, col_width[c], align);
+                }
+                self.out.push(Line::from(spans));
+            }
+            if is_head && ri + 1 == head_rows {
+                self.out.push(Line::styled(
+                    "─".repeat(total),
+                    Style::default().add_modifier(Modifier::DIM),
+                ));
             }
         }
     }
@@ -394,6 +518,24 @@ fn build_line(lead: &[Span<'static>], chars: &[(char, Style)]) -> Line<'static> 
         spans.push(Span::styled(cur, s));
     }
     Line::from(spans)
+}
+
+/// Push a table cell's `line` spans into `out`, padded to `width` per `align`.
+fn pad_into(out: &mut Vec<Span<'static>>, line: &Line<'static>, width: usize, align: Alignment) {
+    let content: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+    let pad = width.saturating_sub(content);
+    let (left, right) = match align {
+        Alignment::Right => (pad, 0),
+        Alignment::Center => (pad / 2, pad - pad / 2),
+        Alignment::Left | Alignment::None => (0, pad),
+    };
+    if left > 0 {
+        out.push(Span::raw(" ".repeat(left)));
+    }
+    out.extend(line.spans.iter().cloned());
+    if right > 0 {
+        out.push(Span::raw(" ".repeat(right)));
+    }
 }
 
 /// A line with no visible content (used as a block separator).
@@ -564,6 +706,52 @@ mod tests {
         // No leading/trailing blank.
         assert!(!out.first().unwrap().is_empty(), "{out:?}");
         assert!(!out.last().unwrap().is_empty(), "{out:?}");
+    }
+
+    #[test]
+    fn table_renders_aligned_columns_with_header_rule() {
+        let md = "| Crate | Role |\n|---|---|\n| proto | pure types |\n| tools | the registry |";
+        let out = texts(&render(md, 40));
+        // No raw pipe rows survive.
+        assert!(
+            !out.iter().any(|l| l.contains('|')),
+            "no raw pipes: {out:?}"
+        );
+        // Header cells present and a dim rule under them.
+        let header = out
+            .iter()
+            .position(|l| l.contains("Crate"))
+            .expect("header");
+        assert!(out[header].contains("Role"), "{out:?}");
+        assert!(out[header + 1].starts_with("──"), "header rule: {out:?}");
+        // Body cells laid out in columns (aligned: "proto" then padding then "pure").
+        assert!(
+            out.iter()
+                .any(|l| l.contains("proto") && l.contains("pure types")),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn table_header_cells_are_bold() {
+        let lines = render("| A | B |\n|---|---|\n| x | y |", 40);
+        assert!(
+            lines.iter().any(|l| has_bold(l, "A")),
+            "{:?}",
+            texts(&lines)
+        );
+    }
+
+    #[test]
+    fn narrow_table_wraps_without_panic_or_overflow() {
+        let md = "| Column one heading | Column two heading |\n|---|---|\n| some longish value | another long value |";
+        let out = render(md, 20);
+        assert!(!out.is_empty());
+        assert!(
+            out.iter().all(|l| l.to_string().chars().count() <= 20),
+            "fits width: {:?}",
+            texts(&out)
+        );
     }
 
     #[test]
