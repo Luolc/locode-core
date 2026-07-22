@@ -129,3 +129,40 @@ incremental attempts on this ADR's model — `scroll_region_down` (scrollback
 blanks) and tail-in-viewport (streaming collision) — are documented there as
 rejected. The crate shape, reducer loop, runtime, and robustness decisions of
 this ADR are unchanged; only the rendering substrate moves.
+
+## Amendment (2026-07-22): user-prompt shaded band + right-aligned footer clock
+
+Two user-directed chrome refinements, grounded in a fresh re-read of grok-build
+and codex (AGENTS.md "planning is a research task"):
+
+- **User prompt renders as a full-width shaded band** (was `❯ `-prefixed dim
+  text). Both reference harnesses draw the user's message as a pure background
+  fill — no border: grok paints every cell of the block rectangle with
+  `theme.bg_light` (`xai-grok-pager/src/scrollback/wrappers/entry_renderer.rs`
+  fill loop; `RenderBlock::UserPrompt`), codex sets the line bg and issues
+  `Clear(UntilNewLine)` (`codex-rs/tui/src/insert_history.rs`;
+  `history_cell/messages.rs` `user_message_bg`), each with one blank shaded row
+  of vertical padding above and below. We adopt the shape: a leading unshaded
+  separator, a top vpad row, the `❯ `-prefixed wrapped text (col 4, aligned with
+  the assistant bullet and composer input), a bottom vpad row; each band row is
+  space-padded to the full width so the fill spans edge-to-edge (ratatui styles
+  only the cells a span covers). **Background is `Color::DarkGray`** — the ANSI
+  bright-black palette slot, so the band follows the user's terminal theme rather
+  than a hard RGB, the same palette-relative approach as code highlighting
+  (`ui/highlight.rs`). Codex's terminal-bg-detection blend and grok's per-theme
+  `bg_light` are deferred to a future color-theme system. **No timestamp in v1**
+  (grok's is off by default behind `/timestamps`; adding one needs a time field
+  on the block and would break `Block: PartialEq` determinism) — deferred.
+  Implemented in `ui/blocks.rs` (`render_user_prompt`).
+
+- **Footer clock**: the bottom status row now right-aligns the current local
+  date + `HH:MM` + timezone (grok/codex both surface a wall clock). Uses
+  `chrono::Local`, which honors the `TZ` env var and `/etc/localtime`, so
+  `TZ=America/Los_Angeles locode` (or a shell that exports `TZ`) sets the zone —
+  no in-app timezone config, matching a zsh status bar (user's mental model,
+  their server and workstation differ in zone). **Minute precision** (not
+  seconds) because the loop has zero idle repaints (`event_loop`: animation ticks
+  only while a run is active) — the clock refreshes on the next paint, like a
+  shell prompt, and a seconds display would look frozen between keystrokes. When
+  the row is too narrow to fit both status and clock, the clock is dropped.
+  Implemented in `ui.rs` (`footer_clock` / `compose_footer`).
