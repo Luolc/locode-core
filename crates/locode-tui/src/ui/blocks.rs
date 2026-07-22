@@ -11,6 +11,9 @@ use ratatui::text::{Line, Span};
 /// (codex keeps 5 for agent commands; `exec_cell/render.rs:33`).
 const TOOL_BODY_MAX_LINES: usize = 6;
 
+/// Left gutter width for the message bullet (`● `) and hanging indent.
+const GUTTER: usize = 2;
+
 /// One finalized transcript entry.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Block {
@@ -62,11 +65,26 @@ impl Block {
                 lines
             }
             Block::AssistantText(text) => {
-                // Leave a small right margin so wrapped prose doesn't hug the
-                // terminal edge (readability; matches the reference harnesses).
-                let content_width = usize::from(width).saturating_sub(2).max(4);
+                // A leading ● bullet on the first line, the rest hanging-indented
+                // under it (Claude Code's message hierarchy). The 2-col gutter is
+                // the left margin; keep a right margin too so prose doesn't hug
+                // either edge.
+                let content_width = usize::from(width).saturating_sub(GUTTER + 2).max(4);
                 let mut lines = vec![Line::from("")];
-                lines.extend(crate::ui::markdown::render(text, content_width));
+                for (i, line) in crate::ui::markdown::render(text, content_width)
+                    .into_iter()
+                    .enumerate()
+                {
+                    let lead = if i == 0 {
+                        Span::styled("● ", Style::default().fg(Color::White))
+                    } else {
+                        Span::raw("  ")
+                    };
+                    let mut spans = Vec::with_capacity(line.spans.len() + 1);
+                    spans.push(lead);
+                    spans.extend(line.spans);
+                    lines.push(Line::from(spans));
+                }
                 lines
             }
             Block::ToolCall {
@@ -81,7 +99,7 @@ impl Block {
                     Style::default().fg(Color::Green)
                 };
                 let mut lines = vec![Line::from(vec![
-                    Span::styled("• ", bullet_style),
+                    Span::styled("● ", bullet_style),
                     Span::styled(name.clone(), Style::default().add_modifier(Modifier::BOLD)),
                     Span::raw(" "),
                     Span::styled(args.clone(), dim),
@@ -95,17 +113,17 @@ impl Block {
                 tokens,
                 elapsed_secs,
             } => {
+                // Subtle dim text, NOT a full-width rule — a `──…──` bar stacked
+                // with the composer's top rule read as a redundant "extra rule"
+                // (user vibe-check, 2026-07-22). Aligned to the message gutter.
                 let label = format!(
-                    " {} · {turns} turn{} · {tokens} tok · {elapsed_secs}s ",
+                    "{} · {turns} turn{} · {tokens} tok · {elapsed_secs}s",
                     status_str(*status),
                     if *turns == 1 { "" } else { "s" },
                 );
-                let fill = usize::from(width).saturating_sub(label.len() + 2);
-                let rule_left = "─".repeat(2);
-                let rule_right = "─".repeat(fill.max(2));
-                vec![Line::styled(format!("{rule_left}{label}{rule_right}"), dim)]
+                vec![Line::styled(format!("  {label}"), dim)]
             }
-            Block::Notice(text) => vec![Line::styled(format!("• {text}"), dim)],
+            Block::Notice(text) => vec![Line::styled(format!("● {text}"), dim)],
         }
     }
 }
@@ -207,7 +225,7 @@ mod tests {
     }
 
     #[test]
-    fn turn_end_separator_shape() {
+    fn turn_end_is_subtle_dim_text_not_a_rule() {
         let lines = text_of(
             &Block::TurnEnd {
                 status: Status::Completed,
@@ -222,13 +240,25 @@ mod tests {
             lines[0].contains("completed · 3 turns · 1234 tok · 41s"),
             "{lines:?}"
         );
-        assert!(lines[0].starts_with("──"), "{lines:?}");
+        // No longer a full-width `──…──` rule (it read as an extra rule).
+        assert!(!lines[0].contains("──"), "should not be a rule: {lines:?}");
+    }
+
+    #[test]
+    fn assistant_text_has_bullet_and_hanging_indent() {
+        let lines = Block::AssistantText("first line here".into()).render(40);
+        // Leading blank, then the bulleted first content line.
+        let first = lines
+            .iter()
+            .find(|l| l.to_string().contains("first"))
+            .expect("content line");
+        assert!(first.to_string().starts_with("● "), "{:?}", text_of(&lines));
     }
 
     #[test]
     fn assistant_text_wraps_to_width() {
-        let lines = text_of(&Block::AssistantText("one two three four five".into()).render(12));
+        let lines = text_of(&Block::AssistantText("one two three four five".into()).render(16));
         assert!(lines.len() > 2, "{lines:?}");
-        assert!(lines.iter().all(|l| l.chars().count() <= 12), "{lines:?}");
+        assert!(lines.iter().all(|l| l.chars().count() <= 16), "{lines:?}");
     }
 }
