@@ -13,7 +13,7 @@
 //! reconstruct spacing from `split_whitespace`; we keep the source text verbatim
 //! in styled segments and only collapse whitespace at the word-wrap boundary.
 
-use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
@@ -47,6 +47,10 @@ struct Writer {
     strike: u32,
     heading: bool,
     in_code_block: bool,
+    /// Language token of the current fenced code block (empty = none/unknown).
+    code_lang: String,
+    /// Buffered code-block text, highlighted as a whole at the closing fence.
+    code_buf: String,
     /// List item markers by nesting depth (`None` = bullet, `Some(n)` = ordered).
     list_stack: Vec<Option<u64>>,
     /// Marker to render before the first line of the current list item.
@@ -65,6 +69,8 @@ impl Writer {
             strike: 0,
             heading: false,
             in_code_block: false,
+            code_lang: String::new(),
+            code_buf: String::new(),
             list_stack: Vec::new(),
             item_marker: None,
             quote_depth: 0,
@@ -124,10 +130,21 @@ impl Writer {
             Tag::Strong => self.bold += 1,
             Tag::Emphasis => self.italic += 1,
             Tag::Strikethrough => self.strike += 1,
-            Tag::CodeBlock(_) => {
+            Tag::CodeBlock(kind) => {
                 self.flush_inline();
                 self.gap();
                 self.in_code_block = true;
+                // The info string may carry attributes (`rust,ignore`); the
+                // language is its first whitespace/comma-delimited token.
+                self.code_lang = match kind {
+                    CodeBlockKind::Fenced(info) => info
+                        .split([' ', '\t', ','])
+                        .next()
+                        .unwrap_or("")
+                        .to_string(),
+                    CodeBlockKind::Indented => String::new(),
+                };
+                self.code_buf.clear();
             }
             Tag::List(first) => {
                 // Emit any pending item text before a nested list opens (tight
@@ -172,6 +189,7 @@ impl Writer {
             TagEnd::Emphasis => self.italic = self.italic.saturating_sub(1),
             TagEnd::Strikethrough => self.strike = self.strike.saturating_sub(1),
             TagEnd::CodeBlock => {
+                self.emit_code_block();
                 self.in_code_block = false;
             }
             TagEnd::List(_) => {
@@ -188,20 +206,37 @@ impl Writer {
 
     fn text(&mut self, t: &str) {
         if self.in_code_block {
-            // Code blocks: dim, indented, no word-wrap (preserve lines for
-            // copy/paste, as codex does). One dim span per source line.
-            let dim = Style::default().add_modifier(Modifier::DIM);
-            for raw in t.split_inclusive('\n') {
-                let line = raw.strip_suffix('\n').unwrap_or(raw);
-                self.out
-                    .push(Line::from(Span::styled(format!("    {line}"), dim)));
-            }
+            // Buffer the whole block; highlight it as one unit at the closing
+            // fence (a syntax highlighter needs full lines, not fragments).
+            self.code_buf.push_str(t);
             return;
         }
         self.inline.push(Seg {
             text: t.to_string(),
             style: self.inline_style(),
         });
+    }
+
+    /// Emit the buffered code block: syntax-highlighted when the language is
+    /// known (indented, no wrap — preserve lines for copy/paste, as codex
+    /// does), else plain dim lines.
+    fn emit_code_block(&mut self) {
+        let code = std::mem::take(&mut self.code_buf);
+        let lang = std::mem::take(&mut self.code_lang);
+        let code = code.strip_suffix('\n').unwrap_or(&code);
+        if let Some(highlighted) = crate::ui::highlight::highlight_lines(code, &lang) {
+            for spans in highlighted {
+                let mut line = vec![Span::raw("    ")];
+                line.extend(spans);
+                self.out.push(Line::from(line));
+            }
+        } else {
+            let dim = Style::default().add_modifier(Modifier::DIM);
+            for raw in code.split('\n') {
+                self.out
+                    .push(Line::from(Span::styled(format!("    {raw}"), dim)));
+            }
+        }
     }
 
     /// The first-line and continuation prefixes for the current block context
@@ -423,6 +458,30 @@ mod tests {
                 .iter()
                 .all(|s| s.style.add_modifier.contains(Modifier::DIM)),
             "dim code: {code:?}"
+        );
+    }
+
+    #[test]
+    fn fenced_code_with_language_is_highlighted() {
+        let md = "```rust\nfn main() { let x = 1; }\n```";
+        let lines = render(md, 80);
+        let code = lines
+            .iter()
+            .find(|l| l.to_string().contains("fn main"))
+            .expect("code line present");
+        assert!(code.to_string().starts_with("    "), "indented: {code:?}");
+        // Highlighted: at least one span carries a color, and it is not the
+        // all-dim plain fallback.
+        assert!(
+            code.spans.iter().any(|s| s.style.fg.is_some()),
+            "colored: {code:?}"
+        );
+        assert!(
+            !code
+                .spans
+                .iter()
+                .all(|s| s.style.add_modifier.contains(Modifier::DIM)),
+            "not the dim fallback: {code:?}"
         );
     }
 
