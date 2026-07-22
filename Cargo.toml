@@ -80,6 +80,18 @@ crossterm = { version = "0.28", features = ["bracketed-paste"] }
 tui-textarea = "0.7"
 # Assistant markdown -> styled lines (no syntect in v1).
 pulldown-cmark = { version = "0.13", default-features = false }
+# Code-block syntax highlighting for the TUI markdown renderer (markdown study
+# Phase 1, docs/research/markdown-rendering-study.md). Both Rust/ratatui
+# references (codex, grok) use this exact stack: syntect + two-face (bat's
+# ~250-language grammar + theme bundles). We select the pure-Rust fancy-regex
+# engine — NOT oniguruma (C) as codex does — because this is our own app UI (not
+# a ported pack, so the fidelity rule doesn't force onig) and a C dependency
+# would complicate the fully-static musl release (the repo is rustls/OpenSSL-free
+# by design, ADR-0007).
+syntect = { version = "5", default-features = false, features = ["default-fancy"] }
+two-face = { version = "0.5", default-features = false, features = [
+    "syntect-default-fancy",
+] }
 
 # Strict-from-empty: these are enabled now, while the crates are empty, so we never pay
 # the churn of adding lints after code exists. See ADR-0010.
