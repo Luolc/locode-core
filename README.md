@@ -3,7 +3,8 @@
 The headless Rust core of **locode**, a custom coding agent: the
 sample→dispatch→append loop, a typed tool registry, faithful per-harness tool
 packs, and a provider/wire abstraction — shipped as a set of library crates
-plus a minimal headless binary (`locode-exec`).
+plus the `locode` binary (run it for the interactive TUI, or `locode -p "task"`
+for a headless one-shot).
 
 ## Why
 
@@ -32,7 +33,6 @@ tools shell out to [ripgrep](https://github.com/BurntSushi/ripgrep) — have `rg
 on PATH or point `LOCODE_RG_PATH` at a binary.
 
 Or build from source: `cargo install --git https://github.com/Luolc/locode-core locode-app`.
-(The minimal headless binary is also published: `cargo install locode-exec`.)
 
 ## Quick start
 
@@ -42,13 +42,15 @@ export LOCODE_BASE_URL=…     # optional: provider endpoint override
 export LOCODE_MODEL=…        # optional: model id override
 
 # One task, headless: one JSON report on stdout, diagnostics on stderr.
-cargo run -p locode-exec -- "summarize this repo" --harness grok
+locode -p "summarize this repo" --harness grok
+# …or from a source checkout, without installing:
+cargo run -p locode-app -- -p "summarize this repo" --harness grok
 ```
 
 Select the provider wire with `--api-schema` (`anthropic` | `openai-responses`
 | `mock`, where `mock` runs keyless) and the stdout artifact with
-`--output-format` (`json` | `stream-json` | `text`). See
-`cargo run -p locode-exec -- --help` for the full surface.
+`--output-format` (`json` | `stream-json` | `text`). See `locode --help` for the
+full surface.
 
 `LOCODE_BASE_URL` defaults to the wire's native endpoint
 (`https://api.anthropic.com` for `anthropic`, `https://api.openai.com` for
@@ -79,8 +81,9 @@ LOCODE_API_KEY=… cargo run -p locode-app -- --yolo
 Keys: Enter sends (Alt+Enter for a newline); Esc cancels a running turn, or
 pops a queued prompt / clears a draft when idle; Ctrl+C cancels then quits;
 Up/Down browse prompt history; `/new` starts a fresh session, `/quit` exits.
-`--harness`, `--api-schema`, and `--cwd` match `locode-exec`. The app crates are
-`publish = false` (pre-release); the binary installs as `locode` once released.
+`--harness`, `--api-schema`, and `--cwd` match the headless `-p` flags. The app
+crates are `publish = false`; the binary ships from the GitHub Release and
+`install.sh` installs it as `locode`.
 
 To build and test everything:
 
@@ -101,7 +104,7 @@ cargo test --workspace
 | `locode-host` | Filesystem/shell/path-jail seam — every side effect goes through here |
 | `locode-engine` | The sample→dispatch→append loop and the `Session` driving API |
 | `locode-core` | Facade: re-exports the driving API and the full tool surface |
-| `locode-exec` | Minimal headless binary — exactly one JSON report on stdout |
+| `locode-exec` | Headless engine library (`run_headless`, one JSON report) — reused by `locode -p`; the standalone binary is retired |
 
 ## Custom providers
 

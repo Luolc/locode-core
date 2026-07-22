@@ -89,3 +89,22 @@ then the reuse avoids duplicating the proven headless path.
 A bare positional prompt (`locode "task"`) pre-fills the composer in TUI mode
 (not auto-sent). The publish/installer switch to `locode` remains a user-gated
 release decision.
+
+## Amendment (2026-07-22): the `locode-exec` *binary* is retired
+
+User decision (2026-07-22): stop shipping the standalone `locode-exec` binary;
+release only the unified `locode`. Done in this change:
+
+- `release.yml` drops the second `upload-rust-binary-action` step — only
+  `locode-<target>.tar.gz` is attached to a Release now (ADR-0010 amendment,
+  same date). `install.sh` already installs `locode` (since 0.1.5).
+- README stops advertising the `locode-exec` binary / `cargo install
+  locode-exec`; headless examples use `locode -p`.
+
+**Not yet done (the remaining retire step):** `locode-exec` stays as a
+*published library crate* because `locode-tui` still calls its
+`run_headless`. Fully collapsing it — migrating `run.rs`/`output.rs`/
+`signal.rs` into `locode-tui` or a shared lib and dropping the `locode-tui →
+locode-exec` edge — is deferred; it is a mechanical move with no user-visible
+change, scheduled when the headless/TUI split is next touched. Until then the
+`locode-exec` *crate* remains, only its binary target is no longer released.

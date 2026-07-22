@@ -93,3 +93,14 @@ in the release this version for existing users; the binary's retirement is the
 ADR-0019 follow-up. Source-build fallback for the agent is
 `cargo install --git … locode-app` (locode-app is `publish = false`);
 `locode-exec` remains `cargo install`-able from crates.io.
+
+## Amendment (2026-07-22): only `locode` is released — `locode-exec` binary retired
+
+User decision (2026-07-22): the release ships **only** the unified `locode`
+binary. `release.yml` now has a single `upload-rust-binary-action` step
+(`bin: locode`); the `locode-exec` upload step is removed. Since `locode -p`
+already does everything the old headless-only binary did, the second binary was
+pure redundancy. This is a workflow-only change — no version re-tag of 0.1.5 is
+needed; it takes effect on the next tag. `locode-exec` stays a published
+*library* crate (see ADR-0019 amendment, same date); only its release binary
+and its README advertisement are dropped.
