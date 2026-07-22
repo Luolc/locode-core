@@ -237,10 +237,11 @@ impl<B: Backend> InlineTerminal<B> {
             width: screen.width,
             height,
         };
+        // Repaint the whole (resized) viewport on the next draw — clears any
+        // stale on-screen content in the new region. NOT flushed here: the
+        // scroll above and the coming draw flush together, so there's no
+        // intermediate frame (no flicker).
         self.set_viewport_area(area);
-        // Force a full repaint of the new viewport next draw.
-        self.buffers[1 - self.current].reset();
-        self.backend.flush()?;
         Ok(())
     }
 
@@ -257,9 +258,18 @@ impl<B: Backend> InlineTerminal<B> {
 
     // --- internals ---
 
+    /// Set the viewport and prime a **full repaint** of it on the next draw:
+    /// the front (draw-into) buffer is cleared, and the back (diff-against)
+    /// buffer is filled with a sentinel so `diff` reports every cell — including
+    /// blanks, which then get drawn as spaces over any stale/ghost content left
+    /// on screen in the resized region.
     fn set_viewport_area(&mut self, area: Rect) {
-        self.buffers[self.current].resize(area);
-        self.buffers[1 - self.current].resize(area);
+        self.buffers[self.current] = Buffer::empty(area);
+        let mut stale = Buffer::empty(area);
+        for cell in &mut stale.content {
+            cell.set_symbol("\u{0}"); // never equals a rendered cell → full repaint
+        }
+        self.buffers[1 - self.current] = stale;
         self.viewport = area;
     }
 
@@ -408,6 +418,29 @@ mod tests {
         assert_eq!(t.height(), 10);
         t.set_height(0).unwrap(); // clamp to >= 1
         assert_eq!(t.height(), 1);
+    }
+
+    #[test]
+    fn resize_repaints_without_ghosts() {
+        use ratatui::widgets::Paragraph;
+        let mut t = term(20, 12, 4);
+        // Draw distinctive content in the small (bottom-4) viewport.
+        let old_area = t.viewport;
+        t.draw(|f| f.render_widget(Paragraph::new("GHOST"), Rect::new(0, old_area.y, 20, 1)))
+            .unwrap();
+        assert!(rows(&t).iter().any(|r| r.contains("GHOST")));
+        // Grow: the old content sits inside the new taller viewport and must be
+        // repainted away (not left as a stale ghost).
+        t.set_height(8).unwrap();
+        let bottom = t.viewport.bottom() - 1;
+        t.draw(|f| f.render_widget(Paragraph::new("FRESH"), Rect::new(0, bottom, 20, 1)))
+            .unwrap();
+        let r = rows(&t);
+        assert!(
+            !r.iter().any(|l| l.contains("GHOST")),
+            "ghost cleared: {r:?}"
+        );
+        assert!(r.iter().any(|l| l.contains("FRESH")), "new content: {r:?}");
     }
 
     #[test]
