@@ -523,10 +523,15 @@ impl App {
                 self.history_next();
                 vec![]
             }
-            // Enter submits; Alt+Enter inserts a newline (works without the
-            // kitty protocol — deferred).
+            // Enter submits; Alt+Enter (always) or Shift+Enter insert a newline.
+            // Alt+Enter works on any terminal; Shift+Enter only when the terminal
+            // reports the modifier on Enter (needs the kitty keyboard protocol —
+            // enabling it repo-wide is deferred, see the TUI polish backlog).
             (KeyCode::Enter, _) => {
-                if key.modifiers.contains(KeyModifiers::ALT) {
+                if key
+                    .modifiers
+                    .intersects(KeyModifiers::ALT | KeyModifiers::SHIFT)
+                {
                     self.composer.insert_newline();
                     return vec![];
                 }
