@@ -598,8 +598,11 @@ one-shot under `-p`/`--print` (Claude-Code shape). `locode_tui::main_with` dispa
   `main_with` print-dispatch; composer pre-fill; ADR-0019 amendment + SPEC reconcile.
 - [x] 3 `-p` process integration tests (json/text/pre-run-fail) + `with_draft` reducer test;
   exec's own tests unchanged (346 workspace tests).
-**Retire plan (user-gated):** drop the `locode-exec` binary + switch installers to `locode`
-after this version; the headless logic then migrates out of locode-exec.
+**Retire plan (user-gated):** ✅ binary retired 2026-07-22 — `release.yml` ships only
+`locode` (installer already on `locode` since 0.1.5), README de-advertised (ADR-0010 +
+ADR-0019 amendments). **Remaining:** collapse the `locode-exec` *crate* — migrate the
+headless logic (`run.rs`/`output.rs`/`signal.rs`) into `locode-tui`/a shared lib and drop
+the `locode-tui → locode-exec` edge (deferred, mechanical, no user-visible change).
 **Dependencies:** Task 27 (TUI). **Scope:** M
 
 ## Deferred (reserved seams, not scheduled)
