@@ -68,7 +68,7 @@ fn queue_lines(app: &App) -> Vec<Line<'static>> {
         .map(|text| {
             let one_line = text.replace('\n', " ");
             Line::styled(
-                format!("queued: {one_line}"),
+                format!("  queued: {one_line}"),
                 Style::default().add_modifier(Modifier::DIM),
             )
         })
@@ -80,6 +80,7 @@ fn approval_lines(view: &crate::approval::ApprovalView) -> Vec<Line<'static>> {
     use ratatui::style::Color;
     use ratatui::text::Span;
     let title = Line::from(vec![
+        Span::raw("  "),
         Span::styled("⚠ ", Style::default().fg(Color::Yellow)),
         Span::styled(
             format!("Allow {}?", view.tool_name),
@@ -87,7 +88,7 @@ fn approval_lines(view: &crate::approval::ApprovalView) -> Vec<Line<'static>> {
         ),
     ]);
     let args = Line::styled(
-        format!("  {}", view.args),
+        format!("    {}", view.args),
         Style::default().add_modifier(Modifier::DIM),
     );
     vec![title, args]
@@ -95,7 +96,7 @@ fn approval_lines(view: &crate::approval::ApprovalView) -> Vec<Line<'static>> {
 
 fn approval_footer() -> Line<'static> {
     Line::styled(
-        "y allow · a allow for session · d/esc deny",
+        "    y allow · a allow for session · d/esc deny",
         Style::default().add_modifier(Modifier::DIM),
     )
 }
@@ -120,7 +121,7 @@ fn status_line(app: &App) -> Line<'static> {
     };
     let elapsed = started.elapsed().as_secs();
     Line::styled(
-        format!("{spinner} {activity} · {elapsed}s"),
+        format!("  {spinner} {activity} · {elapsed}s"),
         Style::default().add_modifier(Modifier::BOLD),
     )
 }
@@ -136,7 +137,9 @@ fn footer_line(app: &App) -> Line<'static> {
         Some(Hint::Cancelling) => "cancelling — esc again to retry".to_string(),
         None => status_text(app),
     };
-    Line::styled(text, dim)
+    // 4-space left margin so the status text starts at the same column as the
+    // composer's input text (2 margin + "❯ ") — user request 2026-07-22.
+    Line::styled(format!("    {text}"), dim)
 }
 
 /// Assemble the idle status text from whatever fields are known.
@@ -213,7 +216,11 @@ mod tests {
         app.cwd = Some("~/proj".into());
         app.model = Some("opus".into());
         app.session_tokens = 3100;
-        assert_eq!(footer_line(&app).to_string(), "~/proj · opus · 3.1k tok");
+        // 4-space left margin (aligns with the composer's input text).
+        assert_eq!(
+            footer_line(&app).to_string(),
+            "    ~/proj · opus · 3.1k tok"
+        );
     }
 
     #[test]

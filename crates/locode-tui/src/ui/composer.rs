@@ -98,7 +98,10 @@ impl Composer {
     }
 
     /// Render into `area`: a dim rule, the `❯ ` gutter + editor, then a dim
-    /// rule — the input's top/bottom frame (user choice, 2026-07-22).
+    /// rule — the input's top/bottom frame (user choice, 2026-07-22). A 2-col
+    /// left/right margin insets the rules and squeezes the input, and the
+    /// `  ❯ ` gutter puts the input text at column 4 (aligning with the
+    /// transcript's bulleted text and the status line).
     pub fn render(&self, frame: &mut Frame<'_>, area: Rect) {
         use ratatui::layout::{Constraint, Layout};
         use ratatui::style::Modifier;
@@ -106,7 +109,9 @@ impl Composer {
         use ratatui::widgets::Paragraph;
 
         let dim = Style::default().add_modifier(Modifier::DIM);
-        let rule = "─".repeat(area.width as usize);
+        let margin = 2usize;
+        let rule_width = usize::from(area.width).saturating_sub(2 * margin);
+        let rule = format!("{}{}", " ".repeat(margin), "─".repeat(rule_width));
         let [top, mid, bottom] = Layout::vertical([
             Constraint::Length(1),
             Constraint::Fill(1),
@@ -114,9 +119,14 @@ impl Composer {
         ])
         .areas(area);
         frame.render_widget(Paragraph::new(Line::styled(rule.clone(), dim)), top);
-        let [gutter, editor] =
-            Layout::horizontal([Constraint::Length(2), Constraint::Fill(1)]).areas(mid);
-        frame.render_widget(Paragraph::new(Line::from("❯ ")), gutter);
+        // gutter "  ❯ " (margin + prompt) · editor · right margin.
+        let [gutter, editor, _right] = Layout::horizontal([
+            Constraint::Length(4),
+            Constraint::Fill(1),
+            Constraint::Length(2),
+        ])
+        .areas(mid);
+        frame.render_widget(Paragraph::new(Line::from("  ❯ ")), gutter);
         frame.render_widget(&self.textarea, editor);
         frame.render_widget(Paragraph::new(Line::styled(rule, dim)), bottom);
     }
