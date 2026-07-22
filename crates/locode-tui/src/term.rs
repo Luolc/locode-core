@@ -10,7 +10,10 @@ use std::io::{Stdout, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use crossterm::event::Event as CrosstermEvent;
+use crossterm::event::{
+    Event as CrosstermEvent, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
+};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::{TerminalOptions, Viewport};
@@ -23,6 +26,10 @@ pub const LIVE_REGION_ROWS: u16 = 10;
 /// Set once the teardown sequence has run; makes restore idempotent so the
 /// panic hook, signal path, and normal exit can all call it safely.
 static RESTORED: AtomicBool = AtomicBool::new(false);
+
+/// Whether the kitty keyboard enhancement was pushed (so `restore` only pops
+/// what it pushed — popping an empty stack confuses some terminals).
+static KITTY_PUSHED: AtomicBool = AtomicBool::new(false);
 
 /// The one place diagnostics go (stderr; stdout belongs to the TUI frames).
 #[allow(clippy::print_stderr)]
@@ -41,6 +48,22 @@ pub fn init() -> std::io::Result<Terminal<CrosstermBackend<Stdout>>> {
     if let Err(e) = crossterm::execute!(stdout, crossterm::event::EnableBracketedPaste) {
         restore();
         return Err(e);
+    }
+    // Kitty keyboard protocol (DISAMBIGUATE_ESCAPE_CODES only): makes modifiers
+    // on keys like Enter reportable, so **Shift+Enter** is distinguishable from
+    // a bare Enter (iTerm2/Ghostty/kitty support this; plain xterm does not).
+    // We deliberately do NOT set REPORT_EVENT_TYPES — that would add Release
+    // events and double every keypress, forcing Press-filtering everywhere.
+    // Best-effort + capability-gated: unsupported terminals simply keep the old
+    // behavior (Shift+Enter == Enter), never an error.
+    if crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false)
+        && crossterm::execute!(
+            stdout,
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        )
+        .is_ok()
+    {
+        KITTY_PUSHED.store(true, Ordering::SeqCst);
     }
     RESTORED.store(false, Ordering::SeqCst);
     match Terminal::with_options(
@@ -66,6 +89,10 @@ pub fn restore() {
         return;
     }
     let mut stdout = std::io::stdout();
+    // Pop the kitty enhancement first (only if we pushed it), then the rest.
+    if KITTY_PUSHED.swap(false, Ordering::SeqCst) {
+        let _ = crossterm::execute!(stdout, PopKeyboardEnhancementFlags);
+    }
     let _ = crossterm::execute!(
         stdout,
         crossterm::event::DisableBracketedPaste,

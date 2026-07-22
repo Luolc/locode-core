@@ -222,6 +222,12 @@ impl App {
                 vec![]
             }
             Msg::Input(event) => match *event {
+                // Ignore key-release events (we don't enable REPORT_EVENT_TYPES,
+                // so they shouldn't arrive — but a terminal that sends them must
+                // not double every keypress). Press and Repeat both act.
+                CrosstermEvent::Key(key) if key.kind == crossterm::event::KeyEventKind::Release => {
+                    vec![]
+                }
                 CrosstermEvent::Key(key) => self.on_key(key, now),
                 CrosstermEvent::Paste(text) => {
                     // Normalize CR pastes (Windows/legacy terminals) to LF.
@@ -824,6 +830,39 @@ mod tests {
             "submit echoes the prompt block"
         );
         assert_eq!(app.update(key(KeyCode::Enter), t0), vec![]);
+    }
+
+    #[test]
+    fn shift_enter_inserts_newline_like_alt_enter() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        type_str(&mut app, "a", t0);
+        let shift_enter = Msg::Input(Box::new(CrosstermEvent::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::SHIFT,
+        ))));
+        let cmds = app.update(shift_enter, t0);
+        assert_eq!(cmds, vec![], "shift+enter does not submit");
+        type_str(&mut app, "b", t0);
+        assert_eq!(
+            app.update(key(KeyCode::Enter), t0),
+            vec![Cmd::Submit("a\nb".into())]
+        );
+    }
+
+    #[test]
+    fn key_release_events_are_ignored() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        let release = Msg::Input(Box::new(CrosstermEvent::Key(KeyEvent {
+            code: KeyCode::Char('x'),
+            modifiers: KeyModifiers::NONE,
+            kind: crossterm::event::KeyEventKind::Release,
+            state: crossterm::event::KeyEventState::NONE,
+        })));
+        let cmds = app.update(release, t0);
+        assert_eq!(cmds, vec![]);
+        assert!(app.composer.is_empty(), "release must not type a char");
     }
 
     #[test]
