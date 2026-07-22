@@ -325,7 +325,9 @@ impl Writer {
                 .collect()
         };
 
-        let dim = Style::default().add_modifier(Modifier::DIM);
+        // Borders render in the normal foreground (NOT dim): terminals render
+        // the DIM modifier on box-drawing as a muddy/tinted color that reads as
+        // "a different color" and can hide the header rule (user, 2026-07-22).
         let hrule = |left: &str, mid: &str, right: &str| -> Line<'static> {
             let mut s = String::from(left);
             for (i, w) in col_width.iter().enumerate() {
@@ -335,7 +337,7 @@ impl Writer {
                 s.push_str(&"─".repeat(w + 2));
             }
             s.push_str(right);
-            Line::styled(s, dim)
+            Line::from(s)
         };
 
         self.out.push(hrule("┌", "┬", "┐"));
@@ -357,14 +359,14 @@ impl Writer {
                 .collect();
             let height = cell_lines.iter().map(Vec::len).max().unwrap_or(1).max(1);
             for r in 0..height {
-                let mut spans: Vec<Span<'static>> = vec![Span::styled("│", dim)];
+                let mut spans: Vec<Span<'static>> = vec![Span::raw("│")];
                 for c in 0..n_cols {
                     spans.push(Span::raw(" "));
                     let line = cell_lines[c].get(r).unwrap_or(&empty);
                     let align = aligns.get(c).copied().unwrap_or(Alignment::None);
                     pad_into(&mut spans, line, col_width[c], align);
                     spans.push(Span::raw(" "));
-                    spans.push(Span::styled("│", dim));
+                    spans.push(Span::raw("│"));
                 }
                 self.out.push(Line::from(spans));
             }
