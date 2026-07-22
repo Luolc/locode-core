@@ -19,9 +19,11 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::{TerminalOptions, Viewport};
 
 /// Rows the inline live region occupies (status + composer + footer; the
-/// approval overlay swaps in). Fixed in v1 — stock ratatui's `Inline`
-/// viewport has a fixed height; dynamic growth is a named extension.
-pub const LIVE_REGION_ROWS: u16 = 10;
+/// approval overlay swaps in). Fixed in v1 — stock ratatui's `Inline` viewport
+/// has a fixed height; a *dynamic* height (shrink when idle, grow the composer
+/// to ~50% like Claude Code) is a named extension (ADR-0019, deferred). Sized to
+/// fit an 8-row composer (`composer::MAX_ROWS` + its 2 frame rows) + footer.
+pub const LIVE_REGION_ROWS: u16 = 11;
 
 /// Set once the teardown sequence has run; makes restore idempotent so the
 /// panic hook, signal path, and normal exit can all call it safely.

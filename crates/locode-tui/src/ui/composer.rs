@@ -8,8 +8,11 @@ use ratatui::style::{Modifier, Style};
 
 use tui_textarea::TextArea;
 
-/// Maximum editor rows the composer may occupy inside the live region.
-const MAX_ROWS: u16 = 5;
+/// Maximum editor rows the composer may occupy inside the live region. Grows
+/// from 1 up to this cap as the draft gets taller (Claude Code grows to ~50% of
+/// the screen via a *dynamic* viewport — deferred; ours is bounded by the fixed
+/// inline viewport, see `term::LIVE_REGION_ROWS`).
+const MAX_ROWS: u16 = 8;
 
 /// Extra rows for the top and bottom framing rules.
 const FRAME_ROWS: u16 = 2;
