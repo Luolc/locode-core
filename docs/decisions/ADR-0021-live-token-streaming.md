@@ -1,10 +1,12 @@
 # ADR-0021: Live token streaming (provider SSE → engine deltas → TUI incremental render)
 
 ## Status
-**Proposed** — draft for review. This ADR defines the seam and weighs the
-options; it does not lock the implementation. It touches the **core public
-surface** (`Provider` trait, `Event` enum, the engine loop), which is an
-AGENTS.md "ask first" boundary — so this document *is* the ask.
+**Accepted** (2026-07-22) — the six open questions were resolved in a review
+interview with the user (see Open Questions), and the user green-lit the
+**core-public-surface** change (`Provider::stream`, `Event::MessageDelta`, the
+engine sample step — the AGENTS.md "ask first" boundary this document *was* the
+ask for). Implementation lands in three slices (Open Question 6); the wire SSE
+work gets its own per-wire plan + golden tests, as the non-streaming wires did.
 
 ## Date
 2026-07-22
@@ -221,7 +223,7 @@ deferred polish.
 
 ## Open Questions (for review)
 
-*Review 2026-07-22 (user): Q1–Q3 resolved below; Q4–Q6 still open.*
+*Review 2026-07-22 (user): all six resolved below — ADR **Accepted**.*
 
 1. **`stream-json` output**: keep it whole-message (trace stability) and treat
    deltas as a TUI-only concern, or add an opt-in `--include-deltas`?
@@ -247,18 +249,58 @@ deferred polish.
    version of it (`ENGINE_DRAIN_MAX = 32` + `MIN_DRAW_INTERVAL = 16 ms` +
    `deferred_draw`). So: keep the channel unbounded, add **no** engine-side
    coalescing, and newline-gate at the render layer. Codex's 120 Hz typing
-   animation is deferred polish.
+   animation is deferred polish. **Also deferred:** the ~16 ms *partial-line*
+   flush timer — accepted consequence for slice 1 is that a long line with no
+   `\n` streams as one lump when it completes; add the timer only if that feels
+   laggy. (The final partial line with no trailing `\n` is flushed on turn
+   finalize regardless.)
 4. **Thinking deltas**: stream reasoning text live (like the reply) or keep
-   thinking collapsed until done? *Lean: stream, dimmed, collapsible later.*
+   thinking collapsed until done?
+   **→ RESOLVED: emit the event, keep the UI minimal.** Reasoning streams on its
+   **own delta channel** (distinct from assistant text — all four harnesses; it's
+   needed for replay, not just display). The **UI shows no inline thinking text**:
+   the existing spinner + `"thinking"` activity label is the indicator, matching
+   Claude Code, which surfaces the animated spinner verb live and only shows the
+   thinking *content* in transcript/verbose mode (captured as a complete block,
+   not live-streamed — `claude-code src/utils/messages.ts:2963-2971`,
+   `spinnerVerbs.ts`). Optionally drive the spinner state from reasoning activity.
+   **Correctness requirement (independent of display):** thinking blocks and their
+   **signatures must be preserved verbatim in the finalized `Message`** across a
+   turn that includes `tool_use`, or Anthropic rejects the next request
+   ("thinking blocks cannot be modified" — `claude-code src/query.ts:158,714-715`).
+   *Deferred:* inline dimmed thinking text and a transcript/verbose view. (Live
+   thinking is also forward-looking — extended thinking isn't enabled on the wires
+   yet; this fixes the *shape* for when it lands.)
 5. **Ordering vs. the delta callback's `&mut dyn FnMut`**: is a callback the
-   right shape, or should the engine pass an `mpsc::Sender<CompletionDelta>` so
-   the wire is decoupled from engine internals? *Lean: sender, symmetrical with
-   the existing `EventSink`.*
+   right shape, or should the engine pass an `mpsc::Sender<CompletionDelta>`?
+   **→ RESOLVED: a callback `&mut (dyn FnMut(CompletionDelta) + Send)`, not a new
+   channel** (overriding this ADR's earlier "sender" lean). The engine's sample
+   step is a *single task* awaiting `stream()`; a `Sender<CompletionDelta>` would
+   force a second task / `select!` to drain the receiver, whereas a callback lets
+   the engine forward each delta **inline** into its *existing* `EventSink` — which
+   already does `events.send()` on the existing unbounded `EngineMsg` channel (the
+   very pipe where Q3's batch-drain + 16 ms coalescing happens). So a sender would
+   just add a second, redundant channel + drainer. The callback reuses everything,
+   stays single-task, and keeps `locode-provider` decoupled from the engine (it
+   only sees `FnMut`). The engine still emits `Event::MessageDelta` through its
+   `EventSink`, so it remains symmetric with `EventSink` *in spirit*.
 6. **Scope of the first slice**: land the seam + `mock`/Anthropic streaming +
    the TUI streaming cell first; OpenAI-Responses and the incremental-markdown
    polish as follow-ons?
+   **→ RESOLVED: yes, three slices.** **Slice 1** = the `Provider::stream` seam +
+   `CompletionDelta` + the default fallback + `mock` streaming + Anthropic SSE + a
+   minimal **plain-text, newline-gated** streaming cell (no markdown re-parse yet)
+   — proves the whole wire→engine→UI vertical (including cancel-mid-stream) on one
+   real wire before breadth. **Slice 2** = OpenAI-Responses SSE. **Slice 3** = the
+   codex-style incremental-markdown re-parse (study Phase 4) in the streaming cell.
+   Each follow-on is independently shippable.
 
 ## SPEC reconciliation
-`SPEC.md` currently lists streaming under deferred/reserved seams. On acceptance,
-move it to a scheduled task and point the tool contract's streaming note at this
-ADR. Not changed yet (this is a Proposed draft).
+Done on acceptance (2026-07-22):
+- `SPEC.md` principle #5 (non-streaming in v0) now points here and marks streaming
+  **scheduled** (still gating tool dispatch on the finalized whole completion).
+- `tasks/todo.md`: streaming moved out of the Deferred seams list into a scheduled
+  **Task 29** with the three slices (Open Question 6).
+
+The `SPEC.md` ADR index table is separately stale (missing ADR-0015–0022); a
+broader index refresh is out of scope for this ADR and left as doc hygiene.
