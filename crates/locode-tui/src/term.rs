@@ -75,6 +75,19 @@ pub fn init() -> std::io::Result<Term> {
     {
         KITTY_PUSHED.store(true, Ordering::SeqCst);
     }
+    // Clear the visible screen AND purge scrollback, then home the cursor
+    // (Claude Code / Grok Build's start; grok's `resize_purge_rerender`
+    // sequence). The session begins on a *fresh* scrollback, so its transcript —
+    // which commits scrolled-off rows into native scrollback — never overlaps or
+    // scrolls into whatever the terminal held before locode started. Like the
+    // `clear` command, this drops the pre-session scrollback. Best-effort: a
+    // terminal that ignores `ESC[3J` simply keeps its scrollback.
+    let _ = crossterm::execute!(
+        stdout,
+        crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
+        crossterm::terminal::Clear(crossterm::terminal::ClearType::Purge),
+        crossterm::cursor::MoveTo(0, 0),
+    );
     RESTORED.store(false, Ordering::SeqCst);
     match FrameTerminal::new(CrosstermBackend::new(std::io::stdout())) {
         Ok(terminal) => Ok(terminal),
