@@ -62,8 +62,11 @@ impl Block {
                 lines
             }
             Block::AssistantText(text) => {
+                // Leave a small right margin so wrapped prose doesn't hug the
+                // terminal edge (readability; matches the reference harnesses).
+                let content_width = usize::from(width).saturating_sub(2).max(4);
                 let mut lines = vec![Line::from("")];
-                lines.extend(crate::ui::markdown::render(text, width.max(4) as usize));
+                lines.extend(crate::ui::markdown::render(text, content_width));
                 lines
             }
             Block::ToolCall {

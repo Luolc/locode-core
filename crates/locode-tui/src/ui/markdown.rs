@@ -1,12 +1,19 @@
-//! Minimal markdown → styled `Line`s for assistant text (slice 5b).
+//! Markdown → styled `Line`s for assistant text.
 //!
 //! A pulldown-cmark pass covering the constructs an agent actually emits:
-//! headings (bold), lists (bulleted, nested-indented), fenced/inline code
-//! (dim + code-block indent), block quotes, and inline bold/italic. **No
-//! syntect** (SPEC-TUI non-goal) — code is styled dim, not highlighted. The
-//! pattern (not the styling depth) follows codex's `markdown_render.rs`.
+//! headings (bold), lists (bulleted/ordered, nested, hanging-indented),
+//! fenced/inline code, block quotes, and inline bold/italic/strikethrough.
+//! **No syntect yet** — code is styled cyan/dim, not highlighted (a separate,
+//! dependency-gated slice). The pattern follows codex's `markdown_render.rs`:
+//! parse to events, collect inline content **preserving exact whitespace**, and
+//! width-wrap per block with a first-line prefix + hanging continuation indent.
+//!
+//! Whitespace correctness is the load-bearing property here: inline styling
+//! (code, bold) must not add or drop spaces around a span. We therefore never
+//! reconstruct spacing from `split_whitespace`; we keep the source text verbatim
+//! in styled segments and only collapse whitespace at the word-wrap boundary.
 
-use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
@@ -21,22 +28,29 @@ pub fn render(text: &str, width: usize) -> Vec<Line<'static>> {
     w.finish()
 }
 
-/// Accumulates styled spans into wrapped lines, tracking inline style and the
-/// current block context (list depth, code block, quote).
+/// One run of inline text with a single style (whitespace preserved verbatim).
+#[derive(Clone)]
+struct Seg {
+    text: String,
+    style: Style,
+}
+
+/// Accumulates inline segments per block, then wraps them into styled lines.
 struct Writer {
     width: usize,
     out: Vec<Line<'static>>,
-    /// Spans of the line currently being built.
-    current: Vec<Span<'static>>,
-    /// Inline style modifiers to apply to text spans.
+    /// Inline content of the block currently being built.
+    inline: Vec<Seg>,
+    /// Inline style nesting counters.
     bold: u32,
     italic: u32,
-    /// `Some(prefix)` while inside a code block (dim, no wrap).
+    strike: u32,
+    heading: bool,
     in_code_block: bool,
     /// List item markers by nesting depth (`None` = bullet, `Some(n)` = ordered).
     list_stack: Vec<Option<u64>>,
-    /// Pending list-item marker to emit at the next text.
-    pending_marker: Option<String>,
+    /// Marker to render before the first line of the current list item.
+    item_marker: Option<String>,
     quote_depth: u32,
 }
 
@@ -45,23 +59,28 @@ impl Writer {
         Self {
             width: width.max(4),
             out: Vec::new(),
-            current: Vec::new(),
+            inline: Vec::new(),
             bold: 0,
             italic: 0,
+            strike: 0,
+            heading: false,
             in_code_block: false,
             list_stack: Vec::new(),
-            pending_marker: None,
+            item_marker: None,
             quote_depth: 0,
         }
     }
 
     fn inline_style(&self) -> Style {
         let mut s = Style::default();
-        if self.bold > 0 {
+        if self.bold > 0 || self.heading {
             s = s.add_modifier(Modifier::BOLD);
         }
         if self.italic > 0 {
             s = s.add_modifier(Modifier::ITALIC);
+        }
+        if self.strike > 0 {
+            s = s.add_modifier(Modifier::CROSSED_OUT);
         }
         s
     }
@@ -72,16 +91,23 @@ impl Writer {
             Event::End(tag) => self.end(tag),
             Event::Text(t) => self.text(&t),
             Event::Code(c) => {
-                self.push_span(Span::styled(
-                    c.into_string(),
-                    Style::default().fg(Color::Cyan),
-                ));
+                let style = self.inline_style().fg(Color::Cyan);
+                self.inline.push(Seg {
+                    text: c.into_string(),
+                    style,
+                });
             }
-            Event::SoftBreak | Event::HardBreak => self.flush_line(),
+            // A soft break is inter-word whitespace (reflow); a hard break is
+            // treated the same at v1 (agents rarely emit hard breaks mid-prose).
+            Event::SoftBreak | Event::HardBreak => self.inline.push(Seg {
+                text: " ".to_string(),
+                style: Style::default(),
+            }),
             Event::Rule => {
-                self.flush_line();
+                self.flush_inline();
+                self.gap();
                 self.out.push(Line::styled(
-                    "───",
+                    "─".repeat(self.width),
                     Style::default().add_modifier(Modifier::DIM),
                 ));
             }
@@ -92,18 +118,27 @@ impl Writer {
     fn start(&mut self, tag: &Tag<'_>) {
         match tag {
             Tag::Heading { .. } => {
-                self.flush_line();
-                self.bold += 1;
+                self.gap();
+                self.heading = true;
             }
             Tag::Strong => self.bold += 1,
             Tag::Emphasis => self.italic += 1,
+            Tag::Strikethrough => self.strike += 1,
             Tag::CodeBlock(_) => {
-                self.flush_line();
+                self.flush_inline();
+                self.gap();
                 self.in_code_block = true;
             }
-            Tag::List(first) => self.list_stack.push(*first),
+            Tag::List(first) => {
+                // Emit any pending item text before a nested list opens (tight
+                // lists put the item's own text directly before the sublist).
+                self.flush_inline();
+                if self.list_stack.is_empty() {
+                    self.gap();
+                }
+                self.list_stack.push(*first);
+            }
             Tag::Item => {
-                self.flush_line();
                 let depth = self.list_stack.len().saturating_sub(1);
                 let indent = "  ".repeat(depth);
                 let marker = match self.list_stack.last_mut() {
@@ -114,39 +149,37 @@ impl Writer {
                     }
                     _ => format!("{indent}• "),
                 };
-                self.pending_marker = Some(marker);
+                self.item_marker = Some(marker);
             }
             Tag::BlockQuote(_) => {
-                self.flush_line();
+                self.gap();
                 self.quote_depth += 1;
             }
-            Tag::Paragraph => self.flush_line(),
+            Tag::Paragraph if self.list_stack.is_empty() && self.quote_depth == 0 => {
+                self.gap();
+            }
             _ => {}
         }
     }
 
     fn end(&mut self, tag: TagEnd) {
         match tag {
-            TagEnd::Heading(level) => {
-                self.flush_line();
-                self.bold = self.bold.saturating_sub(1);
-                // A blank line after H1/H2 for breathing room.
-                if matches!(level, HeadingLevel::H1 | HeadingLevel::H2) {
-                    self.out.push(Line::from(""));
-                }
+            TagEnd::Heading(_) => {
+                self.flush_inline();
+                self.heading = false;
             }
             TagEnd::Strong => self.bold = self.bold.saturating_sub(1),
             TagEnd::Emphasis => self.italic = self.italic.saturating_sub(1),
+            TagEnd::Strikethrough => self.strike = self.strike.saturating_sub(1),
             TagEnd::CodeBlock => {
-                self.flush_line();
                 self.in_code_block = false;
             }
             TagEnd::List(_) => {
                 self.list_stack.pop();
             }
-            TagEnd::Item | TagEnd::Paragraph => self.flush_line(),
+            TagEnd::Item | TagEnd::Paragraph => self.flush_inline(),
             TagEnd::BlockQuote(_) => {
-                self.flush_line();
+                self.flush_inline();
                 self.quote_depth = self.quote_depth.saturating_sub(1);
             }
             _ => {}
@@ -155,71 +188,183 @@ impl Writer {
 
     fn text(&mut self, t: &str) {
         if self.in_code_block {
-            // Code blocks: dim, indented, no word-wrap (preserve lines). Emit
-            // one dim SPAN per source line so styling lives on the span
-            // (consistent with inline styling; line-level styles are avoided).
+            // Code blocks: dim, indented, no word-wrap (preserve lines for
+            // copy/paste, as codex does). One dim span per source line.
             let dim = Style::default().add_modifier(Modifier::DIM);
             for raw in t.split_inclusive('\n') {
                 let line = raw.strip_suffix('\n').unwrap_or(raw);
-                self.push_span(Span::styled(format!("    {line}"), dim));
-                if raw.ends_with('\n') {
-                    self.flush_line();
-                }
+                self.out
+                    .push(Line::from(Span::styled(format!("    {line}"), dim)));
             }
             return;
         }
-        // Word-wrap normal text, applying the current inline style.
-        let style = self.inline_style();
-        for word in t.split_whitespace() {
-            let cur_len: usize = self.line_len();
-            if cur_len > 0 && cur_len + 1 + word.chars().count() > self.width {
-                self.flush_line();
-            }
-            if self.line_len() > 0 {
-                self.push_span(Span::raw(" "));
+        self.inline.push(Seg {
+            text: t.to_string(),
+            style: self.inline_style(),
+        });
+    }
+
+    /// The first-line and continuation prefixes for the current block context
+    /// (quote bar + list indent/marker). Consumes the pending item marker.
+    fn leads(&mut self) -> (Vec<Span<'static>>, Vec<Span<'static>>) {
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let mut first: Vec<Span<'static>> = Vec::new();
+        let mut cont: Vec<Span<'static>> = Vec::new();
+        if self.quote_depth > 0 {
+            let bar = "┃ ".repeat(self.quote_depth as usize);
+            first.push(Span::styled(bar.clone(), dim));
+            cont.push(Span::styled(bar, dim));
+        }
+        if !self.list_stack.is_empty() {
+            let depth = self.list_stack.len() - 1;
+            let indent = "  ".repeat(depth);
+            if let Some(marker) = self.item_marker.take() {
+                let width = marker.chars().count();
+                first.push(Span::raw(marker));
+                cont.push(Span::raw(" ".repeat(width)));
             } else {
-                self.emit_line_prefix();
+                // A continuation paragraph inside an item aligns under the text.
+                let width = indent.chars().count() + 2;
+                first.push(Span::raw(" ".repeat(width)));
+                cont.push(Span::raw(" ".repeat(width)));
             }
-            self.push_span(Span::styled(word.to_owned(), style));
         }
+        (first, cont)
     }
 
-    /// Marker/quote prefix at the start of a fresh line.
-    fn emit_line_prefix(&mut self) {
-        if let Some(marker) = self.pending_marker.take() {
-            self.current
-                .push(Span::styled(marker, Style::default().fg(Color::Yellow)));
+    /// Wrap the accumulated inline segments into `out`, then clear them.
+    fn flush_inline(&mut self) {
+        let words = segs_to_words(&self.inline);
+        self.inline.clear();
+        if words.is_empty() {
+            // No content: drop any dangling marker so it can't leak downward.
+            self.item_marker = None;
+            return;
         }
-        for _ in 0..self.quote_depth {
-            self.current.push(Span::styled(
-                "┃ ",
-                Style::default().add_modifier(Modifier::DIM),
-            ));
-        }
+        let (first, cont) = self.leads();
+        let lines = wrap_words(&words, &first, &cont, self.width);
+        self.out.extend(lines);
     }
 
-    fn push_span(&mut self, span: Span<'static>) {
-        self.current.push(span);
-    }
-
-    fn line_len(&self) -> usize {
-        self.current.iter().map(|s| s.content.chars().count()).sum()
-    }
-
-    fn flush_line(&mut self) {
-        if !self.current.is_empty() {
-            self.out.push(Line::from(std::mem::take(&mut self.current)));
+    /// Ensure a single blank line separates the previous block from the next.
+    fn gap(&mut self) {
+        if !self.out.is_empty() && !last_is_blank(&self.out) {
+            self.out.push(Line::from(""));
         }
     }
 
     fn finish(mut self) -> Vec<Line<'static>> {
-        self.flush_line();
-        // Drop a trailing empty line if the source ended with a block break.
-        while matches!(self.out.last(), Some(l) if l.spans.is_empty()) {
+        self.flush_inline();
+        while last_is_blank(&self.out) {
             self.out.pop();
         }
         self.out
     }
+}
+
+/// Split inline segments into style-tagged words, collapsing runs of whitespace
+/// and trimming block leading/trailing space. Each word is a run of non-space
+/// chars that may carry mixed styles (e.g. `` streaming`Event` `` with no space).
+fn segs_to_words(segs: &[Seg]) -> Vec<Vec<(char, Style)>> {
+    let mut words: Vec<Vec<(char, Style)>> = Vec::new();
+    let mut cur: Vec<(char, Style)> = Vec::new();
+    for seg in segs {
+        for ch in seg.text.chars() {
+            if ch.is_whitespace() {
+                if !cur.is_empty() {
+                    words.push(std::mem::take(&mut cur));
+                }
+            } else {
+                cur.push((ch, seg.style));
+            }
+        }
+    }
+    if !cur.is_empty() {
+        words.push(cur);
+    }
+    words
+}
+
+/// Greedy word-wrap over style-tagged words with distinct first-line and
+/// continuation prefixes. Words wider than the available width hard-split.
+fn wrap_words(
+    words: &[Vec<(char, Style)>],
+    first_lead: &[Span<'static>],
+    cont_lead: &[Span<'static>],
+    width: usize,
+) -> Vec<Line<'static>> {
+    let lead_width =
+        |lead: &[Span<'static>]| -> usize { lead.iter().map(|s| s.content.chars().count()).sum() };
+    let first_w = lead_width(first_lead);
+    let cont_w = lead_width(cont_lead);
+
+    let mut out: Vec<Line<'static>> = Vec::new();
+    let mut line: Vec<(char, Style)> = Vec::new();
+    for word in words {
+        let mut rest: &[(char, Style)] = word;
+        loop {
+            let is_first = out.is_empty();
+            let avail = width
+                .saturating_sub(if is_first { first_w } else { cont_w })
+                .max(1);
+            if line.is_empty() {
+                if rest.len() <= avail {
+                    line.extend_from_slice(rest);
+                    break;
+                }
+                // Over-long word: hard-split at the width boundary.
+                line.extend_from_slice(&rest[..avail]);
+                let lead = if is_first { first_lead } else { cont_lead };
+                out.push(build_line(lead, &std::mem::take(&mut line)));
+                rest = &rest[avail..];
+            } else if line.len() + 1 + rest.len() <= avail {
+                line.push((' ', Style::default()));
+                line.extend_from_slice(rest);
+                break;
+            } else {
+                let lead = if is_first { first_lead } else { cont_lead };
+                out.push(build_line(lead, &std::mem::take(&mut line)));
+                // Retry placing the whole word on a fresh line.
+            }
+        }
+    }
+    if !line.is_empty() || out.is_empty() {
+        let lead = if out.is_empty() {
+            first_lead
+        } else {
+            cont_lead
+        };
+        out.push(build_line(lead, &line));
+    }
+    out
+}
+
+/// Coalesce adjacent same-style chars into spans, prefixed by `lead`.
+fn build_line(lead: &[Span<'static>], chars: &[(char, Style)]) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = lead.to_vec();
+    let mut cur = String::new();
+    let mut cur_style: Option<Style> = None;
+    for &(ch, st) in chars {
+        if cur_style == Some(st) {
+            cur.push(ch);
+        } else {
+            if let Some(s) = cur_style {
+                spans.push(Span::styled(std::mem::take(&mut cur), s));
+            }
+            cur.push(ch);
+            cur_style = Some(st);
+        }
+    }
+    if let Some(s) = cur_style {
+        spans.push(Span::styled(cur, s));
+    }
+    Line::from(spans)
+}
+
+/// A line with no visible content (used as a block separator).
+fn last_is_blank(out: &[Line<'_>]) -> bool {
+    out.last()
+        .is_some_and(|l| l.spans.iter().all(|s| s.content.is_empty()))
 }
 
 #[cfg(test)]
@@ -228,6 +373,9 @@ mod tests {
 
     fn texts(lines: &[Line<'_>]) -> Vec<String> {
         lines.iter().map(ToString::to_string).collect()
+    }
+    fn joined(lines: &[Line<'_>]) -> String {
+        texts(lines).join("\n")
     }
     fn has_bold(line: &Line<'_>, needle: &str) -> bool {
         line.spans
@@ -249,16 +397,16 @@ mod tests {
     fn list_items_are_bulleted_and_nested() {
         let md = "- one\n- two\n  - nested";
         let out = texts(&render(md, 40));
-        assert!(out.iter().any(|l| l.contains("• one")), "{out:?}");
-        assert!(out.iter().any(|l| l.contains("• two")), "{out:?}");
-        assert!(out.iter().any(|l| l.contains("  • nested")), "{out:?}");
+        assert!(out.iter().any(|l| l == "• one"), "{out:?}");
+        assert!(out.iter().any(|l| l == "• two"), "{out:?}");
+        assert!(out.iter().any(|l| l == "  • nested"), "{out:?}");
     }
 
     #[test]
     fn ordered_list_numbers() {
         let out = texts(&render("1. first\n2. second", 40));
-        assert!(out.iter().any(|l| l.contains("1. first")), "{out:?}");
-        assert!(out.iter().any(|l| l.contains("2. second")), "{out:?}");
+        assert!(out.iter().any(|l| l == "1. first"), "{out:?}");
+        assert!(out.iter().any(|l| l == "2. second"), "{out:?}");
     }
 
     #[test]
@@ -281,9 +429,7 @@ mod tests {
     #[test]
     fn inline_code_and_bold_styled() {
         let lines = render("use `cargo` and **run** it", 40);
-        let joined: String = texts(&lines).join(" ");
-        assert!(joined.contains("cargo"));
-        assert!(joined.contains("run"));
+        assert!(joined(&lines).contains("use cargo and run it"));
         assert!(
             lines.iter().any(|l| has_bold(l, "run")),
             "{:?}",
@@ -306,5 +452,71 @@ mod tests {
     fn plain_text_is_unchanged() {
         let out = texts(&render("just a sentence", 40));
         assert_eq!(out, vec!["just a sentence"]);
+    }
+
+    // --- Regression tests for the bugs fixed in this slice ---
+
+    #[test]
+    fn inline_code_preserves_surrounding_spaces() {
+        // The old renderer dropped the space *before* a code span and added a
+        // spurious one *after* it (`from README.md` → `fromREADME.md `).
+        let out = joined(&render("from `README.md` to `SPEC.md` now", 80));
+        assert_eq!(out, "from README.md to SPEC.md now", "got: {out:?}");
+    }
+
+    #[test]
+    fn code_span_then_suffix_has_no_gap() {
+        // A suffix touching a code span (`` `Event`s ``) must not gain a space:
+        // the old renderer produced `Event s`. The space before the span is
+        // real (from `streaming `) and must be kept.
+        let out = joined(&render("streaming `Event`s here", 80));
+        assert_eq!(out, "streaming Events here", "got: {out:?}");
+    }
+
+    #[test]
+    fn list_item_starting_with_code_keeps_marker_first() {
+        // A code span at the item start must not defer the marker mid-line.
+        let out = texts(&render("1. `run.rs` is the loop", 80));
+        let item = out
+            .iter()
+            .find(|l| l.contains("run.rs"))
+            .expect("item present");
+        assert!(item.starts_with("1. run.rs"), "got: {item:?}");
+    }
+
+    #[test]
+    fn wrapped_list_item_has_hanging_indent() {
+        let out = texts(&render("- alpha beta gamma delta epsilon", 14));
+        // First line carries the bullet; continuation aligns under the text.
+        assert!(out[0].starts_with("• alpha"), "{out:?}");
+        assert!(
+            out.iter().skip(1).any(|l| l.starts_with("  ")),
+            "continuation indented: {out:?}"
+        );
+    }
+
+    #[test]
+    fn blocks_separated_by_blank_line() {
+        let out = texts(&render("# Heading\n\npara one\n\npara two", 80));
+        assert!(
+            out.iter().any(String::is_empty),
+            "has a blank line: {out:?}"
+        );
+        // No leading/trailing blank.
+        assert!(!out.first().unwrap().is_empty(), "{out:?}");
+        assert!(!out.last().unwrap().is_empty(), "{out:?}");
+    }
+
+    #[test]
+    fn strikethrough_is_styled() {
+        let lines = render("this is ~~gone~~ text", 80);
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.spans.iter().any(|s| s.content.contains("gone")
+                    && s.style.add_modifier.contains(Modifier::CROSSED_OUT))),
+            "{:?}",
+            texts(&lines)
+        );
     }
 }
