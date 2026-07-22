@@ -1,9 +1,14 @@
 # Release artifacts (ADR-0010 amendments 2026-07-21): on a version tag, build
-# locode-exec binaries — fully static musl for Linux, native for macOS — and
-# attach them to a GitHub Release. The crates.io publish stays agent-driven;
+# the `locode` binary — fully static musl for Linux, native for macOS — and
+# attach it to a GitHub Release. The crates.io publish stays agent-driven;
 # this workflow only covers binary artifacts. Static musl linking works
 # because the workspace is OpenSSL-free by design (rustls — SPEC/ADR-0007).
 # install.sh (repo root) consumes these assets by exact name.
+#
+# As of 2026-07-22 (ADR-0010 / ADR-0019 amendment) only `locode` ships: the
+# unified binary is interactive TUI by default and headless under `-p`, so the
+# old `locode-exec` binary is redundant and no longer released. `locode-exec`
+# remains a published *library* crate (locode-tui calls its `run_headless`).
 name: release
 
 on:
@@ -45,23 +50,12 @@ jobs:
         if: startsWith(matrix.os, 'ubuntu')
         with:
           target: ${{ matrix.target }}
-      # Ship each binary as its own `<bin>-<target>.tar.gz` (the action can't
-      # template `$bin` into one archive for multiple bins, and the installer
-      # downloads `locode-<target>.tar.gz` specifically). Two steps:
-      #  - `locode`: the unified agent (TUI + `-p` headless; the installer's
-      #    binary from 0.1.5);
-      #  - `locode-exec`: retained this release for existing users (retire
-      #    planned — ADR-0019 amendment).
+      # Ship `locode` as `locode-<target>.tar.gz` (the name install.sh fetches).
+      # Only the unified agent is released now (TUI + `-p` headless); the old
+      # `locode-exec` binary was retired here (ADR-0019 amendment).
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
           bin: locode
-          target: ${{ matrix.target }}
-          tar: unix
-          checksum: sha256
-          token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: taiki-e/upload-rust-binary-action@v1
-        with:
-          bin: locode-exec
           target: ${{ matrix.target }}
           tar: unix
           checksum: sha256
