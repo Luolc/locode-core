@@ -605,6 +605,39 @@ headless logic (`run.rs`/`output.rs`/`signal.rs`) into `locode-tui`/a shared lib
 the `locode-tui → locode-exec` edge (deferred, mechanical, no user-visible change).
 **Dependencies:** Task 27 (TUI). **Scope:** M
 
+## TUI polish backlog — Tier A (autonomous, no core surface)
+
+Screenshot-driven mimicry of Claude Code (user vibe-checks, 2026-07-22). These are
+UI-only and run on the autonomous slice loop (`docs/tui-dev-process.md`); the user
+reviews PRs. Tier B/C (core-touching) live below / in ADR-0021.
+
+- [ ] **Message bullets** — switch the small `•` to a filled `●` (bigger, better
+  vertically centered); assistant text gets a leading `●` (neutral/white) it
+  currently lacks. Tool bullets keep green/red.
+- [ ] **Assistant left indent** — assistant markdown hugs the left edge; give it a
+  hanging indent under a leading bullet (Claude Code's hierarchy). Pairs with the
+  bullet item.
+- [ ] **`TurnEnd` separator reads as an extra rule** — it's a full-width `──…──`
+  rule that stacks with the composer's top rule ("another rule up here", user).
+  De-emphasize to subtle dim text (no full-width dashes). *(Confirmed via a
+  live-region buffer dump: the composer itself renders exactly two rules — the
+  extra one is the transcript separator.)*
+- [ ] **Shift+Enter newline** — newline is bound to **Alt+Enter**; Shift+Enter
+  can't be distinguished in iTerm2 without the **kitty keyboard protocol** (the
+  terminal sends plain Enter → submits). Fix needs `PushKeyboardEnhancementFlags`
+  in terminal setup **plus** filtering the input loop to `KeyEventKind::Press`
+  (else keys double). Accept `SHIFT` for newline meanwhile. Investigate carefully.
+- [ ] **P3 tables** — bespoke column layout + cell wrap + key/value transpose
+  fallback (markdown study; all four harnesses hand-roll this).
+- [ ] **P2 OSC-8 hyperlinks** — clickable links (iTerm2 supports them).
+- [ ] **Built-in slash commands** — `/help`, `/model`, `/clear`, … (TUI already
+  has `/new` `/quit`).
+
+Tier C (core, ADR-first): **streaming** → [ADR-0021](../docs/decisions/ADR-0021-live-token-streaming.md)
+(unblocks markdown study Phase 4); subagents; plugins. Tier B (short ADR then
+mostly-autonomous): background bash commands, AGENTS.md/CLAUDE.md loading, custom
+slash-command files.
+
 ## Deferred (reserved seams, not scheduled)
 parallel tool batches (RwLock read/write) · compaction · OS sandbox · MCP · streaming events
 (SSE seams reserved in each wire plan) · `--json-schema` answers · JSONL session durability ·
