@@ -108,3 +108,38 @@ release only the unified `locode`. Done in this change:
 locode-exec` edge — is deferred; it is a mechanical move with no user-visible
 change, scheduled when the headless/TUI split is next touched. Until then the
 `locode-exec` *crate* remains, only its binary target is no longer released.
+
+## Amendment (2026-07-22): dynamic live-region height (supersedes the fixed-height choice)
+
+The original decision fixed the inline live region at `LIVE_REGION_ROWS` and
+deferred dynamic growth ("revisit on smoke feedback"). Smoke feedback arrived
+(user, 2026-07-22): a fixed region caps the composer too soon **and** shows a
+blank gap above it when idle (the unused viewport rows). We now make the live
+region **dynamic** — its height tracks the composer's content (status + composer
++ footer), clamped to ~50% of the terminal — matching Claude Code
+(`PromptInput.tsx:191`, `maxHeight="50%"`).
+
+**The constraint.** Stock ratatui 0.29 cannot change an inline viewport's height
+after creation: `Terminal::viewport` and `set_viewport_area` are private and
+`resize()` is hardwired to the stored height. codex (`custom_terminal.rs`,
+`draw_with_resize_reflow`) and grok (`xai-ratatui-inline`) both vendor a terminal
+with scroll-region control to do this.
+
+**Options considered.** (a) Vendor a scroll-region terminal like codex/grok —
+correct grow *and* gap-free shrink, but hundreds of lines and hard to validate
+headlessly. (b) **Recreate the ratatui `Terminal`** with a new `Inline(height)`
+when the content height changes — far less code, uses only public
+`get_frame().area()` + crossterm cursor/clear ops. (c) Fixed taller viewport —
+rejected (bigger idle gap on large terminals).
+
+**Decision: (b) recreate, as iteration 1** (`term::resize_live_region`), then
+escalate to (a) only if smoke shows artifacts we can't fix. Growth is the clean
+case: position the cursor at the transcript's end and recreate; ratatui's
+`compute_inline_size` appends lines (scrolls the transcript up) so the taller
+viewport is bottom-anchored. Shrink clears the old region and re-anchors the
+smaller viewport to the bottom (a transient gap above is possible — no worse than
+the old fixed gap). All of it lives behind `term`'s seam; the reducer/UI only
+compute a desired row count (`ui::desired_live_rows`), so the mechanism can be
+swapped for the vendored version without touching app logic. **Validation is by
+real-terminal smoke** (the mechanism can't be unit-tested headlessly; the row
+math can and is).

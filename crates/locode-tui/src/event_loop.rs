@@ -79,6 +79,10 @@ pub async fn run(cli: Cli, registry: ProviderRegistry) -> Result<ExitCode, RunEr
         if app.dirty {
             let now = Instant::now();
             if now.duration_since(last_draw) >= MIN_DRAW_INTERVAL {
+                // Grow/shrink the inline live region to fit the composer before
+                // painting (ADR-0019 amendment — dynamic height).
+                let desired = ui::desired_live_rows(&app, terminal.size()?.width);
+                terminal = term::resize_live_region(terminal, desired)?;
                 terminal.draw(|frame| ui::draw(frame, &app))?;
                 app.dirty = false;
                 last_draw = now;

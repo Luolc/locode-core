@@ -20,6 +20,26 @@ pub mod markdown;
 /// Braille spinner frames (the four-harness standard).
 const SPINNER: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
+/// The number of rows the live region wants right now: the exact content
+/// height (status + queue + composer + footer, or the approval overlay +
+/// footer). The loop feeds this to `term::resize_live_region` so the region
+/// tracks the composer with no idle gap (ADR-0019 amendment). `term` clamps it
+/// to `[MIN_LIVE_ROWS, ~50% of the terminal]`.
+#[must_use]
+pub fn desired_live_rows(app: &App, width: u16) -> u16 {
+    if let Some(view) = app.approval_queue.front() {
+        let lines = u16::try_from(approval_lines(view).len()).unwrap_or(u16::MAX);
+        return lines.saturating_add(1); // + footer
+    }
+    let status = u16::from(app.is_running());
+    let queue = u16::try_from(app.prompt_queue.len()).unwrap_or(u16::MAX);
+    // status + queue + composer (framed) + footer
+    status
+        .saturating_add(queue)
+        .saturating_add(app.composer.desired_height(width))
+        .saturating_add(1)
+}
+
 /// Draw the live region: flexible blank space, then status row (while
 /// running), then the composer OR the approval overlay, then footer.
 pub fn draw(frame: &mut Frame<'_>, app: &App) {
@@ -205,6 +225,16 @@ mod tests {
         );
         let first_row: String = text.lines().next().unwrap().trim().to_string();
         assert!(first_row.is_empty(), "top row is margin: {first_row:?}");
+    }
+
+    #[test]
+    fn desired_live_rows_tracks_the_composer() {
+        let mut app = App::new();
+        // Empty composer: framed 1-line editor (3) + footer (1) = 4.
+        assert_eq!(desired_live_rows(&app, 80), 4);
+        // Three lines of draft → framed editor (3+2) + footer = 6.
+        app.composer.insert_text("a\nb\nc");
+        assert_eq!(desired_live_rows(&app, 80), 6);
     }
 
     #[test]

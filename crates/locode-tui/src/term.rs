@@ -18,12 +18,21 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::{TerminalOptions, Viewport};
 
-/// Rows the inline live region occupies (status + composer + footer; the
-/// approval overlay swaps in). Fixed in v1 — stock ratatui's `Inline` viewport
-/// has a fixed height; a *dynamic* height (shrink when idle, grow the composer
-/// to ~50% like Claude Code) is a named extension (ADR-0019, deferred). Sized to
-/// fit an 8-row composer (`composer::MAX_ROWS` + its 2 frame rows) + footer.
-pub const LIVE_REGION_ROWS: u16 = 11;
+/// Initial inline live-region height at startup (a 1-line composer: top rule +
+/// editor + bottom rule + footer). The region is then **dynamic** — it grows and
+/// shrinks with the composer via [`resize_live_region`] (ADR-0019 amendment
+/// 2026-07-22), up to [`max_live_rows`].
+pub const INITIAL_LIVE_ROWS: u16 = 4;
+
+/// Floor for the live region (a framed 1-line composer + footer).
+pub const MIN_LIVE_ROWS: u16 = 4;
+
+/// Cap the live region at ~half the terminal so the transcript stays visible
+/// (Claude Code's `maxHeight="50%"`). Never below [`MIN_LIVE_ROWS`].
+#[must_use]
+pub fn max_live_rows(terminal_height: u16) -> u16 {
+    (terminal_height / 2).max(MIN_LIVE_ROWS)
+}
 
 /// Set once the teardown sequence has run; makes restore idempotent so the
 /// panic hook, signal path, and normal exit can all call it safely.
@@ -71,7 +80,7 @@ pub fn init() -> std::io::Result<Terminal<CrosstermBackend<Stdout>>> {
     match Terminal::with_options(
         CrosstermBackend::new(std::io::stdout()),
         TerminalOptions {
-            viewport: Viewport::Inline(LIVE_REGION_ROWS),
+            viewport: Viewport::Inline(INITIAL_LIVE_ROWS),
         },
     ) {
         Ok(terminal) => Ok(terminal),
@@ -80,6 +89,63 @@ pub fn init() -> std::io::Result<Terminal<CrosstermBackend<Stdout>>> {
             Err(e)
         }
     }
+}
+
+/// Resize the inline live region to `target` rows, keeping it bottom-anchored
+/// (ADR-0019 amendment). Stock ratatui can't change an inline viewport's height,
+/// so we recreate the terminal at the new height (iteration 1 — see the ADR):
+///
+/// - **Grow**: park the cursor at the transcript's end and recreate; ratatui's
+///   `compute_inline_size` appends lines (scrolls the transcript up) so the
+///   taller region is anchored to the bottom.
+/// - **Shrink**: clear the old region, then anchor the smaller region to the
+///   bottom (a transient blank gap above is possible — no worse than the former
+///   fixed-height gap).
+///
+/// Returns the (possibly recreated) terminal. A no-op when the height matches.
+///
+/// # Errors
+/// Propagates terminal write/setup failures.
+pub fn resize_live_region(
+    mut terminal: Terminal<CrosstermBackend<Stdout>>,
+    target: u16,
+) -> std::io::Result<Terminal<CrosstermBackend<Stdout>>> {
+    use crossterm::cursor::MoveTo;
+    use crossterm::terminal::{Clear, ClearType};
+
+    let full = terminal.size()?;
+    let target = target.clamp(MIN_LIVE_ROWS, max_live_rows(full.height));
+    let current = terminal.get_frame().area();
+    if current.height == target {
+        return Ok(terminal);
+    }
+
+    let mut stdout = std::io::stdout();
+    if target > current.height {
+        // Grow: anchor at the transcript's end; recreation scrolls it up.
+        crossterm::execute!(
+            stdout,
+            MoveTo(0, current.y),
+            Clear(ClearType::FromCursorDown)
+        )?;
+    } else {
+        // Shrink: clear the old region, then anchor the smaller region at the
+        // bottom of the screen.
+        let top = full.height.saturating_sub(target);
+        crossterm::execute!(
+            stdout,
+            MoveTo(0, current.y),
+            Clear(ClearType::FromCursorDown),
+            MoveTo(0, top)
+        )?;
+    }
+    drop(terminal);
+    Terminal::with_options(
+        CrosstermBackend::new(std::io::stdout()),
+        TerminalOptions {
+            viewport: Viewport::Inline(target),
+        },
+    )
 }
 
 /// The teardown sequence, defined once (idempotent): bracketed paste off,
