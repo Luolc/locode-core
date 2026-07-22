@@ -25,8 +25,10 @@ pub enum UiCommand {
 pub enum EngineMsg {
     /// Session assembled; the app is ready to accept prompts.
     Ready {
-        /// Resolved model id (for the status/footer display).
+        /// Resolved model id (for the status display).
         model: String,
+        /// Working directory, home-shortened (for the status display).
+        cwd: String,
     },
     /// Session assembly failed pre-run (bad schema, missing key, …).
     BuildFailed(String),
@@ -72,8 +74,8 @@ pub fn spawn(
     // Own cli + registry so `/new` can rebuild the session on demand.
     tokio::spawn(async move {
         let mut session = match build_session(&cli, &registry, msg_tx.clone()) {
-            Ok((session, model)) => {
-                let _ = msg_tx.send(EngineMsg::Ready { model });
+            Ok((session, model, cwd)) => {
+                let _ = msg_tx.send(EngineMsg::Ready { model, cwd });
                 session
             }
             Err(message) => {
@@ -93,10 +95,10 @@ pub fn spawn(
                     let _ = msg_tx.send(EngineMsg::RunFinished(Box::new(report)));
                 }
                 UiCommand::NewSession => match build_session(&cli, &registry, msg_tx.clone()) {
-                    Ok((fresh, model)) => {
+                    Ok((fresh, model, cwd)) => {
                         session = fresh;
                         let _ = msg_tx.send(EngineMsg::SessionReset);
-                        let _ = msg_tx.send(EngineMsg::Ready { model });
+                        let _ = msg_tx.send(EngineMsg::Ready { model, cwd });
                     }
                     Err(message) => {
                         let _ = msg_tx.send(EngineMsg::BuildFailed(message));
@@ -115,12 +117,13 @@ fn build_session(
     cli: &Cli,
     registry: &ProviderRegistry,
     events: tokio::sync::mpsc::UnboundedSender<EngineMsg>,
-) -> Result<(Session, String), String> {
+) -> Result<(Session, String, String), String> {
     let cwd = match &cli.cwd {
         Some(dir) => dir.clone(),
         None => std::env::current_dir().map_err(|e| e.to_string())?,
     };
     let cwd = std::fs::canonicalize(&cwd).map_err(|e| format!("--cwd {}: {e}", cwd.display()))?;
+    let cwd_display = home_relative(&cwd);
 
     let mut host_config = HostConfig::new(&cwd);
     if cli.dangerously_skip_permissions {
@@ -176,7 +179,19 @@ fn build_session(
     }));
     let session =
         Session::new(provider, registry_tools, preamble, config, sink).with_approver(approver);
-    Ok((session, model))
+    Ok((session, model, cwd_display))
+}
+
+/// Shorten a path for display by replacing a leading `$HOME` with `~`.
+fn home_relative(path: &std::path::Path) -> String {
+    let Ok(home) = std::env::var("HOME") else {
+        return path.display().to_string();
+    };
+    match path.strip_prefix(&home) {
+        Ok(rest) if rest.as_os_str().is_empty() => "~".to_string(),
+        Ok(rest) => format!("~/{}", rest.display()),
+        Err(_) => path.display().to_string(),
+    }
 }
 
 /// A unique-enough session id (mirrors locode-exec; no uuid dep).
