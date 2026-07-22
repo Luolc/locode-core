@@ -283,9 +283,10 @@ impl Writer {
         }
     }
 
-    /// Lay out the accumulated table as aligned columns: natural column widths
-    /// shrunk proportionally to fit, cells wrapped, header bold with a dim rule
-    /// under it. No box borders (Claude-Code-style clean columns).
+    /// Lay out the accumulated table with box-drawing borders (Claude Code /
+    /// Grok style): natural column widths shrunk proportionally to fit, cells
+    /// wrapped, a bold header separated by a `├─┼─┤` rule. One space of padding
+    /// inside each cell; borders are dim.
     fn render_table(&mut self) {
         let rows = std::mem::take(&mut self.table_rows);
         let aligns = std::mem::take(&mut self.table_aligns);
@@ -310,9 +311,9 @@ impl Writer {
             cells.push(rw);
         }
 
-        // Fit: use natural widths if they fit, else shrink proportionally (min 3).
-        let sep = 2usize;
-        let overhead = sep * (n_cols - 1);
+        // Borders + 1-space cell padding: `│ c │ c │` → 3 cols of chrome per
+        // column plus one closing border. Shrink to fit if the naturals overflow.
+        let overhead = 3 * n_cols + 1;
         let natural_sum: usize = col_natural.iter().sum();
         let col_width: Vec<usize> = if natural_sum + overhead <= self.width || natural_sum == 0 {
             col_natural.clone()
@@ -323,8 +324,22 @@ impl Writer {
                 .map(|&w| (w * target / natural_sum).max(3))
                 .collect()
         };
-        let total: usize = col_width.iter().sum::<usize>() + overhead;
 
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let hrule = |left: &str, mid: &str, right: &str| -> Line<'static> {
+            let mut s = String::from(left);
+            for (i, w) in col_width.iter().enumerate() {
+                if i > 0 {
+                    s.push_str(mid);
+                }
+                s.push_str(&"─".repeat(w + 2));
+            }
+            s.push_str(right);
+            Line::styled(s, dim)
+        };
+
+        self.out.push(hrule("┌", "┬", "┐"));
+        let empty = Line::from("");
         for (ri, row) in cells.iter().enumerate() {
             let is_head = ri < head_rows;
             let cell_lines: Vec<Vec<Line<'static>>> = (0..n_cols)
@@ -341,26 +356,23 @@ impl Writer {
                 })
                 .collect();
             let height = cell_lines.iter().map(Vec::len).max().unwrap_or(1).max(1);
-            let empty = Line::from("");
             for r in 0..height {
-                let mut spans: Vec<Span<'static>> = Vec::new();
+                let mut spans: Vec<Span<'static>> = vec![Span::styled("│", dim)];
                 for c in 0..n_cols {
-                    if c > 0 {
-                        spans.push(Span::raw("  "));
-                    }
+                    spans.push(Span::raw(" "));
                     let line = cell_lines[c].get(r).unwrap_or(&empty);
                     let align = aligns.get(c).copied().unwrap_or(Alignment::None);
                     pad_into(&mut spans, line, col_width[c], align);
+                    spans.push(Span::raw(" "));
+                    spans.push(Span::styled("│", dim));
                 }
                 self.out.push(Line::from(spans));
             }
             if is_head && ri + 1 == head_rows {
-                self.out.push(Line::styled(
-                    "─".repeat(total),
-                    Style::default().add_modifier(Modifier::DIM),
-                ));
+                self.out.push(hrule("├", "┼", "┤"));
             }
         }
+        self.out.push(hrule("└", "┴", "┘"));
     }
 
     /// The first-line and continuation prefixes for the current block context
@@ -709,22 +721,26 @@ mod tests {
     }
 
     #[test]
-    fn table_renders_aligned_columns_with_header_rule() {
+    fn table_renders_bordered_columns_with_header_rule() {
         let md = "| Crate | Role |\n|---|---|\n| proto | pure types |\n| tools | the registry |";
         let out = texts(&render(md, 40));
-        // No raw pipe rows survive.
+        // No raw ASCII pipes survive (we draw box-drawing borders instead).
         assert!(
             !out.iter().any(|l| l.contains('|')),
             "no raw pipes: {out:?}"
         );
-        // Header cells present and a dim rule under them.
+        // Top border, header row, a ├─┼─┤ rule, a bottom border.
+        assert!(out.iter().any(|l| l.starts_with('┌')), "top: {out:?}");
         let header = out
             .iter()
             .position(|l| l.contains("Crate"))
             .expect("header");
-        assert!(out[header].contains("Role"), "{out:?}");
-        assert!(out[header + 1].starts_with("──"), "header rule: {out:?}");
-        // Body cells laid out in columns (aligned: "proto" then padding then "pure").
+        assert!(
+            out[header].contains("Role") && out[header].starts_with('│'),
+            "{out:?}"
+        );
+        assert!(out[header + 1].starts_with('├'), "header rule: {out:?}");
+        assert!(out.iter().any(|l| l.starts_with('└')), "bottom: {out:?}");
         assert!(
             out.iter()
                 .any(|l| l.contains("proto") && l.contains("pure types")),

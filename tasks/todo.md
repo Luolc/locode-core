@@ -611,32 +611,43 @@ Screenshot-driven mimicry of Claude Code (user vibe-checks, 2026-07-22). These a
 UI-only and run on the autonomous slice loop (`docs/tui-dev-process.md`); the user
 reviews PRs. Tier B/C (core-touching) live below / in ADR-0021.
 
-- [ ] **Message bullets** — switch the small `•` to a filled `●` (bigger, better
-  vertically centered); assistant text gets a leading `●` (neutral/white) it
-  currently lacks. Tool bullets keep green/red.
-- [ ] **Assistant left indent** — assistant markdown hugs the left edge; give it a
-  hanging indent under a leading bullet (Claude Code's hierarchy). Pairs with the
-  bullet item.
-- [ ] **`TurnEnd` separator reads as an extra rule** — it's a full-width `──…──`
-  rule that stacks with the composer's top rule ("another rule up here", user).
-  De-emphasize to subtle dim text (no full-width dashes). *(Confirmed via a
-  live-region buffer dump: the composer itself renders exactly two rules — the
-  extra one is the transcript separator.)*
-- [ ] **Shift+Enter newline** — newline is bound to **Alt+Enter**; Shift+Enter
-  can't be distinguished in iTerm2 without the **kitty keyboard protocol** (the
-  terminal sends plain Enter → submits). Fix needs `PushKeyboardEnhancementFlags`
-  in terminal setup **plus** filtering the input loop to `KeyEventKind::Press`
-  (else keys double). Accept `SHIFT` for newline meanwhile. Investigate carefully.
-- [ ] **P3 tables** — bespoke column layout + cell wrap + key/value transpose
-  fallback (markdown study; all four harnesses hand-roll this).
+- [x] **Message bullets** (#94) — `•` → filled `●`; assistant text gets a leading white `●`.
+- [x] **Assistant left indent** (#94) — hanging indent under the bullet.
+- [x] **`TurnEnd` separator "extra rule"** (#94) — de-ruled to subtle dim text.
+- [x] **Shift+Enter newline** (#95) — kitty `DISAMBIGUATE_ESCAPE_CODES` (no
+  REPORT_EVENT_TYPES → no key-doubling); Release events filtered defensively.
+- [x] **P3 tables** (#96 + this PR) — now box-drawing borders (`┌─┬─┐`, bold header,
+  `├─┼─┤` rule) matching Claude Code / Grok Build; proportional shrink-to-fit.
+- [x] **Composer max height** (this PR) — bumped `MAX_ROWS` 5→8 / `LIVE_REGION_ROWS`
+  10→11 so the draft grows into the otherwise-blank viewport space.
 - [ ] **P2 OSC-8 hyperlinks** — clickable links (iTerm2 supports them).
 - [ ] **Built-in slash commands** — `/help`, `/model`, `/clear`, … (TUI already
   has `/new` `/quit`).
 
+### Findings from the 2026-07-22 vibe-check (flagged, NOT auto-implemented)
+
+- **Dynamic composer height (grow to ~50% like Claude Code, and remove the idle
+  gap).** Our inline viewport is a **fixed** `LIVE_REGION_ROWS`, so the composer
+  can't grow past it, and when idle the unused rows show as a ~6-row blank gap
+  above it (confirmed by a buffer dump). Claude Code uses `maxHeight="50%"` of a
+  **dynamic** viewport (`PromptInput.tsx:191`); codex and grok both needed
+  **custom/forked terminal code** for dynamic inline height. This revisits
+  ADR-0019's fixed-height decision (ADR-first) and is a real architecture change
+  — **needs an explicit go** before implementing, though it's UI-only.
+- **"Intermediate model messages aren't rendered" — NOT a bug.** The engine emits
+  an `Event::Message` per assistant turn (`locode-engine/src/run.rs:104`) and the
+  TUI's `on_event` renders every assistant `Text` block (verified + tested,
+  `app.rs:904`). The perceived difference is: (a) **no streaming** — each turn's
+  text appears all-at-once after the turn buffers, not live (that live-narration
+  feel is streaming, ADR-0021 / Tier C); and (b) the active **grok pack narrates
+  less** than Claude Code's prompt would (faithful mimicry — the claude pack would
+  narrate more). No Tier-A change.
+
 Tier C (core, ADR-first): **streaming** → [ADR-0021](../docs/decisions/ADR-0021-live-token-streaming.md)
-(unblocks markdown study Phase 4); subagents; plugins. Tier B (short ADR then
-mostly-autonomous): background bash commands, AGENTS.md/CLAUDE.md loading, custom
-slash-command files.
+(unblocks markdown study Phase 4 + live intermediate narration); subagents;
+plugins. Tier B (short ADR then mostly-autonomous): background bash commands,
+AGENTS.md/CLAUDE.md loading, custom slash-command files, **dynamic composer
+viewport** (UI-only but ADR-0019 revisit).
 
 ## Deferred (reserved seams, not scheduled)
 parallel tool batches (RwLock read/write) · compaction · OS sandbox · MCP · streaming events
