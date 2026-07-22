@@ -11,7 +11,7 @@
 //!   bottom, so the composer + status are pinned there — no reserved viewport
 //!   rect whose `y` we'd have to move (codex's model, which forces the
 //!   scrollback-corrupting reverse scroll on shrink).
-//! - **Grow / commit to scrollback** ([`scroll_up`](Self::scroll_up)): when new
+//! - **Grow / commit to scrollback** ([`commit_scrollback`](FrameTerminal::commit_scrollback)): when new
 //!   transcript (streaming) or a taller composer pushes content past the top of
 //!   the screen, `scroll_region_up` pushes those top rows into native scrollback
 //!   — a clean, one-directional operation. The diff baseline shifts with it.
@@ -19,7 +19,7 @@
 //!   rows it vacated. We **never** `scroll_region_down` (it injects blanks into
 //!   scrollback — the bug that killed the earlier attempts).
 //! - The **scroll-back-below-viewport edge** (shrinking when committed rows would
-//!   need to come back on screen) is handled by [`clear`](Self::clear) +
+//!   need to come back on screen) is handled by [`clear`](FrameTerminal::clear) +
 //!   full repaint — Claude Code's `fullReset`. Rare; correct if briefly flickery.
 //!
 //! Everything for a frame is one buffer diff (no separate `insert_before` path
