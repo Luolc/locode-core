@@ -294,13 +294,17 @@ mod tests {
         // Now a 3-tall frame at the bottom.
         t.draw(|f| {
             for (i, s) in ["x", "y", "z"].iter().enumerate() {
-                f.render_widget(Paragraph::new(*s), Rect::new(0, 5 + i as u16, 20, 1));
+                let i = u16::try_from(i).unwrap();
+                f.render_widget(Paragraph::new(*s), Rect::new(0, 5 + i, 20, 1));
             }
         })
         .unwrap();
         let r = rows(&t);
         assert_eq!(&r[5..8], &["x", "y", "z"]);
-        assert!(scrollback(&t).iter().all(String::is_empty), "nothing committed");
+        assert!(
+            scrollback(&t).iter().all(String::is_empty),
+            "nothing committed"
+        );
     }
 
     /// `scroll_up(n)` commits the top `n` rows to scrollback and shifts the
@@ -325,20 +329,25 @@ mod tests {
             f.render_widget(Paragraph::new("t5"), Rect::new(0, 3, 20, 1));
         })
         .unwrap();
-        assert_eq!(rows(&t), vec!["t2", "t3", "t4", "t5"], "screen scrolled up 2");
+        assert_eq!(
+            rows(&t),
+            vec!["t2", "t3", "t4", "t5"],
+            "screen scrolled up 2"
+        );
         let sb = scrollback(&t);
         assert!(sb.iter().any(|r| r == "t0"), "t0 in scrollback: {sb:?}");
         assert!(sb.iter().any(|r| r == "t1"), "t1 in scrollback: {sb:?}");
     }
 
     /// Shrinking the frame re-renders and clears the vacated rows — no
-    /// scroll_region_down, so scrollback is never touched.
+    /// `scroll_region_down`, so scrollback is never touched.
     #[test]
     fn shrink_clears_vacated_rows_without_touching_scrollback() {
         let mut t = term(20, 8);
         t.draw(|f| {
             for (i, s) in ["a", "b", "c", "d"].iter().enumerate() {
-                f.render_widget(Paragraph::new(*s), Rect::new(0, 4 + i as u16, 20, 1));
+                let i = u16::try_from(i).unwrap();
+                f.render_widget(Paragraph::new(*s), Rect::new(0, 4 + i, 20, 1));
             }
         })
         .unwrap();
@@ -351,8 +360,14 @@ mod tests {
         .unwrap();
         let r = rows(&t);
         assert_eq!(&r[6..8], &["c", "d"]);
-        assert!(r[0..6].iter().all(String::is_empty), "vacated rows blank: {r:?}");
-        assert!(scrollback(&t).iter().all(String::is_empty), "scrollback untouched");
+        assert!(
+            r[0..6].iter().all(String::is_empty),
+            "vacated rows blank: {r:?}"
+        );
+        assert!(
+            scrollback(&t).iter().all(String::is_empty),
+            "scrollback untouched"
+        );
     }
 
     /// `clear` drops the baseline so the next frame fully repaints.

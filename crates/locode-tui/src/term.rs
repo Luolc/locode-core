@@ -14,16 +14,24 @@ use crossterm::event::{
     Event as CrosstermEvent, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
     PushKeyboardEnhancementFlags,
 };
-use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use ratatui::{TerminalOptions, Viewport};
 
-/// Rows the inline live region occupies (status + composer + footer; the
-/// approval overlay swaps in). Fixed in v1 — stock ratatui's `Inline` viewport
-/// has a fixed height; a *dynamic* height (shrink when idle, grow the composer
-/// to ~50% like Claude Code) is a named extension (ADR-0019, deferred). Sized to
-/// fit an 8-row composer (`composer::MAX_ROWS` + its 2 frame rows) + footer.
-pub const LIVE_REGION_ROWS: u16 = 11;
+use crate::frame_terminal::FrameTerminal;
+
+/// The vendored full-screen terminal the interactive app renders into
+/// (ADR-0022): a bottom-anchored relative frame diffed one buffer per paint.
+pub type Term = FrameTerminal<CrosstermBackend<Stdout>>;
+
+/// Minimum composer height: one text row plus the two framing rules.
+pub const MIN_COMPOSER_ROWS: u16 = 3;
+
+/// The composer's height cap — ~50% of the screen (Claude Code's dynamic
+/// composer), never below [`MIN_COMPOSER_ROWS`]. The caller clamps
+/// `composer::desired_height` to this.
+#[must_use]
+pub fn max_composer_rows(screen_h: u16) -> u16 {
+    (screen_h / 2).max(MIN_COMPOSER_ROWS)
+}
 
 /// Set once the teardown sequence has run; makes restore idempotent so the
 /// panic hook, signal path, and normal exit can all call it safely.
@@ -39,12 +47,12 @@ pub fn error_line(message: &str) {
     eprintln!("error: {message}");
 }
 
-/// Enter TUI modes and build the inline-viewport terminal.
+/// Enter TUI modes and build the vendored full-screen terminal (ADR-0022).
 ///
 /// # Errors
 /// Propagates terminal setup failures; on partial failure the teardown
 /// sequence is emitted so the terminal is never left raw.
-pub fn init() -> std::io::Result<Terminal<CrosstermBackend<Stdout>>> {
+pub fn init() -> std::io::Result<Term> {
     crossterm::terminal::enable_raw_mode()?;
     let mut stdout = std::io::stdout();
     if let Err(e) = crossterm::execute!(stdout, crossterm::event::EnableBracketedPaste) {
@@ -68,12 +76,7 @@ pub fn init() -> std::io::Result<Terminal<CrosstermBackend<Stdout>>> {
         KITTY_PUSHED.store(true, Ordering::SeqCst);
     }
     RESTORED.store(false, Ordering::SeqCst);
-    match Terminal::with_options(
-        CrosstermBackend::new(std::io::stdout()),
-        TerminalOptions {
-            viewport: Viewport::Inline(LIVE_REGION_ROWS),
-        },
-    ) {
+    match FrameTerminal::new(CrosstermBackend::new(std::io::stdout())) {
         Ok(terminal) => Ok(terminal),
         Err(e) => {
             restore();

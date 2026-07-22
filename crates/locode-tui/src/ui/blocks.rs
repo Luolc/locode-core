@@ -62,7 +62,7 @@ pub enum Block {
 }
 
 impl Block {
-    /// Render to pre-wrapped lines at `width` for `insert_before`, with a
+    /// Render to pre-wrapped lines at `width` for the transcript tail, with a
     /// uniform left/right margin so content doesn't hug the terminal edge. Every
     /// block's `● `/`❯ ` prefix then sits at the margin, so text aligns at
     /// `MARGIN + 2` (the same column as the composer's input text).

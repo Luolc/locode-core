@@ -65,21 +65,30 @@ pub async fn run(cli: Cli, registry: ProviderRegistry) -> Result<ExitCode, RunEr
     // Pending approval oneshots keyed by tool_use id (ADR-0017). Bounded by
     // the engine's serial dispatch (one in flight) but a map for generality.
     let mut approvals: PendingApprovals = std::collections::HashMap::new();
+    // The recent transcript tail rendered inside the bottom-anchored frame
+    // (ADR-0022). Rows that overflow the screen top are committed to native
+    // scrollback via `scroll_up` and drained here; there is no `insert_before`.
+    let mut tail: Vec<Line<'static>> = Vec::new();
+    // Set once any tail rows have been committed to native scrollback (the
+    // `viewportY` moved); reserved for the shrink-below-scrollback guard.
+    let mut committed: bool = false;
 
     let exit_code = loop {
         if app.should_quit {
             break ExitCode::SUCCESS;
         }
 
-        // Print finalized blocks once into native scrollback, then paint the
-        // live region (rate-capped; deferred paint instead of spinning).
+        // Fold finalized blocks into the transcript tail, then paint the whole
+        // bottom-anchored frame (rate-capped; deferred paint instead of
+        // spinning). Overflow leaves the frame via `scroll_up`, not
+        // `insert_before` (ADR-0022).
         if !app.outbox.is_empty() {
-            flush_outbox(&mut terminal, &mut app)?;
+            flush_outbox(&terminal, &mut app, &mut tail)?;
         }
         if app.dirty {
             let now = Instant::now();
             if now.duration_since(last_draw) >= MIN_DRAW_INTERVAL {
-                terminal.draw(|frame| ui::draw(frame, &app))?;
+                paint(&mut terminal, &mut app, &mut tail, &mut committed)?;
                 app.dirty = false;
                 last_draw = now;
                 deferred_draw = None;
@@ -142,7 +151,10 @@ pub async fn run(cli: Cli, registry: ProviderRegistry) -> Result<ExitCode, RunEr
                 let now = Instant::now();
                 if resize_at.is_some_and(|at| now >= at) {
                     resize_at = None;
-                    terminal.autoresize()?;
+                    // ADR-0022: a resize is a full reset — clear the screen and
+                    // drop the diff baseline so the next paint fully repaints at
+                    // the new size (the debounce collapsed the storm).
+                    terminal.clear()?;
                     app.dirty = true;
                 }
                 if next_tick.is_some_and(|at| now >= at) {
@@ -159,25 +171,71 @@ pub async fn run(cli: Cli, registry: ProviderRegistry) -> Result<ExitCode, RunEr
     Ok(exit_code)
 }
 
-/// Render queued blocks once above the viewport (print-once transcript).
+/// Render finalized blocks into the transcript `tail` (ADR-0022): no
+/// `insert_before` — the tail is part of the one bottom-anchored frame, and
+/// rows that overflow the screen top are committed to native scrollback by
+/// [`paint`]. Marks the app dirty so the next iteration repaints.
 fn flush_outbox(
-    terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
+    terminal: &term::Term,
     app: &mut App,
+    tail: &mut Vec<Line<'static>>,
 ) -> std::io::Result<()> {
     let width = terminal.size()?.width;
-    let lines: Vec<Line<'static>> = app
+    let rendered: Vec<Line<'static>> = app
         .outbox
         .drain(..)
         .flat_map(|block| block.render(width))
         .collect();
-    let height = u16::try_from(lines.len()).unwrap_or(u16::MAX);
-    if height == 0 {
-        return Ok(());
+    tail.extend(rendered);
+    app.dirty = true;
+    Ok(())
+}
+
+/// How many oldest tail lines overflow the on-screen capacity (must be
+/// committed to native scrollback) and the `scroll_up` amount to apply — pure
+/// arithmetic, unit-tested. The scroll amount is capped at the screen height
+/// (`scroll_up` clamps too, but keeping it here keeps the drain and the scroll
+/// consistent).
+fn commit_plan(tail_len: usize, tail_cap: usize, screen_h: u16) -> (usize, u16) {
+    if tail_len <= tail_cap {
+        return (0, 0);
     }
-    terminal.insert_before(height, |buf| {
-        use ratatui::widgets::Widget;
-        ratatui::widgets::Paragraph::new(lines).render(buf.area, buf);
-    })?;
+    let overflow = tail_len - tail_cap;
+    let n = u16::try_from(overflow).unwrap_or(u16::MAX).min(screen_h);
+    (overflow, n)
+}
+
+/// Paint one bottom-anchored frame (ADR-0022): commit the transcript overflow
+/// to native scrollback via `scroll_up`, then diff-render the visible tail plus
+/// the pinned status/composer/footer as a single buffer update.
+fn paint(
+    terminal: &mut term::Term,
+    app: &mut App,
+    tail: &mut Vec<Line<'static>>,
+    committed: &mut bool,
+) -> std::io::Result<()> {
+    let size = terminal.size()?;
+    let v = size.height;
+    let (composer_rows, non_tail) = ui::live_rows(app, size.width, v);
+    // Glue the caret to the composer's bottom line (editor rows = composer rows
+    // minus the two framing rules).
+    app.composer.sync_scroll(composer_rows.saturating_sub(2));
+
+    // Transcript rows that fit on screen; the rest is the oldest tail (the top
+    // rows of the current full frame) and is committed to scrollback.
+    let tail_cap = usize::from(v.saturating_sub(non_tail));
+    let (overflow, n) = commit_plan(tail.len(), tail_cap, v);
+    if overflow > 0 {
+        terminal.scroll_up(n)?;
+        tail.drain(..overflow);
+        *committed = true;
+    }
+
+    // Own the visible slice before the draw so `tail`/`app` borrows don't clash
+    // with the closure's `&mut terminal`.
+    let shown = tail.len().min(tail_cap);
+    let visible: Vec<Line<'static>> = tail[tail.len() - shown..].to_vec();
+    terminal.draw(|frame| ui::draw(frame, app, &visible, composer_rows))?;
     Ok(())
 }
 
@@ -185,8 +243,8 @@ fn flush_outbox(
 static DEBUG_LOG_PATH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
 
 /// Append one line to the debug log when `LOCODE_TUI_DEBUG_LOG` is set — the
-/// `insert_before` transcript leaves nothing greppable in a captured pty, so
-/// this is the reusable smoke/bug-report instrumentation. No-op otherwise.
+/// diff-painted frame leaves nothing greppable in a captured pty, so this is the
+/// reusable smoke/bug-report instrumentation. No-op otherwise.
 fn debug_log(line: &str) {
     let path = DEBUG_LOG_PATH.get_or_init(|| std::env::var("LOCODE_TUI_DEBUG_LOG").ok());
     if let Some(path) = path {
@@ -344,4 +402,23 @@ fn spawn_signal_task() -> tokio::sync::mpsc::UnboundedReceiver<()> {
     #[cfg(not(unix))]
     drop(tx);
     rx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::commit_plan;
+
+    /// `commit_plan` commits only the overflow past the on-screen capacity and
+    /// caps the scroll amount at the screen height.
+    #[test]
+    fn commit_plan_commits_only_overflow() {
+        // Fits: nothing committed.
+        assert_eq!(commit_plan(5, 10, 24), (0, 0));
+        assert_eq!(commit_plan(10, 10, 24), (0, 0));
+        // Overflow by 3: commit 3, scroll 3.
+        assert_eq!(commit_plan(13, 10, 24), (3, 3));
+        // Scroll amount is capped at the screen height even when the overflow
+        // is larger (e.g. a zero-height cap on a tiny screen).
+        assert_eq!(commit_plan(100, 0, 24), (100, 24));
+    }
 }
