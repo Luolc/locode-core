@@ -8,7 +8,7 @@
 
 use chrono::{DateTime, Local};
 use ratatui::layout::{Constraint, Layout};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -128,8 +128,6 @@ fn queue_lines(app: &App) -> Vec<Line<'static>> {
 
 /// The approval overlay body: `⚠ Allow <tool>?` + dimmed args.
 fn approval_lines(view: &crate::approval::ApprovalView) -> Vec<Line<'static>> {
-    use ratatui::style::Color;
-    use ratatui::text::Span;
     let title = Line::from(vec![
         Span::raw("  "),
         Span::styled("⚠ ", Style::default().fg(Color::Yellow)),
@@ -181,73 +179,97 @@ fn status_line(app: &App) -> Line<'static> {
 /// margin so the time doesn't hug the terminal edge.
 const FOOTER_RIGHT_MARGIN: usize = 2;
 
-/// The bottom status line: `cwd · model · N tok` when idle (user choice,
-/// 2026-07-22) on the left, replaced by the transient armed-key hints when one
-/// is active; the current local date+time is right-aligned on the same row
-/// (user request 2026-07-22). Git branch and cost/usage-with-cap are deferred
-/// (named extension points).
+/// The bottom status line: bold `cwd · model · N tok` when idle (user choice,
+/// 2026-07-22) on the left, replaced by the transient armed-key hint when one is
+/// active; the current local date+time is right-aligned on the same row (user
+/// request 2026-07-22). Git branch and cost/usage-with-cap are deferred (named
+/// extension points).
 fn footer_line(app: &App, width: u16) -> Line<'static> {
-    let dim = Style::default().add_modifier(Modifier::DIM);
-    let left = match app.hint {
-        Some(Hint::QuitArmed) => "press ctrl+c again to quit".to_string(),
-        Some(Hint::ClearArmed) => "press esc again to clear".to_string(),
-        Some(Hint::Cancelling) => "cancelling — esc again to retry".to_string(),
-        None => status_text(app),
-    };
-    compose_footer(&left, &footer_clock(&Local::now()), width, dim)
+    compose_footer(footer_left(app), &footer_clock(&Local::now()), width)
 }
 
-/// Format a clock stamp for the footer: full local date + `HH:MM` + timezone.
-/// Minute precision (not seconds) because the UI has zero idle repaints
-/// (`event_loop`: animation ticks only while a run is active) — the clock
-/// refreshes on the next paint, like a shell prompt, so a ticking-seconds
-/// display would look frozen between keystrokes. `chrono::Local` honors the
-/// `TZ` env var and `/etc/localtime`, so `TZ=America/Los_Angeles locode` (or a
-/// shell that exports `TZ`) sets the zone — matching a zsh status bar; no
-/// in-app timezone config needed.
+/// The left segment as styled spans: each component **bold** in its own
+/// terminal-relative color (user scheme, 2026-07-22) — cwd light blue, model
+/// gray, tokens red ("Cayenne"); the ` · ` separators stay dim and un-bold (the
+/// same lighter gray as dimmed output) so the colored components pop. A pending
+/// key-hint replaces the whole segment as one bold span.
+fn footer_left(app: &App) -> Vec<Span<'static>> {
+    let bold = |color: Color| Style::default().fg(color).add_modifier(Modifier::BOLD);
+    if let Some(hint) = app.hint {
+        let text = match hint {
+            Hint::QuitArmed => "press ctrl+c again to quit",
+            Hint::ClearArmed => "press esc again to clear",
+            Hint::Cancelling => "cancelling — esc again to retry",
+        };
+        return vec![Span::styled(
+            text,
+            Style::default().add_modifier(Modifier::BOLD),
+        )];
+    }
+    let sep = || Span::styled(" · ", Style::default().add_modifier(Modifier::DIM));
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    if let Some(cwd) = &app.cwd {
+        spans.push(Span::styled(cwd.clone(), bold(Color::LightBlue)));
+    }
+    if let Some(model) = &app.model {
+        if !spans.is_empty() {
+            spans.push(sep());
+        }
+        spans.push(Span::styled(model.clone(), bold(Color::Gray)));
+    }
+    if app.session_tokens > 0 {
+        if !spans.is_empty() {
+            spans.push(sep());
+        }
+        spans.push(Span::styled(
+            format!("{} tok", fmt_tokens(app.session_tokens)),
+            bold(Color::Red),
+        ));
+    }
+    spans
+}
+
+/// Format a clock stamp for the footer: full local date + `HH:MM`, no timezone
+/// label. `chrono::Local`'s `%Z` can only print the numeric offset (`-07:00`,
+/// not `PDT`) — a real abbreviation would need a tz-database dep — so it's
+/// dropped; the time itself still honors the `TZ` env var and `/etc/localtime`,
+/// so `TZ=America/Los_Angeles locode` (or a shell that exports `TZ`) sets the
+/// zone, matching a zsh status bar; no in-app timezone config needed. Minute
+/// precision (not seconds) because the UI has zero idle repaints (`event_loop`:
+/// ticks only while a run is active) — the clock refreshes on the next paint,
+/// like a shell prompt, so ticking seconds would look frozen between keystrokes.
 fn footer_clock<Tz: chrono::TimeZone>(now: &DateTime<Tz>) -> String
 where
     Tz::Offset: std::fmt::Display,
 {
-    now.format("%Y-%m-%d %H:%M %Z")
-        .to_string()
-        .trim_end()
-        .to_string()
+    now.format("%Y-%m-%d %H:%M").to_string()
 }
 
-/// Lay out the footer: 4-space left margin + `left` status, then the
-/// right-aligned `clock`. The 4-space margin aligns the status text with the
-/// composer's input column (2 margin + `❯ `). When the row is too narrow to fit
-/// both without touching, the clock is dropped and only the status shows.
-fn compose_footer(left: &str, clock: &str, width: u16, style: Style) -> Line<'static> {
-    let left_s = format!("    {left}");
+/// Lay out the footer: 4-space left margin + `left` spans, then the right-aligned
+/// bold gray `clock`. The 4-space margin aligns the status with the composer's
+/// input column (2 margin + `❯ `). When the row is too narrow to fit both without
+/// touching, the clock is dropped and only the status shows.
+fn compose_footer(left: Vec<Span<'static>>, clock: &str, width: u16) -> Line<'static> {
+    let left_len: usize = 4 + left
+        .iter()
+        .map(|s| s.content.chars().count())
+        .sum::<usize>();
     let total = usize::from(width);
-    let left_len = left_s.chars().count();
     let clock_len = clock.chars().count();
-    if clock.is_empty() || total < left_len + clock_len + FOOTER_RIGHT_MARGIN + 1 {
-        return Line::styled(left_s, style);
-    }
-    let pad = total - left_len - clock_len - FOOTER_RIGHT_MARGIN;
-    Line::from(vec![
-        Span::styled(left_s, style),
-        Span::styled(" ".repeat(pad), style),
-        Span::styled(clock.to_string(), style),
-    ])
-}
 
-/// Assemble the idle status text from whatever fields are known.
-fn status_text(app: &App) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    if let Some(cwd) = &app.cwd {
-        parts.push(cwd.clone());
+    let mut spans = vec![Span::raw("    ")];
+    spans.extend(left);
+    if !clock.is_empty() && total > left_len + clock_len + FOOTER_RIGHT_MARGIN {
+        let pad = total - left_len - clock_len - FOOTER_RIGHT_MARGIN;
+        spans.push(Span::raw(" ".repeat(pad)));
+        spans.push(Span::styled(
+            clock.to_string(),
+            Style::default()
+                .fg(Color::Gray)
+                .add_modifier(Modifier::BOLD),
+        ));
     }
-    if let Some(model) = &app.model {
-        parts.push(model.clone());
-    }
-    if app.session_tokens > 0 {
-        parts.push(format!("{} tok", fmt_tokens(app.session_tokens)));
-    }
-    parts.join(" · ")
+    Line::from(spans)
 }
 
 /// Compact token count: `842`, `3.1k`, `1.2M`.
@@ -324,14 +346,14 @@ mod tests {
     fn footer_clock_formats_full_local_date() {
         use chrono::{TimeZone, Utc};
         let dt = Utc.with_ymd_and_hms(2026, 7, 22, 0, 53, 7).unwrap();
-        // Full date, minute precision (no seconds), timezone label.
-        assert_eq!(footer_clock(&dt), "2026-07-22 00:53 UTC");
+        // Full date, minute precision (no seconds), no timezone label.
+        assert_eq!(footer_clock(&dt), "2026-07-22 00:53");
     }
 
     #[test]
     fn compose_footer_right_aligns_the_clock() {
-        let dim = Style::default().add_modifier(Modifier::DIM);
-        let line = compose_footer("~/proj", "2026-07-22 00:53 UTC", 40, dim);
+        let left = vec![Span::raw("~/proj")];
+        let line = compose_footer(left, "2026-07-22 00:53", 40);
         let s = line.to_string();
         assert_eq!(
             s.chars().count(),
@@ -340,17 +362,37 @@ mod tests {
         );
         assert!(s.starts_with("    ~/proj"), "left segment first: {s:?}");
         assert!(
-            s.ends_with("2026-07-22 00:53 UTC"),
+            s.ends_with("2026-07-22 00:53"),
             "clock is right-aligned: {s:?}"
         );
     }
 
     #[test]
     fn compose_footer_drops_clock_when_too_narrow() {
-        let dim = Style::default().add_modifier(Modifier::DIM);
         // Width can't fit both — only the left status shows, no panic.
-        let line = compose_footer("~/proj", "2026-07-22 00:53 UTC", 20, dim);
+        let line = compose_footer(vec![Span::raw("~/proj")], "2026-07-22 00:53", 20);
         assert_eq!(line.to_string(), "    ~/proj");
+    }
+
+    #[test]
+    fn footer_components_are_bold_with_dim_separators() {
+        let mut app = App::new();
+        app.cwd = Some("~/proj".into());
+        app.model = Some("opus".into());
+        app.session_tokens = 3100;
+        let spans = footer_left(&app);
+        // cwd / model / tokens are bold + colored; the ` · ` separators are dim,
+        // not bold (user scheme, 2026-07-22).
+        let cwd = &spans[0];
+        assert_eq!(cwd.content.as_ref(), "~/proj");
+        assert_eq!(cwd.style.fg, Some(Color::LightBlue));
+        assert!(cwd.style.add_modifier.contains(Modifier::BOLD));
+        let sep = &spans[1];
+        assert_eq!(sep.content.as_ref(), " · ");
+        assert!(sep.style.add_modifier.contains(Modifier::DIM));
+        assert!(!sep.style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(spans[2].style.fg, Some(Color::Gray), "model gray");
+        assert_eq!(spans[4].style.fg, Some(Color::Red), "tokens cayenne/red");
     }
 
     #[test]

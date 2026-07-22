@@ -155,14 +155,24 @@ and codex (AGENTS.md "planning is a research task"):
   on the block and would break `Block: PartialEq` determinism) — deferred.
   Implemented in `ui/blocks.rs` (`render_user_prompt`).
 
-- **Footer clock**: the bottom status row now right-aligns the current local
-  date + `HH:MM` + timezone (grok/codex both surface a wall clock). Uses
-  `chrono::Local`, which honors the `TZ` env var and `/etc/localtime`, so
-  `TZ=America/Los_Angeles locode` (or a shell that exports `TZ`) sets the zone —
-  no in-app timezone config, matching a zsh status bar (user's mental model,
-  their server and workstation differ in zone). **Minute precision** (not
+- **Footer clock**: the bottom status row right-aligns the current local date +
+  `HH:MM` (grok/codex both surface a wall clock). Uses `chrono::Local`, which
+  honors the `TZ` env var and `/etc/localtime`, so `TZ=America/Los_Angeles
+  locode` (or a shell that exports `TZ`) sets the zone — no in-app timezone
+  config, matching a zsh status bar (user's mental model, their server and
+  workstation differ in zone). **No timezone label**: `Local`'s `%Z` can only
+  print the numeric offset (`-07:00`, not `PDT`) because chrono has no zone
+  abbreviation; a real `PST/PDT` label would need a tz-database dep, deferred as
+  ask-first (user preferred dropping it, 2026-07-22). **Minute precision** (not
   seconds) because the loop has zero idle repaints (`event_loop`: animation ticks
   only while a run is active) — the clock refreshes on the next paint, like a
   shell prompt, and a seconds display would look frozen between keystrokes. When
   the row is too narrow to fit both status and clock, the clock is dropped.
-  Implemented in `ui.rs` (`footer_clock` / `compose_footer`).
+
+- **Footer component colors** (user scheme, 2026-07-22): the left status
+  components render **bold**, each in its own terminal-relative (ANSI-named,
+  theme-following) color — cwd `LightBlue`, model `Gray`, tokens `Red`
+  ("Cayenne"), clock `Gray`; the ` · ` separators stay **dim and un-bold** (the
+  same lighter gray as dimmed output) so the colored components read as the
+  foreground. Exact-RGB pinning is deferred to the future color-theme system.
+  Implemented in `ui.rs` (`footer_left` / `footer_clock` / `compose_footer`).
