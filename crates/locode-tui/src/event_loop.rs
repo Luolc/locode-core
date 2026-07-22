@@ -79,7 +79,7 @@ pub async fn run(cli: Cli, registry: ProviderRegistry) -> Result<ExitCode, RunEr
         if app.dirty {
             let now = Instant::now();
             if now.duration_since(last_draw) >= MIN_DRAW_INTERVAL {
-                terminal.draw(|frame| ui::draw(frame, &app))?;
+                paint(&mut terminal, &app)?;
                 app.dirty = false;
                 last_draw = now;
                 deferred_draw = None;
@@ -142,7 +142,7 @@ pub async fn run(cli: Cli, registry: ProviderRegistry) -> Result<ExitCode, RunEr
                 let now = Instant::now();
                 if resize_at.is_some_and(|at| now >= at) {
                     resize_at = None;
-                    terminal.autoresize()?;
+                    // The next draw re-anchors the viewport to the new size.
                     app.dirty = true;
                 }
                 if next_tick.is_some_and(|at| now >= at) {
@@ -160,24 +160,28 @@ pub async fn run(cli: Cli, registry: ProviderRegistry) -> Result<ExitCode, RunEr
 }
 
 /// Render queued blocks once above the viewport (print-once transcript).
-fn flush_outbox(
-    terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
-    app: &mut App,
-) -> std::io::Result<()> {
+/// Resize the live region to fit the composer, then paint it (ADR-0019
+/// amendment — dynamic height), clamped to `[MIN, ~50% of the terminal]`.
+fn paint(terminal: &mut crate::term::Term, app: &App) -> std::io::Result<()> {
+    let size = terminal.size()?;
+    let rows = ui::desired_live_rows(app, size.width)
+        .clamp(term::MIN_LIVE_ROWS, term::max_live_rows(size.height));
+    terminal.set_height(rows)?;
+    terminal.draw(|frame| ui::draw(frame, app))?;
+    Ok(())
+}
+
+fn flush_outbox(terminal: &mut crate::term::Term, app: &mut App) -> std::io::Result<()> {
     let width = terminal.size()?.width;
     let lines: Vec<Line<'static>> = app
         .outbox
         .drain(..)
         .flat_map(|block| block.render(width))
         .collect();
-    let height = u16::try_from(lines.len()).unwrap_or(u16::MAX);
-    if height == 0 {
+    if lines.is_empty() {
         return Ok(());
     }
-    terminal.insert_before(height, |buf| {
-        use ratatui::widgets::Widget;
-        ratatui::widgets::Paragraph::new(lines).render(buf.area, buf);
-    })?;
+    terminal.insert_before(&lines)?;
     Ok(())
 }
 

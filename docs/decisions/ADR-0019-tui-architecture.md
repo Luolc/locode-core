@@ -108,3 +108,53 @@ release only the unified `locode`. Done in this change:
 locode-exec` edge — is deferred; it is a mechanical move with no user-visible
 change, scheduled when the headless/TUI split is next touched. Until then the
 `locode-exec` *crate* remains, only its binary target is no longer released.
+
+## Amendment (2026-07-22): dynamic live-region height via a vendored inline terminal
+
+Supersedes the fixed-height decision. A first attempt to grow the region by
+recreating ratatui's `Terminal` (PR #99) **blinked** — every resize did a
+`Clear` + full repaint and could not scroll the transcript as a block. Confirmed
+by smoke; reverted.
+
+**Root cause.** Stock ratatui 0.29 cannot change an inline viewport's height:
+`Terminal::viewport` / `set_viewport_area` are private and `resize()` is
+hardwired to the stored height. Both Rust/ratatui references solve this by
+**vendoring a terminal** (codex `tui/src/custom_terminal.rs`; grok
+`xai-ratatui-inline`) that owns a mutable `viewport_area` and resizes it with
+DECSTBM **scroll regions** so content moves as one block (no clear/repaint).
+
+**Decision.** Vendor a *minimal* inline terminal, `term::inline` — a `Frame` +
+`InlineTerminal` — that reuses ratatui's **public** `Buffer`/`Backend` (so we do
+NOT copy the diff engine or the crossterm backend), and adds exactly what stock
+ratatui withholds:
+- `draw(f)`: render into a back buffer, `Buffer::diff` vs the front buffer,
+  `Backend::draw` the delta, flush, swap+reset (ratatui's own loop).
+- `insert_before(lines)`: the transcript path — `scroll_region_up` above the
+  viewport, then draw the freed rows (ratatui's `insert_before_scrolling_regions`
+  recipe), so native scrollback still owns settled history (ADR-0019 unchanged).
+- `set_height(rows)`: the new capability. The viewport stays **bottom-anchored**;
+  on **grow** `scroll_region_up` scrolls the transcript up to make room; on
+  **shrink** `scroll_region_down` drops the transcript back down. No gap between
+  transcript and composer, ever; no clear/blink.
+
+`ui::draw`/`composer`/approval take `term::inline::Frame` (same `area()` /
+`render_widget()` surface as ratatui's, so the change is mechanical). The event
+loop computes a desired row count (`ui::desired_live_rows`, unit-tested) and
+calls `set_height` before each paint, clamped to `[MIN, ~50% of the terminal]`.
+
+**Edge cases to test** (against ratatui `TestBackend`, which implements the
+scroll-region ops + a `scrollback()` buffer, so the geometry is validated
+headlessly; only raw escape-sequence behavior needs a real-terminal smoke):
+1. grow by 1 and by many rows; transcript moves up, viewport bottom-anchored;
+2. shrink by 1 and by many; transcript moves back down; no gap; no bottom blank;
+3. grow past what fits above (transcript shorter than the delta) → pulls blanks,
+   never panics/underflows;
+4. clamp at `MIN_LIVE_ROWS` and at ~50% of the terminal;
+5. `insert_before` while at a non-default height (transcript still lands
+   correctly above the resized viewport);
+6. a terminal resize (`SIGWINCH`) mid-session re-anchors without corruption;
+7. no-op when the requested height equals the current height (no escape output).
+
+**Fallback.** If a terminal mishandles the scroll-region ops in the wild, the
+seam is one method (`set_height`); it can degrade to a fixed height without
+touching app logic.

@@ -19,6 +19,7 @@ pub mod app;
 pub mod approval;
 pub mod cli;
 pub mod engine;
+pub mod inline_terminal;
 pub mod term;
 pub mod ui;
 

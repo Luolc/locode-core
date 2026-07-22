@@ -4,13 +4,13 @@
 //! finalized transcript blocks are printed once into native scrollback via
 //! `insert_before`. Blank rows above the status row read as margin.
 
-use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
 use crate::app::{App, Hint, RunState};
+use crate::inline_terminal::Frame;
 
 pub mod blocks;
 pub mod composer;
@@ -19,6 +19,24 @@ pub mod markdown;
 
 /// Braille spinner frames (the four-harness standard).
 const SPINNER: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+/// The rows the live region wants right now: the exact content height (status +
+/// queue + composer + footer, or the approval overlay + footer). The loop feeds
+/// this to `InlineTerminal::set_height` so the region tracks the composer with no
+/// idle gap (ADR-0019 amendment); the caller clamps it to `[MIN, ~50%]`.
+#[must_use]
+pub fn desired_live_rows(app: &App, width: u16) -> u16 {
+    if let Some(view) = app.approval_queue.front() {
+        let lines = u16::try_from(approval_lines(view).len()).unwrap_or(u16::MAX);
+        return lines.saturating_add(1); // + footer
+    }
+    let status = u16::from(app.is_running());
+    let queue = u16::try_from(app.prompt_queue.len()).unwrap_or(u16::MAX);
+    status
+        .saturating_add(queue)
+        .saturating_add(app.composer.desired_height(width))
+        .saturating_add(1) // footer
+}
 
 /// Draw the live region: flexible blank space, then status row (while
 /// running), then the composer OR the approval overlay, then footer.
@@ -174,11 +192,11 @@ fn fmt_tokens(n: u64) -> String {
 mod tests {
     use super::*;
     use crate::app::PendingTool;
-    use ratatui::Terminal;
+    use crate::inline_terminal::InlineTerminal;
     use ratatui::backend::TestBackend;
     use std::time::Instant;
 
-    fn buffer_text(terminal: &Terminal<TestBackend>) -> String {
+    fn buffer_text(terminal: &InlineTerminal<TestBackend>) -> String {
         let buffer = terminal.backend().buffer();
         let mut out = String::new();
         for y in 0..buffer.area.height {
@@ -192,7 +210,7 @@ mod tests {
 
     #[test]
     fn draw_renders_composer_bottom_anchored_with_status() {
-        let mut terminal = Terminal::new(TestBackend::new(40, 10)).unwrap();
+        let mut terminal = InlineTerminal::new(TestBackend::new(40, 10), 8).unwrap();
         let mut app = App::new();
         app.cwd = Some("~/dev/locode-core".into());
         app.model = Some("claude-sonnet-5".into());
@@ -225,7 +243,7 @@ mod tests {
 
     #[test]
     fn status_row_shows_spinner_and_active_tool_while_running() {
-        let mut terminal = Terminal::new(TestBackend::new(50, 10)).unwrap();
+        let mut terminal = InlineTerminal::new(TestBackend::new(50, 10), 8).unwrap();
         let mut app = App::new();
         app.run = RunState::Running {
             started: Instant::now(),

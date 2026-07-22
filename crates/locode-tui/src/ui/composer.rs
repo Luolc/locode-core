@@ -1,8 +1,8 @@
 //! The multiline prompt editor — a thin wrapper over `tui-textarea` so the
 //! widget choice stays local (SPEC-TUI: replacing it later is one module).
 
+use crate::inline_terminal::Frame;
 use crossterm::event::KeyEvent;
-use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 
