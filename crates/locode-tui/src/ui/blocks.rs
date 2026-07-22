@@ -62,7 +62,7 @@ pub enum Block {
 }
 
 impl Block {
-    /// Render to pre-wrapped lines at `width` for `insert_before`, with a
+    /// Render to pre-wrapped lines at `width` for the transcript tail, with a
     /// uniform left/right margin so content doesn't hug the terminal edge. Every
     /// block's `● `/`❯ ` prefix then sits at the margin, so text aligns at
     /// `MARGIN + 2` (the same column as the composer's input text).
@@ -123,12 +123,17 @@ impl Block {
                 } else {
                     Style::default().fg(Color::Green)
                 };
-                let mut lines = vec![Line::from(vec![
-                    Span::styled("● ", bullet_style),
-                    Span::styled(name.clone(), Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw(" "),
-                    Span::styled(args.clone(), dim),
-                ])];
+                // Leading blank line so blocks don't squeeze together (matches
+                // UserPrompt/AssistantText — one blank before every block).
+                let mut lines = vec![
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled("● ", bullet_style),
+                        Span::styled(name.clone(), Style::default().add_modifier(Modifier::BOLD)),
+                        Span::raw(" "),
+                        Span::styled(args.clone(), dim),
+                    ]),
+                ];
                 lines.extend(truncated_body(body, width));
                 lines
             }
@@ -146,9 +151,11 @@ impl Block {
                     status_str(*status),
                     if *turns == 1 { "" } else { "s" },
                 );
-                vec![Line::styled(format!("  {label}"), dim)]
+                vec![Line::from(""), Line::styled(format!("  {label}"), dim)]
             }
-            Block::Notice(text) => vec![Line::styled(format!("● {text}"), dim)],
+            Block::Notice(text) => {
+                vec![Line::from(""), Line::styled(format!("● {text}"), dim)]
+            }
         }
     }
 }
@@ -242,12 +249,13 @@ mod tests {
             }
             .render(60),
         );
-        assert!(lines[0].contains("run_terminal_cmd"));
+        assert_eq!(lines[0].trim(), "", "leading blank between blocks");
+        assert!(lines[1].contains("run_terminal_cmd"));
         assert!(lines.iter().any(|l| l.contains("line-1")), "{lines:?}");
         assert!(lines.iter().any(|l| l.contains("+15 lines")), "{lines:?}");
         assert!(lines.iter().any(|l| l.contains("line-20")), "{lines:?}");
-        // 1 header + 6 body rows (3 head + marker + 2 tail).
-        assert_eq!(lines.len(), 7, "{lines:?}");
+        // 1 blank + 1 header + 6 body rows (3 head + marker + 2 tail).
+        assert_eq!(lines.len(), 8, "{lines:?}");
     }
 
     #[test]
@@ -261,13 +269,15 @@ mod tests {
             }
             .render(60),
         );
-        assert_eq!(lines.len(), 1);
+        // Leading blank between blocks, then the one dim summary line.
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].trim(), "");
         assert!(
-            lines[0].contains("completed · 3 turns · 1234 tok · 41s"),
+            lines[1].contains("completed · 3 turns · 1234 tok · 41s"),
             "{lines:?}"
         );
         // No longer a full-width `──…──` rule (it read as an extra rule).
-        assert!(!lines[0].contains("──"), "should not be a rule: {lines:?}");
+        assert!(!lines[1].contains("──"), "should not be a rule: {lines:?}");
     }
 
     #[test]

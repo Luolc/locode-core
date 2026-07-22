@@ -109,7 +109,8 @@ pub struct App {
     pub dirty: bool,
     /// Run lifecycle.
     pub run: RunState,
-    /// Finalized blocks awaiting `insert_before` (drained by the loop).
+    /// Finalized blocks awaiting folding into the transcript tail (drained by
+    /// the loop's `flush_outbox`; ADR-0022).
     pub outbox: Vec<Block>,
     /// Tool calls awaiting their results.
     pub pending_tools: Vec<PendingTool>,

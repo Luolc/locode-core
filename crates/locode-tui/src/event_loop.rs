@@ -65,21 +65,30 @@ pub async fn run(cli: Cli, registry: ProviderRegistry) -> Result<ExitCode, RunEr
     // Pending approval oneshots keyed by tool_use id (ADR-0017). Bounded by
     // the engine's serial dispatch (one in flight) but a map for generality.
     let mut approvals: PendingApprovals = std::collections::HashMap::new();
+    // The recent transcript tail rendered inside the bottom-anchored frame
+    // (ADR-0022). Rows that overflow the screen top are committed to native
+    // scrollback via `scroll_up` and drained here; there is no `insert_before`.
+    let mut tail: Vec<Line<'static>> = Vec::new();
+    // Set once any tail rows have been committed to native scrollback (the
+    // `viewportY` moved); reserved for the shrink-below-scrollback guard.
+    let mut committed: bool = false;
 
     let exit_code = loop {
         if app.should_quit {
             break ExitCode::SUCCESS;
         }
 
-        // Print finalized blocks once into native scrollback, then paint the
-        // live region (rate-capped; deferred paint instead of spinning).
+        // Fold finalized blocks into the transcript tail, then paint the whole
+        // bottom-anchored frame (rate-capped; deferred paint instead of
+        // spinning). Overflow leaves the frame via `scroll_up`, not
+        // `insert_before` (ADR-0022).
         if !app.outbox.is_empty() {
-            flush_outbox(&mut terminal, &mut app)?;
+            flush_outbox(&terminal, &mut app, &mut tail)?;
         }
         if app.dirty {
             let now = Instant::now();
             if now.duration_since(last_draw) >= MIN_DRAW_INTERVAL {
-                terminal.draw(|frame| ui::draw(frame, &app))?;
+                paint(&mut terminal, &mut app, &mut tail, &mut committed)?;
                 app.dirty = false;
                 last_draw = now;
                 deferred_draw = None;
@@ -142,7 +151,10 @@ pub async fn run(cli: Cli, registry: ProviderRegistry) -> Result<ExitCode, RunEr
                 let now = Instant::now();
                 if resize_at.is_some_and(|at| now >= at) {
                     resize_at = None;
-                    terminal.autoresize()?;
+                    // ADR-0022: a resize is a full reset — clear the screen and
+                    // drop the diff baseline so the next paint fully repaints at
+                    // the new size (the debounce collapsed the storm).
+                    terminal.clear()?;
                     app.dirty = true;
                 }
                 if next_tick.is_some_and(|at| now >= at) {
@@ -159,25 +171,73 @@ pub async fn run(cli: Cli, registry: ProviderRegistry) -> Result<ExitCode, RunEr
     Ok(exit_code)
 }
 
-/// Render queued blocks once above the viewport (print-once transcript).
-fn flush_outbox(
-    terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
+/// Render finalized blocks into the transcript `tail` (ADR-0022): no
+/// `insert_before` — the tail is part of the one bottom-anchored frame, and
+/// rows that overflow the screen top are committed to native scrollback by
+/// [`paint`]. Marks the app dirty so the next iteration repaints.
+fn flush_outbox<B: ratatui::backend::Backend>(
+    terminal: &crate::frame_terminal::FrameTerminal<B>,
     app: &mut App,
+    tail: &mut Vec<Line<'static>>,
 ) -> std::io::Result<()> {
     let width = terminal.size()?.width;
-    let lines: Vec<Line<'static>> = app
+    let rendered: Vec<Line<'static>> = app
         .outbox
         .drain(..)
         .flat_map(|block| block.render(width))
         .collect();
-    let height = u16::try_from(lines.len()).unwrap_or(u16::MAX);
-    if height == 0 {
-        return Ok(());
+    tail.extend(rendered);
+    app.dirty = true;
+    Ok(())
+}
+
+/// Paint one bottom-anchored frame (ADR-0022): commit the transcript overflow
+/// to native scrollback via `scroll_up`, then diff-render the visible tail plus
+/// the pinned status/composer/footer as a single buffer update.
+fn paint<B: ratatui::backend::Backend>(
+    terminal: &mut crate::frame_terminal::FrameTerminal<B>,
+    app: &mut App,
+    tail: &mut Vec<Line<'static>>,
+    committed: &mut bool,
+) -> std::io::Result<()> {
+    let size = terminal.size()?;
+    let v = size.height;
+    let (composer_rows, non_tail) = ui::live_rows(app, size.width, v);
+    // Glue the caret to the composer's bottom line (editor rows = composer rows
+    // minus the two framing rules).
+    app.composer.sync_scroll(composer_rows.saturating_sub(2));
+
+    // Transcript rows that fit on screen; the rest is the oldest tail (the top
+    // rows of the current full frame) and is committed to scrollback.
+    // Retain up to a *minimum-composer* screen of transcript in memory, so
+    // shrinking the composer can refill the freed rows from memory (no gap) —
+    // the transcript "comes back down". Only commit lines older than that to
+    // native scrollback (permanent). `non_tail - composer_rows` is the status +
+    // queue + footer rows; the min frame keeps `MIN_COMPOSER_ROWS` for the input.
+    let min_non_tail = non_tail
+        .saturating_sub(composer_rows)
+        .saturating_add(term::MIN_COMPOSER_ROWS);
+    let max_tail = usize::from(v.saturating_sub(min_non_tail));
+    let overflow = tail.len().saturating_sub(max_tail);
+    if overflow > 0 {
+        // Commit the actual oldest lines (chunked by screen height inside
+        // `commit_scrollback`), so the right transcript lands in scrollback even
+        // when those lines aren't currently on screen — then drop exactly those.
+        let commit_lines: Vec<Line<'static>> = tail[..overflow].to_vec();
+        // Protect the bottom `non_tail` rows (status + queue + composer + footer)
+        // from the scroll so the composer is never smeared into the transcript.
+        terminal.commit_scrollback(&commit_lines, non_tail)?;
+        tail.drain(..overflow);
+        *committed = true;
     }
-    terminal.insert_before(height, |buf| {
-        use ratatui::widgets::Widget;
-        ratatui::widgets::Paragraph::new(lines).render(buf.area, buf);
-    })?;
+
+    // Show as many recent tail lines as fit under the *current* composer; the
+    // rest stay in memory (revealed again if the composer shrinks). Own the
+    // slice before the draw so `tail`/`app` borrows don't clash with the closure.
+    let tail_cap = usize::from(v.saturating_sub(non_tail));
+    let shown = tail.len().min(tail_cap);
+    let visible: Vec<Line<'static>> = tail[tail.len() - shown..].to_vec();
+    terminal.draw(|frame| ui::draw(frame, app, &visible, composer_rows))?;
     Ok(())
 }
 
@@ -185,8 +245,8 @@ fn flush_outbox(
 static DEBUG_LOG_PATH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
 
 /// Append one line to the debug log when `LOCODE_TUI_DEBUG_LOG` is set — the
-/// `insert_before` transcript leaves nothing greppable in a captured pty, so
-/// this is the reusable smoke/bug-report instrumentation. No-op otherwise.
+/// diff-painted frame leaves nothing greppable in a captured pty, so this is the
+/// reusable smoke/bug-report instrumentation. No-op otherwise.
 fn debug_log(line: &str) {
     let path = DEBUG_LOG_PATH.get_or_init(|| std::env::var("LOCODE_TUI_DEBUG_LOG").ok());
     if let Some(path) = path {
@@ -344,4 +404,143 @@ fn spawn_signal_task() -> tokio::sync::mpsc::UnboundedReceiver<()> {
     #[cfg(not(unix))]
     drop(tx);
     rx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::paint;
+    use crate::app::App;
+    use crate::frame_terminal::FrameTerminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::text::Line;
+
+    fn rows(t: &FrameTerminal<TestBackend>) -> Vec<String> {
+        let b = t.backend().buffer();
+        (0..b.area.height)
+            .map(|y| {
+                (0..b.area.width)
+                    .map(|x| b[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    fn scrollback(t: &FrameTerminal<TestBackend>) -> Vec<String> {
+        let b = t.backend().scrollback();
+        (0..b.area.height)
+            .map(|y| {
+                (0..b.area.width)
+                    .map(|x| b[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    /// End-to-end geometry through `paint`: the composer is pinned to the bottom;
+    /// the transcript tail renders above it; a burst that overflows the screen
+    /// (the first-big-response case) commits the *correct* oldest lines to
+    /// scrollback with NO blank rows injected (the regression that killed the
+    /// earlier attempts); and a following short frame stays clean.
+    #[test]
+    fn paint_pins_composer_commits_overflow_and_never_pollutes_scrollback() {
+        // 30 wide, 8 tall. Empty composer = 3 rows + 1 footer = non_tail 4, so
+        // tail_cap = 4 transcript rows fit.
+        let mut t = FrameTerminal::new(TestBackend::new(30, 8)).unwrap();
+        let mut app = App::new();
+        let mut committed = false;
+
+        // A single burst of 10 transcript lines (taller than the 4-row cap and
+        // the 8-row screen) — the jump-from-not-full case.
+        let mut tail: Vec<Line<'static>> =
+            (0..10).map(|i| Line::from(format!("L{i:02}"))).collect();
+        paint(&mut t, &mut app, &mut tail, &mut committed).unwrap();
+
+        let r = rows(&t);
+        // Composer prompt sits on the last rows (bottom-pinned).
+        assert!(
+            r.iter().rev().take(3).any(|l| l.contains('❯')),
+            "composer pinned to bottom: {r:?}"
+        );
+        // The last 4 transcript lines are the visible tail (L06..L09).
+        for id in ["L06", "L07", "L08", "L09"] {
+            assert!(r.iter().any(|l| l == id), "{id} visible: {r:?}");
+        }
+        // The oldest 6 (L00..L05) went to scrollback — the RIGHT lines, in order.
+        let sb = scrollback(&t);
+        for id in ["L00", "L01", "L02", "L03", "L04", "L05"] {
+            assert!(sb.iter().any(|l| l == id), "{id} committed: {sb:?}");
+        }
+        // The crux: scrollback contains NO blank rows between committed lines
+        // (no scroll_region_down blank injection).
+        let first = sb.iter().position(|l| l == "L00").unwrap();
+        let last = sb.iter().position(|l| l == "L05").unwrap();
+        assert!(
+            sb[first..=last].iter().all(|l| !l.is_empty()),
+            "no blank rows injected into scrollback: {sb:?}"
+        );
+
+        // Now type into the composer (grow) then a shorter frame: no new commits,
+        // scrollback untouched.
+        let sb_len_before = scrollback(&t).iter().filter(|l| !l.is_empty()).count();
+        app.composer.insert_text("hi");
+        paint(&mut t, &mut app, &mut tail, &mut committed).unwrap();
+        let r2 = rows(&t);
+        assert!(r2.iter().any(|l| l.contains("❯ hi")), "typed text: {r2:?}");
+        let sb_len_after = scrollback(&t).iter().filter(|l| !l.is_empty()).count();
+        assert_eq!(
+            sb_len_before, sb_len_after,
+            "editing the composer must not touch scrollback"
+        );
+    }
+
+    /// Growing the composer hides recent tail lines (kept in memory, NOT
+    /// committed); shrinking it back reveals them again — the transcript "comes
+    /// back down" with no gap and no extra scrollback commits (the common,
+    /// screen-filling case the earlier attempt got wrong).
+    #[test]
+    fn shrinking_the_composer_refills_the_transcript_from_memory() {
+        let mut t = FrameTerminal::new(TestBackend::new(30, 12)).unwrap();
+        let mut app = App::new();
+        let mut committed = false;
+
+        // 8 transcript lines; with an empty composer (3 rows) + footer, tail_cap
+        // is 8 — they all fit, nothing committed.
+        let mut tail: Vec<Line<'static>> = (0..8).map(|i| Line::from(format!("T{i:02}"))).collect();
+        paint(&mut t, &mut app, &mut tail, &mut committed).unwrap();
+        assert!(rows(&t).iter().any(|l| l == "T00"), "T00 shown initially");
+        let sb0 = scrollback(&t).iter().filter(|l| !l.is_empty()).count();
+
+        // Grow the composer to 4 lines → fewer transcript rows fit; the oldest
+        // shown lines are hidden (in memory, not scrollback).
+        app.composer.insert_text("a\nb\nc\nd");
+        paint(&mut t, &mut app, &mut tail, &mut committed).unwrap();
+        assert!(
+            !rows(&t).iter().any(|l| l == "T00"),
+            "T00 hidden while the composer is tall: {:?}",
+            rows(&t)
+        );
+        assert_eq!(
+            scrollback(&t).iter().filter(|l| !l.is_empty()).count(),
+            sb0,
+            "growing the composer must NOT commit to scrollback"
+        );
+
+        // Shrink back to empty → the hidden lines come back from memory.
+        app.composer.clear();
+        paint(&mut t, &mut app, &mut tail, &mut committed).unwrap();
+        assert!(
+            rows(&t).iter().any(|l| l == "T00"),
+            "T00 refilled after the composer shrinks: {:?}",
+            rows(&t)
+        );
+        assert_eq!(
+            scrollback(&t).iter().filter(|l| !l.is_empty()).count(),
+            sb0,
+            "the whole grow/shrink cycle never touched scrollback"
+        );
+    }
 }

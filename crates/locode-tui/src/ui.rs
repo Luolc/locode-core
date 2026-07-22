@@ -1,10 +1,11 @@
-//! Rendering: the live region (bottom-anchored) and its widgets.
+//! Rendering: the bottom-anchored full-screen frame and its widgets (ADR-0022).
 //!
-//! The live region is the ONLY repainted surface (SPEC-TUI rendering model);
-//! finalized transcript blocks are printed once into native scrollback via
-//! `insert_before`. Blank rows above the status row read as margin.
+//! Each paint is one relative frame — `[transcript tail] [status] [queue]
+//! [composer] [footer]` — pinned to the screen bottom. Finalized transcript
+//! that overflows the screen top is committed to native scrollback by the paint
+//! loop's `scroll_up` (no `insert_before`). Blank rows above the tail read as
+//! margin.
 
-use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
@@ -20,37 +21,58 @@ pub mod markdown;
 /// Braille spinner frames (the four-harness standard).
 const SPINNER: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
-/// Draw the live region: flexible blank space, then status row (while
-/// running), then the composer OR the approval overlay, then footer.
-pub fn draw(frame: &mut Frame<'_>, app: &App) {
+/// Draw one bottom-anchored full-screen frame (ADR-0022): a flexible top
+/// margin, the recent transcript `tail`, the status row (while running), the
+/// queued-prompt previews, the composer OR the approval overlay, then footer.
+/// The caller supplies the already-clipped `tail` (rows that fit on screen; the
+/// overflow has been committed to native scrollback) and `composer_rows` (the
+/// screen-capped composer height from [`live_rows`]).
+pub fn draw(
+    frame: &mut crate::frame_terminal::Frame<'_>,
+    app: &App,
+    tail: &[Line<'static>],
+    composer_rows: u16,
+) {
+    let tail_len = u16::try_from(tail.len()).unwrap_or(u16::MAX);
+
     // The approval overlay replaces the composer while a decision is pending
     // (grok's front-only render).
     if let Some(view) = app.approval_queue.front() {
         let lines = approval_lines(view);
         let height = u16::try_from(lines.len()).unwrap_or(u16::MAX);
-        let [_, overlay_area, footer_area] = Layout::vertical([
+        let [_, tail_area, overlay_area, footer_area] = Layout::vertical([
             Constraint::Fill(1),
+            Constraint::Length(tail_len),
             Constraint::Length(height),
             Constraint::Length(1),
         ])
         .areas(frame.area());
+        frame.render_widget(Paragraph::new(tail.to_vec()), tail_area);
         frame.render_widget(Paragraph::new(lines), overlay_area);
         frame.render_widget(Paragraph::new(approval_footer()), footer_area);
         return;
     }
 
-    let composer_height = app.composer.desired_height(frame.area().width);
     let status_height = u16::from(app.is_running());
     let queue_height = u16::try_from(app.prompt_queue.len()).unwrap_or(u16::MAX);
-    let [_, status_area, queue_area, composer_area, footer_area] = Layout::vertical([
+    let [
+        _,
+        tail_area,
+        status_area,
+        queue_area,
+        composer_area,
+        footer_area,
+    ] = Layout::vertical([
         Constraint::Fill(1),
+        Constraint::Length(tail_len),
         Constraint::Length(status_height),
         Constraint::Length(queue_height),
-        Constraint::Length(composer_height),
+        Constraint::Length(composer_rows),
         Constraint::Length(1),
     ])
     .areas(frame.area());
 
+    frame.render_widget(Paragraph::new(tail.to_vec()), tail_area);
     if app.is_running() {
         frame.render_widget(Paragraph::new(status_line(app)), status_area);
     }
@@ -59,6 +81,31 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     }
     app.composer.render(frame, composer_area);
     frame.render_widget(Paragraph::new(footer_line(app)), footer_area);
+}
+
+/// The non-tail geometry for the next frame: the screen-capped composer height
+/// and the total rows the frame occupies *below* the transcript tail (status +
+/// queue + composer + footer, or the approval overlay + footer). The paint
+/// loop uses `non_tail` to compute how many tail rows fit and how many overflow
+/// into native scrollback.
+#[must_use]
+pub fn live_rows(app: &App, width: u16, screen_h: u16) -> (u16, u16) {
+    if let Some(view) = app.approval_queue.front() {
+        let overlay_len = u16::try_from(approval_lines(view).len()).unwrap_or(u16::MAX);
+        // Overlay + footer; no composer while a decision is pending.
+        return (0, overlay_len.saturating_add(1));
+    }
+    let composer = app
+        .composer
+        .desired_height(width)
+        .min(crate::term::max_composer_rows(screen_h));
+    let status = u16::from(app.is_running());
+    let queue = u16::try_from(app.prompt_queue.len()).unwrap_or(u16::MAX);
+    let non_tail = status
+        .saturating_add(queue)
+        .saturating_add(composer)
+        .saturating_add(1);
+    (composer, non_tail)
 }
 
 /// Dim `queued: …` previews for prompts waiting to run.
@@ -174,11 +221,11 @@ fn fmt_tokens(n: u64) -> String {
 mod tests {
     use super::*;
     use crate::app::PendingTool;
-    use ratatui::Terminal;
+    use crate::frame_terminal::FrameTerminal;
     use ratatui::backend::TestBackend;
     use std::time::Instant;
 
-    fn buffer_text(terminal: &Terminal<TestBackend>) -> String {
+    fn buffer_text(terminal: &FrameTerminal<TestBackend>) -> String {
         let buffer = terminal.backend().buffer();
         let mut out = String::new();
         for y in 0..buffer.area.height {
@@ -192,13 +239,14 @@ mod tests {
 
     #[test]
     fn draw_renders_composer_bottom_anchored_with_status() {
-        let mut terminal = Terminal::new(TestBackend::new(40, 10)).unwrap();
+        let mut terminal = FrameTerminal::new(TestBackend::new(40, 10)).unwrap();
         let mut app = App::new();
         app.cwd = Some("~/dev/locode-core".into());
         app.model = Some("claude-sonnet-5".into());
         app.composer.insert_text("hello tui");
 
-        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let (cr, _) = live_rows(&app, 40, 10);
+        terminal.draw(|frame| draw(frame, &app, &[], cr)).unwrap();
         let text = buffer_text(&terminal);
 
         assert!(text.contains("❯ hello tui"), "typed text visible: {text}");
@@ -225,7 +273,7 @@ mod tests {
 
     #[test]
     fn status_row_shows_spinner_and_active_tool_while_running() {
-        let mut terminal = Terminal::new(TestBackend::new(50, 10)).unwrap();
+        let mut terminal = FrameTerminal::new(TestBackend::new(50, 10)).unwrap();
         let mut app = App::new();
         app.run = RunState::Running {
             started: Instant::now(),
@@ -237,14 +285,16 @@ mod tests {
             args: "{}".into(),
         });
 
-        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let (cr, _) = live_rows(&app, 50, 10);
+        terminal.draw(|frame| draw(frame, &app, &[], cr)).unwrap();
         let text = buffer_text(&terminal);
         assert!(text.contains("run_terminal_cmd ·"), "{text}");
 
         // Idle: no status row.
         app.run = RunState::Idle;
         app.pending_tools.clear();
-        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let (cr, _) = live_rows(&app, 50, 10);
+        terminal.draw(|frame| draw(frame, &app, &[], cr)).unwrap();
         let text = buffer_text(&terminal);
         assert!(!text.contains("thinking"), "{text}");
     }
