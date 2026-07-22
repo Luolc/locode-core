@@ -370,7 +370,10 @@ impl Writer {
                 }
                 self.out.push(Line::from(spans));
             }
-            if is_head && ri + 1 == head_rows {
+            // A `├─┼─┤` rule between every row (full grid, Grok-style) so the
+            // header AND each inner row are separated; the last row is followed
+            // by the bottom border instead.
+            if ri + 1 < cells.len() {
                 self.out.push(hrule("├", "┼", "┤"));
             }
         }
