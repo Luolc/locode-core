@@ -107,8 +107,10 @@ impl Composer {
         if h == 0 {
             return;
         }
+        // NB: `-i16::MAX`, not `i16::MIN` — tui-textarea negates the delta
+        // internally and negating `i16::MIN` overflows (debug panic).
         if content <= h {
-            self.textarea.scroll((i16::MIN, 0)); // fits → top
+            self.textarea.scroll((-i16::MAX, 0)); // fits → top
         } else if self.textarea.cursor().0 + 1 >= content {
             self.textarea.scroll((i16::MAX, 0)); // caret at end → bottom
         }

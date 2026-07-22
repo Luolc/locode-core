@@ -121,6 +121,47 @@ impl<B: Backend> FrameTerminal<B> {
         Ok(())
     }
 
+    /// Commit `lines` to native scrollback (the oldest transcript scrolling off
+    /// the top of the frame). Draws the lines into the top rows and immediately
+    /// `scroll_region_up`s them out of view, so the **correct** lines land in
+    /// scrollback regardless of what the frame currently shows there (unlike a
+    /// bare [`scroll_up`](Self::scroll_up), which commits whatever rows happen to
+    /// be on screen — wrong when the frame wasn't full, e.g. the first big
+    /// response). Chunked by screen height so a burst taller than the screen
+    /// still commits every line. The diff baseline is shifted to match, so the
+    /// next [`draw`](Self::draw) repaints only real changes.
+    ///
+    /// # Errors
+    /// Propagates backend draw/scroll/flush failures.
+    pub fn commit_scrollback(&mut self, lines: &[ratatui::text::Line<'_>]) -> io::Result<()> {
+        let v = self.size.height;
+        let w = self.size.width;
+        if v == 0 || w == 0 || lines.is_empty() {
+            return Ok(());
+        }
+        let mut i = 0usize;
+        while i < lines.len() {
+            let end = (i + usize::from(v)).min(lines.len());
+            let chunk = &lines[i..end];
+            let n = u16::try_from(chunk.len()).unwrap_or(v).min(v);
+            let area = Rect::new(0, 0, w, n);
+            let mut buf = Buffer::empty(area);
+            ratatui::widgets::Paragraph::new(chunk.to_vec()).render(area, &mut buf);
+            let updates: Vec<(u16, u16, Cell)> = Buffer::empty(area)
+                .diff(&buf)
+                .into_iter()
+                .map(|(x, y, cell)| (x, y, cell.clone()))
+                .collect();
+            self.backend
+                .draw(updates.iter().map(|(x, y, cell)| (*x, *y, cell)))?;
+            self.backend.scroll_region_up(0..v, n)?;
+            shift_buffer_up(&mut self.screen, n);
+            i = end;
+        }
+        self.backend.flush()?;
+        Ok(())
+    }
+
     /// Render one frame: build the desired full-screen buffer, diff it against
     /// what's on screen, and draw only the delta. The caller paints the frame
     /// content bottom-anchored (blank rows above read as margin / are where
