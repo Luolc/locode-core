@@ -123,12 +123,17 @@ impl Block {
                 } else {
                     Style::default().fg(Color::Green)
                 };
-                let mut lines = vec![Line::from(vec![
-                    Span::styled("● ", bullet_style),
-                    Span::styled(name.clone(), Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw(" "),
-                    Span::styled(args.clone(), dim),
-                ])];
+                // Leading blank line so blocks are separated (Claude Code's
+                // spacing) — user request 2026-07-22.
+                let mut lines = vec![
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled("● ", bullet_style),
+                        Span::styled(name.clone(), Style::default().add_modifier(Modifier::BOLD)),
+                        Span::raw(" "),
+                        Span::styled(args.clone(), dim),
+                    ]),
+                ];
                 lines.extend(truncated_body(body, width));
                 lines
             }
@@ -146,9 +151,11 @@ impl Block {
                     status_str(*status),
                     if *turns == 1 { "" } else { "s" },
                 );
-                vec![Line::styled(format!("  {label}"), dim)]
+                vec![Line::from(""), Line::styled(format!("  {label}"), dim)]
             }
-            Block::Notice(text) => vec![Line::styled(format!("● {text}"), dim)],
+            Block::Notice(text) => {
+                vec![Line::from(""), Line::styled(format!("● {text}"), dim)]
+            }
         }
     }
 }
@@ -242,12 +249,13 @@ mod tests {
             }
             .render(60),
         );
-        assert!(lines[0].contains("run_terminal_cmd"));
+        // lines[0] is the leading blank separator; the header is next.
+        assert!(lines[1].contains("run_terminal_cmd"), "{lines:?}");
         assert!(lines.iter().any(|l| l.contains("line-1")), "{lines:?}");
         assert!(lines.iter().any(|l| l.contains("+15 lines")), "{lines:?}");
         assert!(lines.iter().any(|l| l.contains("line-20")), "{lines:?}");
-        // 1 header + 6 body rows (3 head + marker + 2 tail).
-        assert_eq!(lines.len(), 7, "{lines:?}");
+        // blank separator + 1 header + 6 body rows (3 head + marker + 2 tail).
+        assert_eq!(lines.len(), 8, "{lines:?}");
     }
 
     #[test]
@@ -261,13 +269,13 @@ mod tests {
             }
             .render(60),
         );
-        assert_eq!(lines.len(), 1);
+        assert_eq!(lines.len(), 2); // blank separator + the dim line
         assert!(
-            lines[0].contains("completed · 3 turns · 1234 tok · 41s"),
+            lines[1].contains("completed · 3 turns · 1234 tok · 41s"),
             "{lines:?}"
         );
         // No longer a full-width `──…──` rule (it read as an extra rule).
-        assert!(!lines[0].contains("──"), "should not be a rule: {lines:?}");
+        assert!(!lines[1].contains("──"), "should not be a rule: {lines:?}");
     }
 
     #[test]

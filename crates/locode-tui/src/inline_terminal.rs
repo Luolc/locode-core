@@ -14,9 +14,11 @@
 //!   above the viewport, then draw the freed rows (ratatui's
 //!   `insert_before_scrolling_regions` recipe), so native scrollback still owns
 //!   settled history;
-//! - [`InlineTerminal::set_height`] — the new capability: resize the
-//!   bottom-anchored viewport by scrolling the transcript **up** to grow and
-//!   **down** to shrink, so content moves as one block with no clear/blink.
+//! - [`InlineTerminal::set_height`] — the new capability: resize the viewport
+//!   with its top anchored to the transcript — grow the bottom edge down (or
+//!   `scroll_region_up` the transcript when growing past the screen bottom),
+//!   shrink the bottom edge up. No `scroll_region_down` (it can't pull settled
+//!   transcript out of native scrollback → would corrupt it), so no blink.
 //!
 //! The geometry is unit-tested against ratatui's `TestBackend` (which implements
 //! the scroll-region ops and a `scrollback()` buffer); only raw escape-sequence
@@ -63,7 +65,9 @@ pub struct InlineTerminal<B: Backend> {
     /// Double buffer: `current` is drawn into, then diffed against the other.
     buffers: [Buffer; 2],
     current: usize,
-    /// The live viewport, always bottom-anchored.
+    /// The live viewport. Its top is anchored to the transcript; the bottom edge
+    /// moves as the composer grows/shrinks (bottom-anchored only while it fits at
+    /// the screen bottom).
     viewport: Rect,
     /// Last known terminal size.
     screen: Size,
@@ -201,12 +205,22 @@ impl<B: Backend> InlineTerminal<B> {
         Ok(())
     }
 
-    /// Resize the bottom-anchored viewport to `height` rows, scrolling the
-    /// transcript up (grow) or down (shrink) so it moves as one block — no
-    /// clear, no blink, no gap between transcript and composer.
+    /// Resize the live viewport to `height` rows (codex's `custom_terminal`
+    /// approach). The viewport top is **anchored to the transcript**:
+    ///
+    /// - **grow with room below** → the bottom edge extends down (no scroll);
+    /// - **grow past the screen bottom** → `scroll_region_up` scrolls the
+    ///   transcript up as one block, then bottom-anchor;
+    /// - **shrink** → the bottom edge retracts up (no scroll).
+    ///
+    /// We never `scroll_region_down` on shrink: on a real terminal that inserts
+    /// blank lines (it can't pull settled transcript back out of native
+    /// scrollback), which corrupted the transcript. Instead the region from the
+    /// (unchanged or raised) top down is cleared and the viewport repainted, so
+    /// any rows the viewport vacated at the bottom go blank cleanly.
     ///
     /// # Errors
-    /// Propagates backend scroll failures.
+    /// Propagates backend scroll/draw failures.
     pub fn set_height(&mut self, height: u16) -> io::Result<()> {
         let screen = self.backend.size()?;
         self.screen = screen;
@@ -215,33 +229,51 @@ impl<B: Backend> InlineTerminal<B> {
         if height == old.height {
             return Ok(());
         }
-        let new_top = screen.height.saturating_sub(height);
-        if height > old.height {
-            // Grow: scroll the region above the viewport up to make room. Since
-            // the viewport is bottom-anchored, `delta <= old.top` always holds.
-            let delta = height - old.height;
-            if old.y > 0 {
-                self.backend.scroll_region_up(0..old.y, delta.min(old.y))?;
-            }
-        } else {
-            // Shrink: drop the transcript back down into the freed top rows.
-            let delta = old.height - height;
-            if new_top > 0 {
-                self.backend
-                    .scroll_region_down(0..new_top, delta.min(new_top))?;
-            }
-        }
-        let area = Rect {
+        let mut area = Rect {
             x: 0,
-            y: new_top,
+            y: old.y,
             width: screen.width,
             height,
         };
-        // Repaint the whole (resized) viewport on the next draw — clears any
-        // stale on-screen content in the new region. NOT flushed here: the
-        // scroll above and the coming draw flush together, so there's no
-        // intermediate frame (no flicker).
+        if area.bottom() > screen.height {
+            // Grow past the bottom: scroll the transcript up, then bottom-anchor.
+            let scroll_by = area.bottom() - screen.height;
+            if area.y > 0 {
+                self.backend
+                    .scroll_region_up(0..area.y, scroll_by.min(area.y))?;
+            }
+            area.y = screen.height - area.height;
+        }
+        // Clear the affected region (old viewport ∪ new viewport) so nothing
+        // stale survives — especially rows the viewport vacated at the bottom on
+        // shrink. The sentinel-primed repaint then fills the new viewport. All of
+        // this flushes with the coming draw (no intermediate frame → no flicker).
+        let clear_top = old.y.min(area.y);
+        self.clear_rows(clear_top, screen.height)?;
         self.set_viewport_area(area);
+        Ok(())
+    }
+
+    /// Draw blank cells over rows `[y_start, y_end)` (deterministic on both the
+    /// real backend and `TestBackend`, unlike `clear_region`'s cursor-relative
+    /// semantics).
+    fn clear_rows(&mut self, y_start: u16, y_end: u16) -> io::Result<()> {
+        if y_end <= y_start || self.screen.width == 0 {
+            return Ok(());
+        }
+        let area = Rect::new(0, y_start, self.screen.width, y_end - y_start);
+        let mut sentinel = Buffer::empty(area);
+        for cell in &mut sentinel.content {
+            cell.set_symbol("\u{0}");
+        }
+        let blank = Buffer::empty(area);
+        let updates: Vec<(u16, u16, Cell)> = sentinel
+            .diff(&blank)
+            .into_iter()
+            .map(|(x, y, cell)| (x, y, cell.clone()))
+            .collect();
+        self.backend
+            .draw(updates.iter().map(|(x, y, cell)| (*x, *y, cell)))?;
         Ok(())
     }
 
@@ -390,22 +422,29 @@ mod tests {
     }
 
     #[test]
-    fn shrink_re_anchors_to_bottom_no_gap() {
+    fn shrink_keeps_top_anchored_blank_below() {
         let mut t = term(20, 12, 8);
+        assert_eq!(t.viewport.y, 4, "starts at [4,12)");
         t.set_height(4).unwrap();
         assert_eq!(t.height(), 4);
-        // Still anchored to the very bottom (no blank rows below it).
-        assert_eq!(t.viewport.bottom(), 12);
-        assert_eq!(t.viewport.y, 8);
+        // Top stays anchored to the transcript (no gap above); the bottom edge
+        // retracts up, leaving blank below (no scroll_region_down → no transcript
+        // corruption).
+        assert_eq!(t.viewport.y, 4, "top anchored");
+        assert_eq!(t.viewport.bottom(), 8, "bottom retracted");
     }
 
     #[test]
-    fn grow_then_shrink_round_trips_height_and_anchor() {
+    fn grow_then_shrink_round_trips_height() {
         let mut t = term(30, 20, 4);
         for h in [4u16, 8, 12, 6, 3, 10, 4] {
             t.set_height(h).unwrap();
-            assert_eq!(t.height(), h.max(1));
-            assert_eq!(t.viewport.bottom(), 20, "always bottom-anchored at h={h}");
+            assert_eq!(t.height(), h.max(1), "height applied at h={h}");
+            assert!(t.viewport.bottom() <= 20, "within screen at h={h}");
+            assert!(
+                t.viewport.y + t.viewport.height <= 20,
+                "no overflow at h={h}"
+            );
         }
     }
 
