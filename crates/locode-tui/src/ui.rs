@@ -124,21 +124,46 @@ fn status_line(app: &App) -> Line<'static> {
     )
 }
 
+/// The bottom status line: `cwd · model · N tok` when idle (user choice,
+/// 2026-07-22), replaced by the transient armed-key hints when one is active.
+/// Git branch and cost/usage-with-cap are deferred (named extension points).
 fn footer_line(app: &App) -> Line<'static> {
     let dim = Style::default().add_modifier(Modifier::DIM);
     let text = match app.hint {
         Some(Hint::QuitArmed) => "press ctrl+c again to quit".to_string(),
         Some(Hint::ClearArmed) => "press esc again to clear".to_string(),
         Some(Hint::Cancelling) => "cancelling — esc again to retry".to_string(),
-        None => {
-            let base = "enter to send · alt+enter newline · ctrl+c quit";
-            match &app.model {
-                Some(model) => format!("{base} · {model}"),
-                None => base.to_string(),
-            }
-        }
+        None => status_text(app),
     };
     Line::styled(text, dim)
+}
+
+/// Assemble the idle status text from whatever fields are known.
+fn status_text(app: &App) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(cwd) = &app.cwd {
+        parts.push(cwd.clone());
+    }
+    if let Some(model) = &app.model {
+        parts.push(model.clone());
+    }
+    if app.session_tokens > 0 {
+        parts.push(format!("{} tok", fmt_tokens(app.session_tokens)));
+    }
+    parts.join(" · ")
+}
+
+/// Compact token count: `842`, `3.1k`, `1.2M`.
+// Token counts are small enough that f64 precision loss is irrelevant here.
+#[allow(clippy::cast_precision_loss)]
+fn fmt_tokens(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}k", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
 }
 
 #[cfg(test)]
@@ -162,9 +187,11 @@ mod tests {
     }
 
     #[test]
-    fn draw_renders_composer_bottom_anchored_with_footer() {
+    fn draw_renders_composer_bottom_anchored_with_status() {
         let mut terminal = Terminal::new(TestBackend::new(40, 10)).unwrap();
         let mut app = App::new();
+        app.cwd = Some("~/dev/locode-core".into());
+        app.model = Some("claude-sonnet-5".into());
         app.composer.insert_text("hello tui");
 
         terminal.draw(|frame| draw(frame, &app)).unwrap();
@@ -172,11 +199,20 @@ mod tests {
 
         assert!(text.contains("❯ hello tui"), "typed text visible: {text}");
         assert!(
-            text.contains("enter to send"),
-            "footer hints on the last row: {text}"
+            text.contains("~/dev/locode-core"),
+            "status line shows cwd on the last row: {text}"
         );
         let first_row: String = text.lines().next().unwrap().trim().to_string();
         assert!(first_row.is_empty(), "top row is margin: {first_row:?}");
+    }
+
+    #[test]
+    fn status_line_shows_cwd_model_and_tokens() {
+        let mut app = App::new();
+        app.cwd = Some("~/proj".into());
+        app.model = Some("opus".into());
+        app.session_tokens = 3100;
+        assert_eq!(footer_line(&app).to_string(), "~/proj · opus · 3.1k tok");
     }
 
     #[test]

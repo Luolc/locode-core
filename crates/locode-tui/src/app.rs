@@ -128,8 +128,12 @@ pub struct App {
     history_nav: Option<usize>,
     /// The live draft saved when history browsing began (restored on exit).
     history_saved: Option<String>,
-    /// Resolved model id (footer display); `None` until the engine is ready.
+    /// Resolved model id (status display); `None` until the engine is ready.
     pub model: Option<String>,
+    /// Working directory, home-shortened (status display); set at engine ready.
+    pub cwd: Option<String>,
+    /// Cumulative input+output tokens across this session's runs (status usage).
+    pub session_tokens: u64,
     /// Session assembly failed — submits are disabled.
     pub engine_failed: bool,
     /// Spinner frame counter (advanced by `Msg::Tick`).
@@ -166,6 +170,8 @@ impl App {
             history_nav: None,
             history_saved: None,
             model: None,
+            cwd: None,
+            session_tokens: 0,
             engine_failed: false,
             spinner_frame: 0,
             quit_armed_until: None,
@@ -234,8 +240,9 @@ impl App {
 
     fn on_engine(&mut self, msg: EngineMsg, now: Instant) -> Vec<Cmd> {
         match msg {
-            EngineMsg::Ready { model } => {
+            EngineMsg::Ready { model, cwd } => {
                 self.model = Some(model);
+                self.cwd = Some(cwd);
                 vec![]
             }
             EngineMsg::BuildFailed(message) => {
@@ -372,6 +379,7 @@ impl App {
             RunState::Running { started, .. } => now.duration_since(started).as_secs(),
             RunState::Idle => 0,
         };
+        self.session_tokens += report.usage.input_tokens + report.usage.output_tokens;
         self.outbox.push(turn_end(report, elapsed));
         self.run = RunState::Idle;
         // Defensive: a terminal report clears any lingering overlay (the loop
@@ -699,6 +707,7 @@ mod tests {
         let _ = app.update(
             Msg::Engine(Box::new(EngineMsg::Ready {
                 model: "mock-1".into(),
+                cwd: "~/proj".into(),
             })),
             Instant::now(),
         );

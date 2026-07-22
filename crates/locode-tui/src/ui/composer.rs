@@ -8,8 +8,11 @@ use ratatui::style::{Modifier, Style};
 
 use tui_textarea::TextArea;
 
-/// Maximum rows the composer may occupy inside the live region.
+/// Maximum editor rows the composer may occupy inside the live region.
 const MAX_ROWS: u16 = 5;
+
+/// Extra rows for the top and bottom framing rules.
+const FRAME_ROWS: u16 = 2;
 
 /// The prompt editor.
 pub struct Composer {
@@ -82,23 +85,36 @@ impl Composer {
         self.textarea.insert_str(text);
     }
 
-    /// Rows needed at `width`: content lines clamped to `[1, MAX_ROWS]`
-    /// (soft-wrap is deferred with the widget; long lines scroll).
+    /// Rows needed at `width`: content lines clamped to `[1, MAX_ROWS]`, plus
+    /// the two framing rules (top + bottom). Soft-wrap is deferred with the
+    /// widget; long lines scroll.
     #[must_use]
     pub fn desired_height(&self, _width: u16) -> u16 {
         let lines = u16::try_from(self.textarea.lines().len()).unwrap_or(u16::MAX);
-        lines.clamp(1, MAX_ROWS)
+        lines.clamp(1, MAX_ROWS) + FRAME_ROWS
     }
 
-    /// Render into `area`, with the `❯ ` gutter column.
+    /// Render into `area`: a dim rule, the `❯ ` gutter + editor, then a dim
+    /// rule — the input's top/bottom frame (user choice, 2026-07-22).
     pub fn render(&self, frame: &mut Frame<'_>, area: Rect) {
         use ratatui::layout::{Constraint, Layout};
+        use ratatui::style::Modifier;
         use ratatui::text::Line;
         use ratatui::widgets::Paragraph;
 
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let rule = "─".repeat(area.width as usize);
+        let [top, mid, bottom] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Fill(1),
+            Constraint::Length(1),
+        ])
+        .areas(area);
+        frame.render_widget(Paragraph::new(Line::styled(rule.clone(), dim)), top);
         let [gutter, editor] =
-            Layout::horizontal([Constraint::Length(2), Constraint::Fill(1)]).areas(area);
+            Layout::horizontal([Constraint::Length(2), Constraint::Fill(1)]).areas(mid);
         frame.render_widget(Paragraph::new(Line::from("❯ ")), gutter);
         frame.render_widget(&self.textarea, editor);
+        frame.render_widget(Paragraph::new(Line::styled(rule, dim)), bottom);
     }
 }
