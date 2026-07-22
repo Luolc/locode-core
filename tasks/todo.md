@@ -618,22 +618,56 @@ reviews PRs. Tier B/C (core-touching) live below / in ADR-0021.
   REPORT_EVENT_TYPES → no key-doubling); Release events filtered defensively.
 - [x] **P3 tables** (#96 + this PR) — now box-drawing borders (`┌─┬─┐`, bold header,
   `├─┼─┤` rule) matching Claude Code / Grok Build; proportional shrink-to-fit.
-- [x] **Composer max height** (this PR) — bumped `MAX_ROWS` 5→8 / `LIVE_REGION_ROWS`
-  10→11 so the draft grows into the otherwise-blank viewport space.
+- [x] **Composer max height** (#97) — bumped `MAX_ROWS` 5→8 / `LIVE_REGION_ROWS`
+  10→11 so the draft grows into the otherwise-blank viewport space. *Superseded by
+  the dynamic composer (ADR-0022, #104) — the viewport is now dynamic, not fixed.*
+- [x] **Dynamic composer + no idle gap** (ADR-0022, #102/#104, 0.1.7) — the
+  2026-07-22 vibe-check finding below (fixed `LIVE_REGION_ROWS`, ~6-row idle gap)
+  is **resolved**: a minimal vendored terminal runs a relative-frame render, the
+  composer grows/shrinks with the transcript and is bottom-pinned, and the idle
+  gap is gone. This revisited ADR-0019's fixed-height decision (superseding
+  amendment recorded there).
+- [x] **User-prompt shaded band** (#106) — the submitted prompt renders as a
+  full-width `Color::DarkGray` band (theme-following), `❯ ` at col 4, vpad rows
+  above/below — grok/codex's pure-bg-fill shape. SPEC-TUI + ADR-0019 reconciled.
+- [x] **Footer clock** (#106/#107) — right-aligned local date + `HH:MM` behind a
+  clock icon; `chrono::Local` honors `TZ`/`/etc/localtime` (no in-app tz config);
+  minute precision (zero idle repaints); numeric-offset `%Z` dropped (no tz-db dep).
+- [x] **Footer two-row corner layout + colors** (#107/#108) — cwd (top-left,
+  bright blue), clock+time (top-right, dim), model (bottom-left, gray), `N tokens`
+  (bottom-right, red), each corner bold; separators removed. cwd color matches the
+  user's `ccstatusline` `current-working-dir: brightBlue`. ADR-0019 reconciled.
 - [ ] **P2 OSC-8 hyperlinks** — clickable links (iTerm2 supports them).
-- [ ] **Built-in slash commands** — `/help`, `/model`, `/clear`, … (TUI already
-  has `/new` `/quit`).
+- [ ] **Built-in slash commands (no-persistence subset)** — `/help`, `/clear`
+  (+ current `/new` `/quit` `/exit`). Pure UI, no core surface. **`/model` is NOT
+  in this subset** — it needs seams we don't have yet (see the finding below).
 
 ### Findings from the 2026-07-22 vibe-check (flagged, NOT auto-implemented)
 
 - **Dynamic composer height (grow to ~50% like Claude Code, and remove the idle
-  gap).** Our inline viewport is a **fixed** `LIVE_REGION_ROWS`, so the composer
-  can't grow past it, and when idle the unused rows show as a ~6-row blank gap
-  above it (confirmed by a buffer dump). Claude Code uses `maxHeight="50%"` of a
-  **dynamic** viewport (`PromptInput.tsx:191`); codex and grok both needed
-  **custom/forked terminal code** for dynamic inline height. This revisits
-  ADR-0019's fixed-height decision (ADR-first) and is a real architecture change
-  — **needs an explicit go** before implementing, though it's UI-only.
+  gap).** ✅ **RESOLVED** by ADR-0022 (vendored terminal, #102/#104, 0.1.7) — see
+  the checked item above. Original finding: our inline viewport was a **fixed**
+  `LIVE_REGION_ROWS`, so the composer couldn't grow and idle rows showed as a
+  ~6-row blank gap; Claude Code uses `maxHeight="50%"` of a **dynamic** viewport
+  (`PromptInput.tsx:191`), and codex/grok both needed custom/forked terminal
+  code. We took the same route (minimal vendored terminal, relative-frame render).
+- **`/model` slash command — Tier B, NOT Tier A (blocked on two missing seams).**
+  Investigated 2026-07-22. `/model` can't ride the autonomous UI loop because it
+  reaches past the UI:
+  1. **No model-selection seam.** The model is chosen *inside* the provider
+     factory (`providers.rs:88` `AnthropicProvider::from_env()` → `config().model`);
+     `ProviderInit` carries only `session_id`, and there's no way for the UI to
+     request a model or enumerate a provider's models. Adding either changes the
+     ADR-0015 `ProviderRegistry`/factory **public surface** → ask-first + a
+     hard-stop for the autonomous loop. Switching mid-session then means rebuilding
+     the session (like `/new`) with the new model.
+  2. **No config persistence.** Other harnesses persist the choice (Claude Code
+     `~/.claude/settings.json`); we have **no config-file design**. Remembering a
+     `/model` pick across restarts needs a new "config file" ADR (XDG
+     `~/.config/locode/`, mirroring how `ccstatusline` uses `~/.config/`).
+  **Recommendation:** ship a **read-only `/model`** now (Tier A — just prints the
+  active model + api-schema from `app.model`), and defer *switching* (seam ADR)
+  and *persistence* (config-file ADR) to Tier B, each behind an explicit go.
 - **"Intermediate model messages aren't rendered" — NOT a bug.** The engine emits
   an `Event::Message` per assistant turn (`locode-engine/src/run.rs:104`) and the
   TUI's `on_event` renders every assistant `Text` block (verified + tested,
@@ -646,8 +680,10 @@ reviews PRs. Tier B/C (core-touching) live below / in ADR-0021.
 Tier C (core, ADR-first): **streaming** → [ADR-0021](../docs/decisions/ADR-0021-live-token-streaming.md)
 (unblocks markdown study Phase 4 + live intermediate narration); subagents;
 plugins. Tier B (short ADR then mostly-autonomous): background bash commands,
-AGENTS.md/CLAUDE.md loading, custom slash-command files, **dynamic composer
-viewport** (UI-only but ADR-0019 revisit).
+AGENTS.md/CLAUDE.md loading, custom slash-command files, **`/model` switching**
+(ADR-0015 model-selection seam) + **config-file persistence** (new ADR, XDG
+`~/.config/locode/`). (The dynamic composer viewport — previously listed here —
+shipped in ADR-0022.)
 
 ## Deferred (reserved seams, not scheduled)
 parallel tool batches (RwLock read/write) · compaction · OS sandbox · MCP · streaming events
