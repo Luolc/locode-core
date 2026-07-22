@@ -38,6 +38,61 @@ Relevant seams as they stand:
   bounded live region; a "streaming cell" would live in that region until the
   turn finalizes (ADR-0019 named this an extension point).
 
+## Streaming granularity in the reference harnesses
+
+Grounding the delta shape below (§Decision.1) in what the four studied harnesses
+actually stream. **All four stream assistant text and reasoning as incremental
+chunk deltas on *separate* channels; all four dispatch a tool call only from an
+assembled *whole* with parsed arguments — none ever runs a tool on partial
+JSON.** The only divergence is whether the partial-argument stream is *also*
+surfaced (for a live "typing" UI) or kept internal.
+
+| Content | claude-code (Anthropic Messages) | codex (Responses SSE) | grok-build (unified event) | opencode (AI-SDK-shaped) |
+|---|---|---|---|---|
+| Assistant text | chunk `text_delta` | chunk `OutputTextDelta` | chunk `ChannelToken{text}` | chunk `text-delta` |
+| Reasoning | chunk `thinking_delta` (+`signature_delta`), own block | chunk `ReasoningSummaryDelta` / `ReasoningContentDelta` | chunk `ChannelToken{reasoning}` | chunk `reasoning-delta` |
+| Tool **name** | early — `content_block_start` | early — `output_item.added` | early — first arg delta | early — `tool-input-start` |
+| Tool **args** | accumulate raw string, **not parsed mid-stream** | **not surfaced** (custom tools excepted) | chunk `ToolCallDelta` — **UI only** | chunk `tool-input-delta` — **UI only** |
+| Tool **finalized** | whole, `content_block_stop` | whole, `output_item.done` | assembled at stream end | whole, `content_block_stop` |
+| Usage / stop | `message_delta` (stop_reason + usage) | `response.completed` | `Completed{metrics}` | `finish{reason,usage}` |
+
+Granularities are **why**-driven, not incidental:
+
+- **Text & reasoning are always chunked, on distinct channels.** Thinking is
+  never interleaved into the assistant-text stream — every harness carries a
+  separate reasoning delta type (and a terminal signature/summary sub-channel,
+  e.g. Anthropic `signature_delta`, codex `reasoning_summary_text.done`) because
+  the reasoning trace is needed for **replay**, not just display, so it must stay
+  a distinct, reconstructable stream.
+- **Tool calls are always dispatched from a finalized whole.** The *name* is
+  available early (at the block/item "start"/"added" event) so the UI can render
+  “Running `bash`…” and pre-resolve the tool, but arguments only become
+  dispatchable at the **finalize boundary** — Anthropic `content_block_stop`,
+  Responses `output_item.done`, Chat-Completions `finish_reason`. A tool cannot
+  run on incomplete JSON, so:
+  - **claude-code / codex** accumulate-then-parse and keep the partial args
+    internal — claude-code deliberately bypasses the SDK's `BetaMessageStream`
+    to avoid `partialParse` on every delta ("which we don't need since we handle
+    tool input accumulation ourselves"); codex doesn't even surface
+    `function_call_arguments.delta` (only *custom* tools stream input, purely to
+    render a diff).
+  - **grok-build / opencode** *also* emit per-chunk arg deltas (`ToolCallDelta` /
+    `tool-input-delta`) — but strictly for the "command being typed" UI; the
+    delta type itself is documented as "NOT necessarily valid JSON in isolation",
+    and dispatch still gates on the assembled call.
+- **Assemble under a stable per-call key** (Anthropic block index, OpenAI
+  `tool_calls[].index`, Responses `item_id`) because providers attach `id`/`name`
+  inconsistently across deltas; parse **once** at the finalize boundary.
+
+This validates §Decision.1's `CompletionDelta`: `Text` / `Thinking` as chunk
+deltas (reasoning on its own variant), `ToolUseStart { id, name }` emitted early,
+`ToolArgs(String)` a display-only channel, and — critically — **tool dispatch
+gated on the finalized whole `Completion`** (§Decision.3), which is exactly what
+all four harnesses do. (Citations: claude-code `vendor/…/claude.ts:2087-2211`;
+codex `sse/responses.rs:331-380`, `session/turn.rs:2062,2159-2176`; grok-build
+`chat_completions.rs:212-255`, `events.ts:46-64`; opencode `tool-stream.ts:52-78`,
+`protocol/anthropic-messages.ts:661-768`.)
+
 ## Decision (proposed)
 
 Add token streaming as an **opt-in capability layered over the existing loop**,
