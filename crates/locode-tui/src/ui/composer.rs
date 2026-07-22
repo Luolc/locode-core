@@ -102,18 +102,25 @@ impl Composer {
     /// content fits, scroll to the top; when the caret is on the last line,
     /// scroll to the bottom so it stays visible.
     pub fn sync_scroll(&mut self, editor_height: u16) {
-        let h = usize::from(editor_height);
-        let content = self.textarea.lines().len();
-        if h == 0 {
+        if editor_height == 0 {
             return;
         }
-        // NB: `-i16::MAX`, not `i16::MIN` — tui-textarea negates the delta
-        // internally and negating `i16::MIN` overflows (debug panic).
-        if content <= h {
-            self.textarea.scroll((-i16::MAX, 0)); // fits → top
-        } else if self.textarea.cursor().0 + 1 >= content {
-            self.textarea.scroll((i16::MAX, 0)); // caret at end → bottom
-        }
+        // Reset the viewport deterministically, then restore the caret and let
+        // tui-textarea's render place the scroll: it homes the viewport to the
+        // top, then (at render) scrolls just enough to keep the caret visible —
+        // which puts the caret on the BOTTOM row whenever the draft overflows and
+        // the caret is at the end (the Shift+Enter-past-the-cap / Backspace case),
+        // and on its own line when the draft fits.
+        //
+        // `scroll` drags the caret into the scrolled viewport, so we save the
+        // caret first and jump it back. `-i16::MAX` (not `i16::MIN`, which
+        // overflows when tui-textarea negates the delta).
+        let (row, col) = self.textarea.cursor();
+        self.textarea.scroll((-i16::MAX, 0));
+        self.textarea.move_cursor(tui_textarea::CursorMove::Jump(
+            u16::try_from(row).unwrap_or(u16::MAX),
+            u16::try_from(col).unwrap_or(u16::MAX),
+        ));
     }
 
     /// Render into `area`: a dim rule, the `❯ ` gutter + editor, then a dim
@@ -154,6 +161,76 @@ impl Composer {
 #[cfg(test)]
 mod tests {
     use super::{Composer, FRAME_ROWS};
+    use crate::frame_terminal::FrameTerminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::layout::Rect;
+    use ratatui::style::Modifier;
+
+    /// Row of the tui-textarea caret cell (the reversed cell) in the rendered
+    /// composer, or None.
+    fn caret_row(c: &Composer, area: Rect, screen_h: u16) -> Option<u16> {
+        let mut t = FrameTerminal::new(TestBackend::new(area.width, screen_h)).unwrap();
+        t.draw(|f| c.render(f, area)).unwrap();
+        let buf = t.backend().buffer();
+        for y in 0..screen_h {
+            for x in 0..area.width {
+                if buf[(x, y)].modifier.contains(Modifier::REVERSED) {
+                    return Some(y);
+                }
+            }
+        }
+        None
+    }
+
+    /// The caret sits on the row of the *last* content line — not one above it.
+    /// (Regression: after a few Shift+Enters the caret rendered a row too high.)
+    #[test]
+    fn caret_sits_on_the_last_content_row() {
+        let mut c = Composer::new();
+        c.insert_text("a\nb\nc"); // 3 lines; caret at end of line 3 (index 2)
+        // Composer area = 5 rows (top rule, 3-row editor, bottom rule) at screen top.
+        let editor_h = 3;
+        c.sync_scroll(editor_h);
+        // Editor occupies rows 1..4; the last content row ("c") is screen row 3.
+        assert_eq!(
+            caret_row(&c, Rect::new(0, 0, 30, 5), 5),
+            Some(3),
+            "caret on the last content row (screen row 3)"
+        );
+    }
+
+    /// When the draft overflows the editor, the caret is glued to the bottom
+    /// editor row — and stays there after a Backspace (the earlier "caret drifts
+    /// up on Backspace past the cap" bug).
+    #[test]
+    fn caret_glued_to_bottom_on_overflow_and_after_backspace() {
+        let mut c = Composer::new();
+        for i in 0..10 {
+            c.insert_text(&format!("line{i}"));
+            if i < 9 {
+                c.insert_newline();
+            }
+        }
+        // Editor is 5 rows; composer area = 7 (rule, 5-row editor, rule).
+        let editor_h = 5;
+        let area = Rect::new(0, 0, 30, 7);
+        c.sync_scroll(editor_h);
+        assert_eq!(
+            caret_row(&c, area, 7),
+            Some(5),
+            "caret glued to the bottom editor row (screen row 5)"
+        );
+        // Backspace a char (still overflowing): caret must stay on the bottom row.
+        c.input(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Backspace,
+        ));
+        c.sync_scroll(editor_h);
+        assert_eq!(
+            caret_row(&c, area, 7),
+            Some(5),
+            "caret stays on the bottom row after Backspace"
+        );
+    }
 
     /// `desired_height` tracks the draft: one row when empty/short, grows a row
     /// per content line, and shrinks back when the draft is replaced.

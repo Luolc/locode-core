@@ -158,7 +158,9 @@ impl<B: Backend> FrameTerminal<B> {
             shift_buffer_up(&mut self.screen, n);
             i = end;
         }
-        self.backend.flush()?;
+        // Deliberately NOT flushed: the caller always follows with `draw`, so the
+        // commit-then-repaint is one atomic flush (no intermediate frame where the
+        // frame content is scrolled up with a blank bottom → no flicker).
         Ok(())
     }
 

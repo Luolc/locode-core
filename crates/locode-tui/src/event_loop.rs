@@ -209,20 +209,30 @@ fn paint<B: ratatui::backend::Backend>(
 
     // Transcript rows that fit on screen; the rest is the oldest tail (the top
     // rows of the current full frame) and is committed to scrollback.
-    let tail_cap = usize::from(v.saturating_sub(non_tail));
-    let overflow = tail.len().saturating_sub(tail_cap);
+    // Retain up to a *minimum-composer* screen of transcript in memory, so
+    // shrinking the composer can refill the freed rows from memory (no gap) —
+    // the transcript "comes back down". Only commit lines older than that to
+    // native scrollback (permanent). `non_tail - composer_rows` is the status +
+    // queue + footer rows; the min frame keeps `MIN_COMPOSER_ROWS` for the input.
+    let min_non_tail = non_tail
+        .saturating_sub(composer_rows)
+        .saturating_add(term::MIN_COMPOSER_ROWS);
+    let max_tail = usize::from(v.saturating_sub(min_non_tail));
+    let overflow = tail.len().saturating_sub(max_tail);
     if overflow > 0 {
         // Commit the actual oldest lines (chunked by screen height inside
         // `commit_scrollback`), so the right transcript lands in scrollback even
-        // when the frame wasn't full — then drop exactly those from the tail.
+        // when those lines aren't currently on screen — then drop exactly those.
         let commit_lines: Vec<Line<'static>> = tail[..overflow].to_vec();
         terminal.commit_scrollback(&commit_lines)?;
         tail.drain(..overflow);
         *committed = true;
     }
 
-    // Own the visible slice before the draw so `tail`/`app` borrows don't clash
-    // with the closure's `&mut terminal`.
+    // Show as many recent tail lines as fit under the *current* composer; the
+    // rest stay in memory (revealed again if the composer shrinks). Own the
+    // slice before the draw so `tail`/`app` borrows don't clash with the closure.
+    let tail_cap = usize::from(v.saturating_sub(non_tail));
     let shown = tail.len().min(tail_cap);
     let visible: Vec<Line<'static>> = tail[tail.len() - shown..].to_vec();
     terminal.draw(|frame| ui::draw(frame, app, &visible, composer_rows))?;
@@ -482,6 +492,54 @@ mod tests {
         assert_eq!(
             sb_len_before, sb_len_after,
             "editing the composer must not touch scrollback"
+        );
+    }
+
+    /// Growing the composer hides recent tail lines (kept in memory, NOT
+    /// committed); shrinking it back reveals them again — the transcript "comes
+    /// back down" with no gap and no extra scrollback commits (the common,
+    /// screen-filling case the earlier attempt got wrong).
+    #[test]
+    fn shrinking_the_composer_refills_the_transcript_from_memory() {
+        let mut t = FrameTerminal::new(TestBackend::new(30, 12)).unwrap();
+        let mut app = App::new();
+        let mut committed = false;
+
+        // 8 transcript lines; with an empty composer (3 rows) + footer, tail_cap
+        // is 8 — they all fit, nothing committed.
+        let mut tail: Vec<Line<'static>> =
+            (0..8).map(|i| Line::from(format!("T{i:02}"))).collect();
+        paint(&mut t, &mut app, &mut tail, &mut committed).unwrap();
+        assert!(rows(&t).iter().any(|l| l == "T00"), "T00 shown initially");
+        let sb0 = scrollback(&t).iter().filter(|l| !l.is_empty()).count();
+
+        // Grow the composer to 4 lines → fewer transcript rows fit; the oldest
+        // shown lines are hidden (in memory, not scrollback).
+        app.composer.insert_text("a\nb\nc\nd");
+        paint(&mut t, &mut app, &mut tail, &mut committed).unwrap();
+        assert!(
+            !rows(&t).iter().any(|l| l == "T00"),
+            "T00 hidden while the composer is tall: {:?}",
+            rows(&t)
+        );
+        assert_eq!(
+            scrollback(&t).iter().filter(|l| !l.is_empty()).count(),
+            sb0,
+            "growing the composer must NOT commit to scrollback"
+        );
+
+        // Shrink back to empty → the hidden lines come back from memory.
+        app.composer.clear();
+        paint(&mut t, &mut app, &mut tail, &mut committed).unwrap();
+        assert!(
+            rows(&t).iter().any(|l| l == "T00"),
+            "T00 refilled after the composer shrinks: {:?}",
+            rows(&t)
+        );
+        assert_eq!(
+            scrollback(&t).iter().filter(|l| !l.is_empty()).count(),
+            sb0,
+            "the whole grow/shrink cycle never touched scrollback"
         );
     }
 }
