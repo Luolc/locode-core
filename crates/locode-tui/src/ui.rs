@@ -192,7 +192,7 @@ const CLOCK_ICON: &str = "\u{f017}";
 /// layout, 2026-07-22) —
 /// ```text
 ///     <cwd>                      <clock> <time>
-///     <model>                            <N tok>
+///     <model>                            <N tokens>
 /// ```
 /// cwd is bright blue (matches the user's `ccstatusline` `current-working-dir`
 /// color), model gray, tokens red ("Cayenne"), all **bold**; the time is dim
@@ -230,7 +230,7 @@ fn footer_lines(app: &App, width: u16) -> Vec<Line<'static>> {
     // Row 2 right: session tokens (red "Cayenne", bold) — always shown so the
     // corner stays populated (a 0-token fresh session still shows `0 tok`).
     let tokens = Span::styled(
-        format!("{} tok", fmt_tokens(app.session_tokens)),
+        format!("{} tokens", fmt_tokens(app.session_tokens)),
         bold(Color::Red),
     );
 
@@ -353,7 +353,7 @@ mod tests {
         // Row 2: model left, tokens right.
         assert!(r1.starts_with("    opus"), "model bottom-left: {r1:?}");
         assert!(
-            r1.trim_end().ends_with("3.1k tok"),
+            r1.trim_end().ends_with("3.1k tokens"),
             "tokens bottom-right: {r1:?}"
         );
     }
@@ -364,7 +364,7 @@ mod tests {
         // Fresh session (0 tokens) still populates the tokens corner.
         let rows = footer_lines(&app, 80);
         assert!(
-            rows[1].to_string().trim_end().ends_with("0 tok"),
+            rows[1].to_string().trim_end().ends_with("0 tokens"),
             "{:?}",
             rows[1].to_string()
         );

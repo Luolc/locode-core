@@ -160,7 +160,7 @@ and codex (AGENTS.md "planning is a research task"):
   session tokens bottom-right. Replaces the earlier single-row `cwd · model · N
   tok  …  clock`; the ` · ` separators are gone (each corner stands alone). The
   frame footer is now `FOOTER_ROWS = 2` (grep: `live_rows`/`draw`). The tokens
-  corner is **always shown** (a fresh 0-token session renders `0 tok`) so the
+  corner is **always shown** (a fresh 0-token session renders `0 tokens`) so the
   corner never looks empty. A pending armed-key hint replaces the cwd corner.
 
 - **Footer clock**: the top-right corner shows the current local date + `HH:MM`
