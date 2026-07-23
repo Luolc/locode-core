@@ -83,12 +83,17 @@ pub async fn run(cli: Cli, registry: ProviderRegistry) -> Result<ExitCode, RunEr
         // bottom-anchored frame (rate-capped; deferred paint instead of
         // spinning). Overflow leaves the frame via `scroll_up`, not
         // `insert_before` (ADR-0022).
+        // Commit completed streaming blocks into the tail (→ scrollback), so a
+        // long in-progress reply is scrollable mid-stream (ADR-0021). This runs
+        // BEFORE `flush_outbox`: the last assistant `Message` (which signals the
+        // finalize) and `RunFinished` (which pushes the `completed · … · Ns`
+        // turn-end summary to the outbox) are drained in the SAME batch, so the
+        // final block must be committed to the tail before the summary — else the
+        // summary interleaves into the middle of the reply (ADR-0022).
+        fold_streaming(&terminal, &mut app, &mut tail)?;
         if !app.outbox.is_empty() {
             flush_outbox(&terminal, &mut app, &mut tail)?;
         }
-        // Commit completed streaming blocks into the tail (→ scrollback), so a
-        // long in-progress reply is scrollable mid-stream (ADR-0021).
-        fold_streaming(&terminal, &mut app, &mut tail)?;
         if app.dirty {
             let now = Instant::now();
             if now.duration_since(last_draw) >= MIN_DRAW_INTERVAL {
@@ -512,6 +517,45 @@ mod tests {
             "final block committed: {all}"
         );
         assert_eq!(all.matches('●').count(), 1, "still one bullet total");
+    }
+
+    #[test]
+    fn finalize_commits_the_last_block_before_the_run_summary() {
+        // Regression: the final assistant `Message` (finalize signal) and
+        // `RunFinished` (which pushes the `completed · … · Ns` summary to the
+        // outbox) drain in the SAME batch. The loop must fold the streaming
+        // finalize into the tail BEFORE flushing the outbox, or the summary
+        // interleaves into the middle of the reply.
+        use crate::ui::blocks::Block;
+        let t = FrameTerminal::new(TestBackend::new(60, 20)).unwrap();
+        let mut app = App::new();
+        let mut tail: Vec<Line<'static>> = Vec::new();
+
+        // A streaming turn whose last in-progress block is pending finalize, and
+        // the run-summary already sitting in the outbox (same-batch order).
+        app.streaming = Some("The final paragraph of the reply.".into());
+        app.streaming_committed_any = true;
+        app.streaming_finalize = true;
+        app.outbox
+            .push(Block::Notice("completed · 13 turns · 82s".into()));
+
+        // Mirror the loop's top-of-iteration order exactly.
+        super::fold_streaming(&t, &mut app, &mut tail).unwrap();
+        super::flush_outbox(&t, &mut app, &mut tail).unwrap();
+
+        let joined = tail
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let block_at = joined
+            .find("The final paragraph")
+            .expect("final block committed");
+        let summary_at = joined.find("completed ·").expect("summary committed");
+        assert!(
+            block_at < summary_at,
+            "final assistant block must precede the run summary:\n{joined}"
+        );
     }
 
     #[test]
