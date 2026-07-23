@@ -86,7 +86,7 @@ enforcement still engine-side.
   by extracting the field — the reverse migration is the same code motion.
   Rejected for v1 as YAGNI.
 
-## Decision (proposed)
+## Decision
 Option A. Concretely:
 
 1. `Session` gains `history: Vec<Message>` (initialized `= preamble.clone()` in

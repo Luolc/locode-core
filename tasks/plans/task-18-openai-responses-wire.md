@@ -24,7 +24,7 @@
 
 ## 0. Probe log (live, via OpenRouter — key from env only, never echoed)
 
-Established facts from the 2026-07-19 probe session (recorded in STATUS.md), plus
+Established facts from the 2026-07-19 probe session (recorded in the status notes at the time), plus
 two probes run while writing this plan:
 
 | # | Probe | Finding |

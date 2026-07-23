@@ -98,6 +98,15 @@ Design rationale and the source study behind every decision live in the separate
   but the grok pack ports grok's real `list_dir` walker (ADR-0011 amendment, ADR-0012).
   When a repo default (an ADR) and faithfulness collide for a ported tool, faithfulness wins
   for that pack — note it explicitly.
+  - **The fidelity boundary — what mimicry covers, and where it stops.** A pack reproduces the
+    harness's **tools, prompts, and static preamble** faithfully. It does **not** reproduce
+    **loop-adjacent machinery** — reminder injection, TodoWrite/plan feedback loops, context
+    compaction, subagent orchestration — which lives on our *shared engine* and is the same
+    for every pack (an honest A/B varies the pack, not the loop). So the codex pack ports
+    `update_plan` as a plain tool but not codex's plan-reminder loop; the claude pack ports
+    `Read`/`Edit` but not Claude Code's `<system-reminder>` re-injection. When a ported tool is
+    inseparable from loop machinery, port the tool's surface and leave the machinery to the
+    engine — note the seam. (This was "STATUS #9" before `tasks/STATUS.md` was retired.)
 - **ADR-first: keep the ADRs authoritative — reconcile them *before* changing code.**
   When a new finding or the user's latest instruction conflicts with an accepted ADR,
   do **not** just change the code (that is exactly what causes ADR-vs-code drift). Instead,
