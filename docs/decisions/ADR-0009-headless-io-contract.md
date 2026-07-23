@@ -12,7 +12,9 @@ Headless agents are driven by other programs. Codex enforces "stdout is sacred" 
 ## Decision
 `locode-exec` emits **exactly one JSON document** — the final report — on **stdout**, and routes all human logs/traces to **stderr**. Exit `0` on any structured terminal state (`completed`/`max_turns`); non-zero on fatal (auth/config error, `Fatal` tool error, model error after retry). The report envelope stamps `harness` and `api_schema` (so A/B runs are self-describing) and freezes `schema_version: 1` early. (The wire-identity field is named `api_schema`, not `provider`: it names the request/response *protocol shape* — the provider's `api_schema()` — not a gateway/endpoint, which is configuration.) Enforce stdout discipline structurally: `#![deny(clippy::print_stdout)]` in `locode-exec`; library crates never print. Keep two "JSON" concerns distinct: the always-emitted **report envelope**, and an optional **schema-constrained task answer** (`--json-schema`, deferred) that would go in `structured_output` inside the envelope.
 
-Illustrative envelope: `{ schema_version, status, harness, api_schema, final_message, structured_output, turns, tool_calls[], usage, session_id, error }`; `status ∈ {completed, max_turns, model_error, error}`.
+Illustrative envelope: `{ schema_version, status, harness, api_schema, final_message, structured_output, turns, tool_calls[], usage, session_id, error }`; `status ∈ {completed, max_turns, model_error, error, cancelled}` (`cancelled` added by ADR-0018).
+
+*(Amended 2026-07-22: the standalone `locode-exec` **binary** was retired — this stdout/exit contract is now the `locode -p` path calling `locode_exec::run_headless` (a library); the discipline is unchanged, ADR-0019.)*
 
 ## Alternatives Considered
 ### Human-readable transcript on stdout

@@ -98,7 +98,7 @@ for v1.
 Right for a *protocol between processes*; overweight for an in-process trait
 seam. The TUI can present richer choices and map them down to V1. Rejected.
 
-## Decision (proposed)
+## Decision
 
 1. A new engine-level trait (in `locode-engine`, re-exported by the facade):
 
@@ -132,7 +132,7 @@ seam. The TUI can present richer choices and map them down to V1. Rejected.
    records it in `acc.tool_calls`; the model sees the denial and continues —
    **deny is a soft error, never fatal** (Claude Code's rejection semantics).
    A frontend wanting "deny and stop" composes deny with the cancel handle
-   (ADR-0005 amendment, same change-set).
+   (ADR-0018, same change-set).
 
 4. **`Event::Approval` ships in v1** (resolved 2026-07-20, reversing the
    original defer-proposal): every approver resolution emits

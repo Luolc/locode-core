@@ -2,7 +2,7 @@
 
 > Implementation plan, written **before** code. Faithful mimicry per AGENTS.md:
 > real names, verbatim descriptions/schemas, real caps and output shapes; the
-> fidelity boundary (STATUS.md concern #9) keeps loop-adjacent machinery out.
+> fidelity boundary (the fidelity boundary in AGENTS.md) keeps loop-adjacent machinery out.
 > Cites codex source under `~/dev/coding-cli-survey/submodules/codex/codex-rs`
 > (submodule pinned at `1d941253e9354fe583a033660a6288df66e27488`, read
 > 2026-07-18) as `file:line`, plus `survey/02-codex/{provider-api,apply-patch-
@@ -55,7 +55,7 @@ view_image). ToolKind tags: `Shell`, `Edit`, `Other`.
 ### 1.2 Why `update_plan` is IN (contrast: claude pack's TodoWrite is out)
 
 Both are plan/todo tools, but they sit on opposite sides of the fidelity
-boundary (STATUS #9): Claude Code's TodoWrite is fed back by **loop-owned
+boundary (the AGENTS.md fidelity boundary): Claude Code's TodoWrite is fed back by **loop-owned
 system-reminder attachments** every turn — porting it without that machinery
 misrepresents the harness. Codex's `update_plan` has **no reminder loop**: the
 tool records the plan and returns a plain success string; the model sees plan

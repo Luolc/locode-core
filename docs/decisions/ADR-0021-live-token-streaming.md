@@ -133,7 +133,7 @@ policy), `app.rs:392-396` (commit tick); grok-build `app/event_loop.rs:1704-1737
 `src/utils/messages.ts:3048-3054`, `src/screens/REPL.tsx:1458-1473` (Ink throttle +
 newline gate); opencode `session/processor.ts:499-509`, `tui/src/context/sync.tsx:392-408`.)
 
-## Decision (proposed)
+## Decision
 
 Add token streaming as an **opt-in capability layered over the existing loop**,
 not a second loop (respecting the ADR-0005 "no second loop" boundary). Four

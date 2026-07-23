@@ -3,7 +3,7 @@
 > Implementation plan, written **before** code. Faithful mimicry per AGENTS.md: the
 > pack reproduces Claude Code's **real tools** (names, arg schemas, verbatim
 > descriptions, caps, guardrails) and its **static system prompt + static preamble** —
-> and nothing loop-adjacent (STATUS.md open concern #9: reminder machinery, injection
+> and nothing loop-adjacent (the fidelity boundary in AGENTS.md: reminder machinery, injection
 > cadence, compaction policy stay on the one shared engine). Cites the reconstructed
 > Claude Code source under `~/dev/coding-cli-survey/submodules/claude-code` (submodule
 > commit `6a2590911df240ff5ea56aa355696cfb94d128cb`, read 2026-07-18) as `file:line`,
@@ -65,7 +65,7 @@ the loop re-injects the todo list as `<system-reminder>` attachments each turn
 (`utils/attachments.ts` todo reminders) and the prompt's task-management section
 coaches the model against that cadence. Porting the tool without the reminders
 would be an **unfaithful** TodoWrite (a write-only stub the model never sees
-again), and porting the reminders violates the fidelity boundary (STATUS #9:
+again), and porting the reminders violates the fidelity boundary (the AGENTS.md fidelity boundary:
 loop-adjacent behaviors stay on the shared engine). Deferred until the "turn
 hooks" ADR moment; listed as a faithfulness gap in the pack docs.
 
@@ -520,7 +520,7 @@ fn preamble(&self, ctx: &PackContext) -> Vec<Message> {
 
 2. **TodoWrite excluded on fidelity-boundary grounds.** — *Source:*
    `TodoWriteTool.ts:13-17`; reminder machinery `utils/attachments.ts`;
-   STATUS.md concern #9. *Why:* the tool minus its reminder loop is a
+   the fidelity boundary in AGENTS.md. *Why:* the tool minus its reminder loop is a
    misrepresentation of Claude Code, worse for the A/B than absence. *Why-not
    (port tool only):* silently unfaithful. *Difference:* grok's TodoGate was
    excluded from the grok pack for the identical reason — consistent boundary.
@@ -651,7 +651,7 @@ from Claude Code's globber on some pattern class, adding `globset` becomes an
    > read-before-edit/staleness guardrails (a per-run `ClaudeSessionState`).
    > Tools whose behavior is inseparable from loop machinery (`TodoWrite` and
    > its reminder cadence, `Task` subagents) are excluded under the fidelity
-   > boundary (STATUS #9): packs reproduce tools + prompts + static preamble;
+   > boundary (the AGENTS.md fidelity boundary): packs reproduce tools + prompts + static preamble;
    > loop-adjacent behaviors stay on the shared engine.
 
 2. **SPEC.md** — success criterion 7 / assumptions 3: mark `codex`/`claude`

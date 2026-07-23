@@ -65,7 +65,10 @@ included.
 - The event types + reconstruction land now in `locode-protocol` (ahead of the loop), with the
   JSONL round-trip + reconstruction test as the contract.
 - Reserve turn markers (`turn.started`/`turn.completed{usage}`, cf. Codex) and message deltas as
-  future `Event` variants.
+  future `Event` variants. *(Realized 2026-07-22 by [ADR-0021](ADR-0021-live-token-streaming.md):
+  `Event::MessageDelta` added for live streaming. This does not supersede ADR-0014 — the
+  whole-message `stream-json` trace still holds, and `MessageDelta` is deliberately excluded from
+  it so the trace stays self-sufficient.)*
 
 ## Amendment (2026-07-21): one stream, multiple runs (session continuity)
 
