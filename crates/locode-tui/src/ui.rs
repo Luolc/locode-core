@@ -54,11 +54,17 @@ pub fn draw(
         return;
     }
 
+    // The live streaming cell (ADR-0021): the in-progress assistant text, pinned
+    // just above the status row and redrawn each frame (never committed to
+    // scrollback while live — it finalizes to an `AssistantText` block on turn end).
+    let stream = streaming_cell(app, frame.area().width);
+    let stream_height = u16::try_from(stream.len()).unwrap_or(u16::MAX);
     let status_height = u16::from(app.is_running());
     let queue_height = u16::try_from(app.prompt_queue.len()).unwrap_or(u16::MAX);
     let [
         _,
         tail_area,
+        stream_area,
         status_area,
         queue_area,
         composer_area,
@@ -66,6 +72,7 @@ pub fn draw(
     ] = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(tail_len),
+        Constraint::Length(stream_height),
         Constraint::Length(status_height),
         Constraint::Length(queue_height),
         Constraint::Length(composer_rows),
@@ -74,6 +81,9 @@ pub fn draw(
     .areas(frame.area());
 
     frame.render_widget(Paragraph::new(tail.to_vec()), tail_area);
+    if !stream.is_empty() {
+        frame.render_widget(Paragraph::new(stream), stream_area);
+    }
     if app.is_running() {
         frame.render_widget(Paragraph::new(status_line(app)), status_area);
     }
@@ -105,11 +115,18 @@ pub fn live_rows(app: &App, width: u16, screen_h: u16) -> (u16, u16) {
         .min(crate::term::max_composer_rows(screen_h));
     let status = u16::from(app.is_running());
     let queue = u16::try_from(app.prompt_queue.len()).unwrap_or(u16::MAX);
+    let stream = u16::try_from(streaming_cell(app, width).len()).unwrap_or(u16::MAX);
     let non_tail = status
         .saturating_add(queue)
+        .saturating_add(stream)
         .saturating_add(composer)
         .saturating_add(FOOTER_ROWS);
     (composer, non_tail)
+}
+
+/// The live streaming cell's rendered rows (empty when not streaming).
+fn streaming_cell(app: &App, width: u16) -> Vec<Line<'static>> {
+    blocks::render_streaming(app.streaming.as_deref().unwrap_or(""), width)
 }
 
 /// Dim `queued: …` previews for prompts waiting to run.
@@ -463,5 +480,25 @@ mod tests {
         // The hint replaces the cwd corner on the first footer row.
         let rows = footer_lines(&app, 80);
         assert!(rows[0].to_string().contains("again to quit"));
+    }
+
+    #[test]
+    fn draw_renders_the_live_streaming_cell() {
+        let mut terminal = FrameTerminal::new(TestBackend::new(40, 12)).unwrap();
+        let mut app = App::new();
+        app.run = RunState::Running {
+            started: Instant::now(),
+            cancelling: false,
+        };
+        app.streaming = Some("streaming tokens here".into());
+
+        let (cr, _) = live_rows(&app, 40, 12);
+        terminal.draw(|frame| draw(frame, &app, &[], cr)).unwrap();
+        let text = buffer_text(&terminal);
+        assert!(text.contains("streaming tokens"), "live cell text: {text}");
+        assert!(
+            text.contains('●'),
+            "bulleted like an assistant message: {text}"
+        );
     }
 }

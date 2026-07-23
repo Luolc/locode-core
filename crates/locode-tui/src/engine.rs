@@ -164,6 +164,8 @@ fn build_session(
         max_turns: None,
         sampling_args: SamplingArgs::default(),
         cache_hint: CacheHint::Standard,
+        // The interactive TUI always streams (ADR-0021) — live token render.
+        streaming: true,
         ..EngineConfig::default()
     };
 
