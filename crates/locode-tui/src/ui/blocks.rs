@@ -244,44 +244,78 @@ fn wrap_plain(text: &str, width: usize) -> Vec<String> {
     out
 }
 
-/// Render the in-progress streaming buffer as a live cell (ADR-0021): a leading
-/// `●` bullet and the **incrementally rendered markdown** of the assistant text
-/// — re-rendered each paint via the *same* [`crate::ui::markdown::render`]
-/// `Block::AssistantText` uses (pure over `(text, width)`), so finalize is a
-/// seamless swap (slice 3, unblocking markdown study Phase 4).
-///
-/// Shows the **last `max_rows`** rendered rows — the caller passes the live
-/// region's available height so a long in-progress turn fills the screen showing
-/// its latest lines (its head scrolls off above), rather than a tiny fixed
-/// window. An empty buffer or `max_rows == 0` renders nothing. (Committing the
-/// stable prefix to native scrollback mid-stream — so the head stays
-/// scrollable — is codex's model, still deferred.)
+/// Render one chunk of an assistant message as markdown (ADR-0021 progressive
+/// streaming): a leading gap line, then the markdown lines with a `●` bullet on
+/// the first line **iff `first`** (else a 2-col hanging indent) — identical to how
+/// [`Block::AssistantText`] renders when `first` is true, so a chunk committed
+/// mid-stream is pixel-identical to the same text rendered whole. Streaming
+/// commits completed blocks as `first=true` (the message's first block) then
+/// `first=false` continuations; the finalized whole message renders the same.
 #[must_use]
-pub fn render_streaming(buffer: &str, width: u16, max_rows: usize) -> Vec<Line<'static>> {
+pub fn render_assistant_chunk(text: &str, width: u16, first: bool) -> Vec<Line<'static>> {
+    let content_width = usize::from(width.saturating_sub(2 * MARGIN))
+        .saturating_sub(GUTTER)
+        .max(4);
+    let mut lines = vec![Line::from("")];
+    for (i, line) in crate::ui::markdown::render(text, content_width)
+        .into_iter()
+        .enumerate()
+    {
+        let lead = if i == 0 && first {
+            Span::styled("● ", Style::default().fg(Color::White))
+        } else {
+            Span::raw("  ")
+        };
+        let mut spans = Vec::with_capacity(line.spans.len() + 1);
+        spans.push(lead);
+        spans.extend(line.spans);
+        lines.push(Line::from(spans));
+    }
+    lines.into_iter().map(with_left_margin).collect()
+}
+
+/// The byte offset up to which `buffer` can be **safely committed** to scrollback
+/// as completed markdown blocks (ADR-0021): the position after the last blank
+/// line that is **not inside an open code fence**. A blank line inside a fenced
+/// code block must *not* split it — committing a half-fence renders broken (an
+/// unclosed fence) and can't be un-committed. Everything before the offset is
+/// stable (won't reflow as more text streams); after it is the in-progress block.
+#[must_use]
+pub fn stable_prefix_end(buffer: &str) -> usize {
+    let mut in_fence = false;
+    let mut safe = 0usize;
+    let mut offset = 0usize;
+    for line in buffer.split_inclusive('\n') {
+        let content = line.trim_end_matches(['\n', '\r']);
+        if content.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+        } else if content.trim().is_empty() && !in_fence {
+            safe = offset + line.len();
+        }
+        offset += line.len();
+    }
+    safe
+}
+
+/// Render the **in-progress** (uncommitted) block of a streaming message as a
+/// live cell — [`render_assistant_chunk`] capped to the last `max_rows` rows so a
+/// single huge block (e.g. a long open code fence) fills the screen showing its
+/// tail rather than overflowing. `first` places the message bullet iff no earlier
+/// block has committed yet. Completed blocks are committed to scrollback by the
+/// loop (`fold_streaming`), so they stay scrollable mid-stream.
+#[must_use]
+pub fn render_streaming(
+    buffer: &str,
+    width: u16,
+    max_rows: usize,
+    first: bool,
+) -> Vec<Line<'static>> {
     if buffer.is_empty() || max_rows == 0 {
         return Vec::new();
     }
-    let inner = usize::from(width.saturating_sub(2 * MARGIN));
-    let content_width = inner.saturating_sub(GUTTER).max(4);
-    let rendered = crate::ui::markdown::render(buffer, content_width);
-    let start = rendered.len().saturating_sub(max_rows);
-    rendered[start..]
-        .iter()
-        .enumerate()
-        .map(|(i, line)| {
-            // Bullet only on the true first row; scrolled/continuation rows hang
-            // under it (Claude Code's message hierarchy).
-            let lead = if i == 0 && start == 0 {
-                Span::styled("● ", Style::default().fg(Color::White))
-            } else {
-                Span::raw("  ")
-            };
-            let mut spans = Vec::with_capacity(line.spans.len() + 1);
-            spans.push(lead);
-            spans.extend(line.spans.iter().cloned());
-            with_left_margin(Line::from(spans))
-        })
-        .collect()
+    let lines = render_assistant_chunk(buffer, width, first);
+    let start = lines.len().saturating_sub(max_rows);
+    lines[start..].to_vec()
 }
 
 /// Tool body, head/tail-kept with a middle marker past the cap (codex's
@@ -471,22 +505,28 @@ mod tests {
     }
 
     #[test]
-    fn render_streaming_empty_is_no_rows() {
-        assert!(render_streaming("", 40, 20).is_empty());
+    fn render_streaming_empty_or_zero_rows_is_no_rows() {
+        assert!(render_streaming("", 40, 20, true).is_empty());
         // max_rows == 0 (a too-short screen) also renders nothing.
-        assert!(render_streaming("something", 40, 0).is_empty());
+        assert!(render_streaming("something", 40, 0, true).is_empty());
     }
 
     #[test]
-    fn render_streaming_has_bullet_then_hanging_indent() {
-        let lines = text_of(&render_streaming("first line here", 40, 20));
-        // 2-col margin + `● ` bullet on the first row (text at col 4), like AssistantText.
-        assert!(lines[0].starts_with("  ● first"), "{lines:?}");
+    fn render_streaming_bullet_only_when_first() {
+        // A leading gap line, then the bulleted first content row (`first = true`).
+        let first = text_of(&render_streaming("first line here", 40, 20, true));
+        assert_eq!(first[0].trim(), "", "leading gap line");
+        assert!(first[1].starts_with("  ● first"), "{first:?}");
+        // A continuation chunk (`first = false`) hangs under, no bullet.
+        let cont = text_of(&render_streaming("more text", 40, 20, false));
+        assert!(!cont.iter().any(|l| l.contains('●')), "no bullet: {cont:?}");
+        // 2-col margin + 2-col hanging indent = text at col 4, no bullet.
+        assert!(cont[1].starts_with("    more"), "hanging indent: {cont:?}");
     }
 
     #[test]
     fn render_streaming_wraps_to_width() {
-        let lines = render_streaming("one two three four five six seven", 18, 20);
+        let lines = render_streaming("one two three four five six seven", 18, 20, true);
         assert!(lines.len() > 1, "should wrap");
         assert!(
             text_of(&lines).iter().all(|l| l.chars().count() <= 18),
@@ -497,41 +537,74 @@ mod tests {
 
     #[test]
     fn render_streaming_caps_to_max_rows_and_scrolls_the_tail() {
-        // A markdown list → one rendered line per item; capped to `max_rows`, tail.
+        // A markdown list → one rendered line per item + a leading gap line.
         let buffer = (0..40)
             .map(|i| format!("- item{i}"))
             .collect::<Vec<_>>()
             .join("\n");
-        let lines = text_of(&render_streaming(&buffer, 40, 8));
-        assert_eq!(lines.len(), 8, "capped to max_rows");
-        // Scrolled past the top → no leading assistant bullet.
+        let full = text_of(&render_streaming(&buffer, 40, 100, true));
+        assert_eq!(full.len(), 41, "leading gap + 40 items, uncapped");
+        assert!(full.last().unwrap().contains("item39"), "{full:?}");
+        // Capped to 8 → the last 8 rows (the tail), no bullet (scrolled past it).
+        let capped = text_of(&render_streaming(&buffer, 40, 8, true));
+        assert_eq!(capped.len(), 8, "capped to max_rows");
         assert!(
-            !lines[0].contains('●'),
-            "no assistant bullet once scrolled: {:?}",
-            lines[0]
+            !capped[0].contains('●'),
+            "no bullet once scrolled: {capped:?}"
         );
         assert!(
-            lines.last().unwrap().contains("item39"),
-            "tail shown: {lines:?}"
-        );
-        // A generous cap shows everything (no truncation) with the bullet.
-        let full = text_of(&render_streaming(&buffer, 40, 100));
-        assert_eq!(full.len(), 40, "no cap → all rows");
-        assert!(
-            full[0].contains('●'),
-            "bullet on the true first row: {:?}",
-            full[0]
+            capped.last().unwrap().contains("item39"),
+            "tail: {capped:?}"
         );
     }
 
     #[test]
     fn render_streaming_applies_markdown_formatting() {
         // A bold span proves the live cell renders markdown (not plain text).
-        let lines = render_streaming("this is **bold** now", 40, 20);
+        let lines = render_streaming("this is **bold** now", 40, 20, true);
         let has_bold = lines
             .iter()
             .flat_map(|l| &l.spans)
             .any(|s| s.content.contains("bold") && s.style.add_modifier.contains(Modifier::BOLD));
         assert!(has_bold, "streamed markdown should bold **bold**");
+    }
+
+    #[test]
+    fn stable_prefix_end_commits_completed_blocks() {
+        // Everything up to the last blank line (block boundary).
+        assert_eq!(stable_prefix_end("block1\n\nblock2"), "block1\n\n".len());
+        // No blank line yet → nothing stable.
+        assert_eq!(stable_prefix_end("still typing the first line"), 0);
+        // Multiple blocks: commit up to the last blank.
+        let s = "a\n\nb\n\nc";
+        assert_eq!(stable_prefix_end(s), "a\n\nb\n\n".len());
+    }
+
+    #[test]
+    fn stable_prefix_end_never_splits_an_open_code_fence() {
+        // A blank line INSIDE an open fence must not be a commit boundary.
+        let open = "para\n\n```rust\nfn a() {}\n\nfn b() {}";
+        assert_eq!(
+            stable_prefix_end(open),
+            "para\n\n".len(),
+            "commit only the paragraph, keep the open fence live"
+        );
+        // Once the fence CLOSES and a blank follows, the whole fence is stable.
+        let closed = "```rust\nfn a() {}\n\nfn b() {}\n```\n\ndone";
+        let end = stable_prefix_end(closed);
+        assert_eq!(end, "```rust\nfn a() {}\n\nfn b() {}\n```\n\n".len());
+        assert_eq!(&closed[end..], "done");
+    }
+
+    #[test]
+    fn assistant_chunk_matches_assistant_text_when_first() {
+        // A committed first chunk is pixel-identical to the same text as a block.
+        let chunk = render_assistant_chunk("hello **world**", 40, true);
+        let block = Block::AssistantText("hello **world**".into()).render(40);
+        assert_eq!(
+            text_of(&chunk),
+            text_of(&block),
+            "first chunk == AssistantText"
+        );
     }
 }

@@ -141,7 +141,8 @@ fn streaming_cell(app: &App, width: u16, screen_h: u16, composer_rows: u16) -> V
         .saturating_add(composer_rows)
         .saturating_add(FOOTER_ROWS);
     let max_rows = usize::from(screen_h.saturating_sub(below));
-    blocks::render_streaming(buffer, width, max_rows)
+    // `first` places the message bullet only when no earlier block has committed.
+    blocks::render_streaming(buffer, width, max_rows, !app.streaming_committed_any)
 }
 
 /// Dim `queued: …` previews for prompts waiting to run.
