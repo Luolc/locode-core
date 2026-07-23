@@ -447,9 +447,9 @@ mod tests {
     /// earlier attempts); and a following short frame stays clean.
     #[test]
     fn paint_pins_composer_commits_overflow_and_never_pollutes_scrollback() {
-        // 30 wide, 8 tall. Empty composer = 3 rows + 1 footer = non_tail 4, so
+        // 30 wide, 9 tall. Empty composer = 3 rows + 2 footer = non_tail 5, so
         // tail_cap = 4 transcript rows fit.
-        let mut t = FrameTerminal::new(TestBackend::new(30, 8)).unwrap();
+        let mut t = FrameTerminal::new(TestBackend::new(30, 9)).unwrap();
         let mut app = App::new();
         let mut committed = false;
 
@@ -460,9 +460,10 @@ mod tests {
         paint(&mut t, &mut app, &mut tail, &mut committed).unwrap();
 
         let r = rows(&t);
-        // Composer prompt sits on the last rows (bottom-pinned).
+        // Composer prompt sits on the last rows (bottom-pinned) — above the
+        // 2-row footer, so within the last 4 rows.
         assert!(
-            r.iter().rev().take(3).any(|l| l.contains('❯')),
+            r.iter().rev().take(4).any(|l| l.contains('❯')),
             "composer pinned to bottom: {r:?}"
         );
         // The last 4 transcript lines are the visible tail (L06..L09).
@@ -503,12 +504,12 @@ mod tests {
     /// screen-filling case the earlier attempt got wrong).
     #[test]
     fn shrinking_the_composer_refills_the_transcript_from_memory() {
-        let mut t = FrameTerminal::new(TestBackend::new(30, 12)).unwrap();
+        let mut t = FrameTerminal::new(TestBackend::new(30, 13)).unwrap();
         let mut app = App::new();
         let mut committed = false;
 
-        // 8 transcript lines; with an empty composer (3 rows) + footer, tail_cap
-        // is 8 — they all fit, nothing committed.
+        // 8 transcript lines; with an empty composer (3 rows) + 2-row footer,
+        // tail_cap is 8 — they all fit, nothing committed.
         let mut tail: Vec<Line<'static>> = (0..8).map(|i| Line::from(format!("T{i:02}"))).collect();
         paint(&mut t, &mut app, &mut tail, &mut committed).unwrap();
         assert!(rows(&t).iter().any(|l| l == "T00"), "T00 shown initially");
