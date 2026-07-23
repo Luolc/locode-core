@@ -1,16 +1,24 @@
 //! Code-block syntax highlighting via `syntect` + `two-face` (markdown study
 //! Phase 1). A compact take on codex's `render/highlight.rs`:
 //!
-//! - a single fixed theme, `base16-256`, which encodes colors as ANSI palette
-//!   indices (not hard RGB) so highlighted code adapts to the user's terminal
-//!   theme and reads on both light and dark backgrounds;
+//! - a single fixed **RGB** theme, `Dracula`, chosen for **readable contrast on a
+//!   dark background**. We first shipped the ANSI-palette theme `base16-256`
+//!   (colors as terminal-palette indices, for zero-config light/dark adaptivity),
+//!   but its comment scope (`base03`) resolved to a dim palette index that
+//!   collapsed into a dark terminal background — comments were unreadable
+//!   (ADR-0020 amendment 2026-07-23). Both harnesses we model on default to a
+//!   fixed RGB theme for exactly this reason (codex → Catppuccin Mocha, grok →
+//!   Tokyo Night), each picking the light/dark variant by detecting the
+//!   terminal's real background; auto-detection is a possible follow-up here.
 //! - **backgrounds are omitted** so the terminal background shows through, and
 //!   **italic/underline are suppressed** (many terminals render them poorly, and
 //!   some themes underline type scopes) — codex's choices;
 //! - size guardrails: past 512 KB or 10 000 lines, return `None` (the caller
 //!   falls back to plain dim text).
 //!
-//! `two_face::syntax::extra_newlines()` is bat's ~250-language grammar set.
+//! `two_face::syntax::extra_newlines()` is bat's ~250-language grammar set. The
+//! ANSI-palette decode in `convert_color` is kept for robustness even though
+//! `Dracula` is pure RGB (a future theme swap may reintroduce ANSI colors).
 
 use std::sync::OnceLock;
 
@@ -42,7 +50,7 @@ fn syntax_set() -> &'static SyntaxSet {
 fn theme() -> &'static Theme {
     THEME.get_or_init(|| {
         two_face::theme::extra()
-            .get(EmbeddedThemeName::Base16_256)
+            .get(EmbeddedThemeName::Dracula)
             .clone()
     })
 }
@@ -154,6 +162,37 @@ mod tests {
         assert!(
             lines.iter().flatten().any(|s| s.style.fg.is_some()),
             "some fg color applied"
+        );
+    }
+
+    /// The fixed RGB theme (Dracula) colors tokens with concrete `Rgb` values,
+    /// not ANSI palette indices — the readable-contrast fix (ADR-0020 amendment).
+    /// A comment, the scope that used to blend into a dark background, must carry
+    /// a real RGB foreground.
+    #[test]
+    fn comments_get_a_concrete_rgb_color_not_a_dim_palette_index() {
+        let code = "// a comment\nfn main() {}";
+        let lines = highlight_lines(code, "rust").expect("rust highlights");
+        let comment = &lines[0];
+        let text: String = comment.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            text.contains("// a comment"),
+            "comment line present: {text:?}"
+        );
+        // Every colored span on the line is a truecolor RGB, and the comment is
+        // colored (readable) rather than left terminal-default.
+        assert!(
+            comment
+                .iter()
+                .any(|s| matches!(s.style.fg, Some(Color::Rgb(..)))),
+            "comment carries a concrete RGB color: {comment:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .flatten()
+                .all(|s| !matches!(s.style.fg, Some(Color::Indexed(_) | Color::Gray))),
+            "no ANSI-palette-index colors (those were the dim/background-blend bug)"
         );
     }
 
