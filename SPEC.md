@@ -164,3 +164,11 @@ Carried from the design doc §12, minus what we've now decided (wire = Anthropic
 | [0009](docs/decisions/ADR-0009-headless-io-contract.md) | Single JSON report on stdout; diagnostics on stderr |
 | [0010](docs/decisions/ADR-0010-rust-tooling-baseline.md) | Rust tooling/CI baseline (pinned toolchain, fmt+clippy-deny+test) |
 | [0011](docs/decisions/ADR-0011-search-ripgrep-bundling.md) | Search uses ripgrep (host-resolved, bundled at packaging) |
+| [0015](docs/decisions/ADR-0015-custom-provider-injection.md) | Custom providers — `ProviderRegistry` + library-entry `locode-exec` |
+| [0016](docs/decisions/ADR-0016-session-continuity.md) | Session continuity — multi-turn conversations owned by the engine |
+| [0017](docs/decisions/ADR-0017-interactive-approval-seam.md) | Interactive approval seam at the engine's dispatch step |
+| [0018](docs/decisions/ADR-0018-cancellation-and-cancelled-status.md) | Public cancellation — handle, semantics, `cancelled` status |
+| [0019](docs/decisions/ADR-0019-tui-architecture.md) | TUI architecture — reducer loop, library-plus-thin-binary crates (Rendering superseded by 0022) |
+| [0020](docs/decisions/ADR-0020-markdown-code-highlighting.md) | TUI Markdown code-block syntax highlighting (`syntect` + `two-face`) |
+| [0021](docs/decisions/ADR-0021-live-token-streaming.md) | Live token streaming — provider SSE → engine deltas → TUI incremental render |
+| [0022](docs/decisions/ADR-0022-vendored-terminal-relative-frame.md) | Dynamic composer via a vendored terminal + relative-frame rendering (supersedes 0019 §Rendering) |
