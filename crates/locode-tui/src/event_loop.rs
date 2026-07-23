@@ -259,9 +259,8 @@ fn paint<B: ratatui::backend::Backend>(
     let size = terminal.size()?;
     let v = size.height;
     let (composer_rows, non_tail) = ui::live_rows(app, size.width, v);
-    // Glue the caret to the composer's bottom line (editor rows = composer rows
-    // minus the two framing rules).
-    app.composer.sync_scroll(composer_rows.saturating_sub(2));
+    // (The composer self-scrolls to keep the caret on its bottom row while the
+    // draft overflows — computed inside `Composer::render`, not here.)
 
     // Transcript rows that fit on screen; the rest is the oldest tail (the top
     // rows of the current full frame) and is committed to scrollback.
