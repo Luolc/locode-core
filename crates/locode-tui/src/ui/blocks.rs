@@ -250,10 +250,12 @@ fn wrap_plain(text: &str, width: usize) -> Vec<String> {
 const STREAM_MAX_ROWS: usize = 12;
 
 /// Render the in-progress streaming buffer as a live cell (ADR-0021): a leading
-/// `●` bullet and the **plain, wrapped** assistant text — mirroring
-/// [`Block::AssistantText`] so finalize is a seamless swap. Slice 1 is
-/// plain-text; the codex-style incremental-markdown re-parse is slice 3. Capped
-/// to the last `STREAM_MAX_ROWS` wrapped rows; an empty buffer renders nothing.
+/// `●` bullet and the **incrementally rendered markdown** of the assistant text
+/// — re-rendered each paint via the *same* [`crate::ui::markdown::render`]
+/// `Block::AssistantText` uses (pure over `(text, width)`), so finalize is a
+/// seamless swap (slice 3, unblocking markdown study Phase 4). Capped to the last
+/// `STREAM_MAX_ROWS` rows so a long turn scrolls within the live region; an empty
+/// buffer renders nothing.
 #[must_use]
 pub fn render_streaming(buffer: &str, width: u16) -> Vec<Line<'static>> {
     if buffer.is_empty() {
@@ -261,9 +263,9 @@ pub fn render_streaming(buffer: &str, width: u16) -> Vec<Line<'static>> {
     }
     let inner = usize::from(width.saturating_sub(2 * MARGIN));
     let content_width = inner.saturating_sub(GUTTER).max(4);
-    let wrapped = wrap_plain(buffer, content_width);
-    let start = wrapped.len().saturating_sub(STREAM_MAX_ROWS);
-    wrapped[start..]
+    let rendered = crate::ui::markdown::render(buffer, content_width);
+    let start = rendered.len().saturating_sub(STREAM_MAX_ROWS);
+    rendered[start..]
         .iter()
         .enumerate()
         .map(|(i, line)| {
@@ -274,7 +276,10 @@ pub fn render_streaming(buffer: &str, width: u16) -> Vec<Line<'static>> {
             } else {
                 Span::raw("  ")
             };
-            with_left_margin(Line::from(vec![lead, Span::raw(line.clone())]))
+            let mut spans = Vec::with_capacity(line.spans.len() + 1);
+            spans.push(lead);
+            spans.extend(line.spans.iter().cloned());
+            with_left_margin(Line::from(spans))
         })
         .collect()
 }
@@ -490,22 +495,33 @@ mod tests {
 
     #[test]
     fn render_streaming_caps_to_max_rows_and_scrolls_the_tail() {
-        // Many short lines → capped to the last STREAM_MAX_ROWS, showing the tail.
+        // A markdown list → one rendered line per item; capped to the tail.
         let buffer = (0..40)
-            .map(|i| format!("line{i}"))
+            .map(|i| format!("- item{i}"))
             .collect::<Vec<_>>()
             .join("\n");
         let lines = text_of(&render_streaming(&buffer, 40));
         assert_eq!(lines.len(), STREAM_MAX_ROWS, "capped");
-        // Scrolled past the top → no bullet, and the last source line is visible.
+        // Scrolled past the top → no leading assistant bullet.
         assert!(
             !lines[0].contains('●'),
-            "no bullet once scrolled: {:?}",
+            "no assistant bullet once scrolled: {:?}",
             lines[0]
         );
         assert!(
-            lines.last().unwrap().contains("line39"),
+            lines.last().unwrap().contains("item39"),
             "tail shown: {lines:?}"
         );
+    }
+
+    #[test]
+    fn render_streaming_applies_markdown_formatting() {
+        // A bold span proves the live cell renders markdown (not plain text).
+        let lines = render_streaming("this is **bold** now", 40);
+        let has_bold = lines
+            .iter()
+            .flat_map(|l| &l.spans)
+            .any(|s| s.content.contains("bold") && s.style.add_modifier.contains(Modifier::BOLD));
+        assert!(has_bold, "streamed markdown should bold **bold**");
     }
 }
