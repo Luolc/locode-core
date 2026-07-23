@@ -51,6 +51,13 @@ pub struct Cli {
     /// (A/B contamination control; default = faithful reproduction).
     #[arg(long)]
     pub strip_identity: bool,
+
+    /// Stream the model turn (SSE) instead of one buffered call (ADR-0021).
+    /// Needed for **unbounded output** — Anthropic rejects non-streaming
+    /// requests that may exceed ~10 min. The `stream-json` trace stays
+    /// whole-message: token deltas are assembled but **not** written to it.
+    #[arg(long)]
+    pub stream: bool,
 }
 
 /// The registered harness packs (a closed set — clap validates and lists them).

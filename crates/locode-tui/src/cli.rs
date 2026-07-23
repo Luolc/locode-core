@@ -13,6 +13,7 @@ use locode_exec::{Harness, OutputFormat};
 /// with `-p`.
 #[derive(Debug, Clone, Parser)]
 #[command(name = "locode", version, about)]
+#[allow(clippy::struct_excessive_bools)] // CLI flags are naturally bools
 pub struct Cli {
     /// The task prompt. With `-p` it is the headless task (`-` or omitted
     /// reads stdin); without `-p` it pre-fills the composer.
@@ -54,6 +55,14 @@ pub struct Cli {
     /// Strip the harness identity sentence from the pack prompt.
     #[arg(long)]
     pub strip_identity: bool,
+
+    /// Stream the model turn (SSE) in `-p` headless mode (ADR-0021). The
+    /// interactive TUI always streams; this opts the headless one-shot in —
+    /// needed for **unbounded output**, since Anthropic rejects non-streaming
+    /// requests that may exceed ~10 min. The `stream-json` trace stays
+    /// whole-message (token deltas are dropped).
+    #[arg(long)]
+    pub stream: bool,
 }
 
 impl Cli {
@@ -71,6 +80,7 @@ impl Cli {
             output_format: self.output_format,
             dangerously_skip_permissions: self.dangerously_skip_permissions,
             strip_identity: self.strip_identity,
+            stream: self.stream,
         }
     }
 }

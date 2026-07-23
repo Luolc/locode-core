@@ -100,12 +100,20 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
         max_turns: cli.max_turns,
         sampling_args: SamplingArgs::default(),
         cache_hint: CacheHint::Standard,
+        // Opt-in headless streaming (`--stream`) — required for unbounded output
+        // (Anthropic rejects non-streaming past ~10 min). Off by default keeps
+        // `-p` byte-for-byte as it was (ADR-0021).
+        streaming: cli.stream,
         ..EngineConfig::default()
     };
     let sink: Box<dyn EventSink> = match cli.output_format {
         // stream-json writes each event live; the terminal `result` event
         // carries the same Report as json mode.
-        OutputFormat::StreamJson => Box::new(FnSink(|event| output::write_json_line(&event))),
+        OutputFormat::StreamJson => Box::new(FnSink(|event| {
+            if in_whole_message_trace(&event) {
+                output::write_json_line(&event);
+            }
+        })),
         // json/text only want the final report — events are dropped.
         OutputFormat::Json | OutputFormat::Text => Box::new(NullSink),
     };
@@ -150,4 +158,35 @@ fn new_session_id() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis());
     format!("sess-{now}-{}", std::process::id())
+}
+
+/// Whether an event belongs in the whole-message `stream-json` trace (ADR-0021
+/// Q1): everything except live token deltas, which are a TUI-only concern so the
+/// trace stays replayable/whole-message even under `--stream`.
+fn in_whole_message_trace(event: &locode_core::Event) -> bool {
+    !matches!(event, locode_core::Event::MessageDelta { .. })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::in_whole_message_trace;
+    use locode_core::{Event, Message, Role};
+
+    #[test]
+    fn stream_json_trace_drops_message_deltas_keeps_whole_messages() {
+        // Token deltas are dropped from the trace...
+        assert!(!in_whole_message_trace(&Event::MessageDelta {
+            text: "tok".into()
+        }));
+        // ...but whole messages and every other event stay.
+        assert!(in_whole_message_trace(&Event::Message {
+            message: Message {
+                role: Role::Assistant,
+                content: vec![],
+            },
+        }));
+        assert!(in_whole_message_trace(&Event::Error {
+            message: "e".into()
+        }));
+    }
 }

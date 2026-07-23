@@ -28,6 +28,7 @@ fn cli(dir: &tempfile::TempDir, api_schema: &str) -> Cli {
         max_turns: None,
         dangerously_skip_permissions: false,
         strip_identity: false,
+        stream: false,
     }
 }
 

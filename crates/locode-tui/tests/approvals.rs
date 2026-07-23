@@ -25,6 +25,7 @@ fn cli(dir: &tempfile::TempDir, yolo: bool) -> Cli {
         max_turns: None,
         dangerously_skip_permissions: yolo,
         strip_identity: false,
+        stream: false,
     }
 }
 
