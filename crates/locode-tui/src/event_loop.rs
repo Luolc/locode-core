@@ -39,6 +39,7 @@ impl<E: std::error::Error> From<E> for RunError {
 }
 
 /// Run the app to completion.
+#[allow(clippy::too_many_lines)] // the one cohesive select! loop — splitting hurts clarity
 pub async fn run(cli: Cli, registry: ProviderRegistry) -> Result<ExitCode, RunError> {
     term::install_panic_hook();
     let mut terminal = term::init()?;
@@ -85,6 +86,9 @@ pub async fn run(cli: Cli, registry: ProviderRegistry) -> Result<ExitCode, RunEr
         if !app.outbox.is_empty() {
             flush_outbox(&terminal, &mut app, &mut tail)?;
         }
+        // Commit completed streaming blocks into the tail (→ scrollback), so a
+        // long in-progress reply is scrollable mid-stream (ADR-0021).
+        fold_streaming(&terminal, &mut app, &mut tail)?;
         if app.dirty {
             let now = Instant::now();
             if now.duration_since(last_draw) >= MIN_DRAW_INTERVAL {
@@ -188,6 +192,53 @@ fn flush_outbox<B: ratatui::backend::Backend>(
         .collect();
     tail.extend(rendered);
     app.dirty = true;
+    Ok(())
+}
+
+/// Commit *completed* markdown blocks of the in-progress streaming message into
+/// the transcript `tail` (which `paint` then commits to native scrollback), so a
+/// long reply is scrollable mid-stream (ADR-0021). Only the current in-progress
+/// block stays in `app.streaming` (rendered as the live cell). On finalize, the
+/// remaining block is committed and the streaming state cleared. Completed blocks
+/// are stable (fence-aware boundary) so they never reflow after committing.
+fn fold_streaming<B: ratatui::backend::Backend>(
+    terminal: &crate::frame_terminal::FrameTerminal<B>,
+    app: &mut App,
+    tail: &mut Vec<Line<'static>>,
+) -> std::io::Result<()> {
+    let width = terminal.size()?.width;
+    if app.streaming_finalize {
+        if let Some(text) = app.streaming.take()
+            && !text.trim().is_empty()
+        {
+            tail.extend(ui::blocks::render_assistant_chunk(
+                &text,
+                width,
+                !app.streaming_committed_any,
+            ));
+        }
+        app.streaming = None;
+        app.streaming_committed_any = false;
+        app.streaming_finalize = false;
+        app.dirty = true;
+        return Ok(());
+    }
+    let Some(buffer) = app.streaming.as_deref() else {
+        return Ok(());
+    };
+    let stable_end = ui::blocks::stable_prefix_end(buffer);
+    if stable_end > 0 {
+        let stable = buffer[..stable_end].to_string();
+        let remainder = buffer[stable_end..].to_string();
+        tail.extend(ui::blocks::render_assistant_chunk(
+            &stable,
+            width,
+            !app.streaming_committed_any,
+        ));
+        app.streaming = Some(remainder);
+        app.streaming_committed_any = true;
+        app.dirty = true;
+    }
     Ok(())
 }
 
@@ -408,11 +459,82 @@ fn spawn_signal_task() -> tokio::sync::mpsc::UnboundedReceiver<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::paint;
+    use super::{fold_streaming, paint};
     use crate::app::App;
     use crate::frame_terminal::FrameTerminal;
     use ratatui::backend::TestBackend;
     use ratatui::text::Line;
+
+    #[test]
+    fn fold_streaming_commits_completed_blocks_and_finalizes_remainder() {
+        let t = FrameTerminal::new(TestBackend::new(40, 20)).unwrap();
+        let mut app = App::new();
+        let mut tail: Vec<Line<'static>> = Vec::new();
+
+        // Two completed blocks + an in-progress third (no trailing blank line).
+        app.streaming = Some("First block.\n\nSecond block.\n\nThird in prog".into());
+        fold_streaming(&t, &mut app, &mut tail).unwrap();
+        // The two completed blocks committed to the tail; only the in-progress
+        // block remains live.
+        assert_eq!(app.streaming.as_deref(), Some("Third in prog"));
+        assert!(app.streaming_committed_any, "a block committed");
+        let committed = tail
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(committed.contains("First block."), "{committed}");
+        assert!(committed.contains("Second block."), "{committed}");
+        assert!(
+            !committed.contains("Third in prog"),
+            "in-progress not committed"
+        );
+        // Exactly one assistant bullet across the committed blocks (one message).
+        assert_eq!(
+            committed.matches('●').count(),
+            1,
+            "single bullet: {committed}"
+        );
+
+        // Finalize: the remaining block commits, streaming state clears.
+        app.streaming_finalize = true;
+        fold_streaming(&t, &mut app, &mut tail).unwrap();
+        assert_eq!(app.streaming, None);
+        assert!(!app.streaming_committed_any);
+        assert!(!app.streaming_finalize);
+        let all = tail
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            all.contains("Third in prog"),
+            "final block committed: {all}"
+        );
+        assert_eq!(all.matches('●').count(), 1, "still one bullet total");
+    }
+
+    #[test]
+    fn fold_streaming_never_commits_an_open_fence() {
+        let t = FrameTerminal::new(TestBackend::new(40, 20)).unwrap();
+        let mut app = App::new();
+        let mut tail: Vec<Line<'static>> = Vec::new();
+        // A paragraph, then an OPEN code fence with a blank line inside it.
+        app.streaming = Some("intro\n\n```rust\nlet a = 1;\n\nlet b = 2;".into());
+        fold_streaming(&t, &mut app, &mut tail).unwrap();
+        // Only the paragraph commits; the open fence stays live (uncommitted).
+        assert_eq!(
+            app.streaming.as_deref(),
+            Some("```rust\nlet a = 1;\n\nlet b = 2;")
+        );
+        let committed = tail
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(committed.contains("intro"), "{committed}");
+        assert!(!committed.contains("let a = 1"), "open fence not committed");
+    }
 
     fn rows(t: &FrameTerminal<TestBackend>) -> Vec<String> {
         let b = t.backend().buffer();

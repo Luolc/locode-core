@@ -100,6 +100,7 @@ pub struct PendingTool {
 
 /// The whole UI state (one struct owned by the event loop — the ratatui
 /// answer to Claude Code's ref-mirror epidemic; study §5).
+#[allow(clippy::struct_excessive_bools)] // independent UI flags, not a state enum
 pub struct App {
     /// The multiline prompt editor.
     pub composer: Composer,
@@ -139,10 +140,19 @@ pub struct App {
     pub engine_failed: bool,
     /// Spinner frame counter (advanced by `Msg::Tick`).
     pub spinner_frame: usize,
-    /// The in-progress assistant text of a streaming turn (ADR-0021): deltas
-    /// accumulate here and render in a live cell, then clear when the whole
-    /// `Message` lands (or the run ends). `None` when not streaming.
+    /// The **in-progress (uncommitted)** assistant text of a streaming turn
+    /// (ADR-0021): deltas accumulate here and render in a live cell. The loop
+    /// (`fold_streaming`) commits *completed* markdown blocks out of this into the
+    /// transcript tail (→ native scrollback, so a long reply is scrollable
+    /// mid-stream), leaving only the current block. `None` when not streaming.
     pub streaming: Option<String>,
+    /// Whether any block of the current streaming message has already committed
+    /// to the tail — so the `●` bullet (placed on the message's first line) isn't
+    /// repeated on continuation chunks or the live cell.
+    pub streaming_committed_any: bool,
+    /// Set when the whole assistant `Message` has arrived: the loop commits the
+    /// remaining in-progress block and clears the streaming state.
+    pub streaming_finalize: bool,
     /// Ctrl+C quit arm: armed until this instant.
     quit_armed_until: Option<Instant>,
     /// Esc clear-draft arm: armed until this instant.
@@ -180,6 +190,8 @@ impl App {
             engine_failed: false,
             spinner_frame: 0,
             streaming: None,
+            streaming_committed_any: false,
+            streaming_finalize: false,
             quit_armed_until: None,
             esc_armed_until: None,
             hint: None,
@@ -311,10 +323,24 @@ impl App {
                 self.streaming.get_or_insert_default().push_str(&text);
             }
             Event::Message { message } => match message.role {
+                Role::Assistant if self.streaming.is_some() => {
+                    // Streaming turn: the assistant text already streamed and its
+                    // completed blocks are committed; signal the loop to commit the
+                    // last in-progress block (`fold_streaming`) rather than pushing a
+                    // duplicate whole-text block. Tool calls still register here.
+                    self.streaming_finalize = true;
+                    for block in message.content {
+                        if let ContentBlock::ToolUse { id, name, input } = block {
+                            self.pending_tools.push(PendingTool {
+                                id,
+                                name,
+                                args: args_summary(&input),
+                            });
+                        }
+                    }
+                }
                 Role::Assistant => {
-                    // The finalized turn arrived — drop the live streaming cell;
-                    // the `Text` block below becomes the permanent transcript row.
-                    self.streaming = None;
+                    // Non-streaming turn: render the whole text as one block.
                     for block in message.content {
                         match block {
                             ContentBlock::Text { text } => {
@@ -400,10 +426,16 @@ impl App {
             RunState::Idle => 0,
         };
         self.session_tokens += report.usage.input_tokens + report.usage.output_tokens;
-        // Defensive: a cancelled/errored streaming turn never emits the whole
-        // `Message`, so drop any partial live cell here (Q2 — the partial is
-        // discarded, not committed).
-        self.streaming = None;
+        // A cancelled/errored streaming turn never emits the whole `Message`, so
+        // no finalize is pending: drop the in-progress (uncommitted) block (Q2 —
+        // the partial is discarded). Any *completed* blocks already committed to
+        // scrollback stay (they can't be un-committed, and are real output). When
+        // a finalize IS pending (normal completion), leave the state for
+        // `fold_streaming` to commit the last block.
+        if !self.streaming_finalize {
+            self.streaming = None;
+            self.streaming_committed_any = false;
+        }
         self.outbox.push(turn_end(report, elapsed));
         self.run = RunState::Idle;
         // Defensive: a terminal report clears any lingering overlay (the loop
@@ -999,11 +1031,15 @@ mod tests {
                 t0,
             );
         }
-        // Deltas live in the streaming cell; nothing finalized yet.
+        // Deltas live in the (uncommitted) streaming buffer; nothing in outbox.
         assert_eq!(app.streaming.as_deref(), Some("Hello streamed world"));
-        assert!(app.outbox.is_empty(), "nothing finalized while streaming");
+        assert!(
+            app.outbox.is_empty(),
+            "nothing pushed to outbox while streaming"
+        );
 
-        // The whole Message lands → the live cell clears and the block appears.
+        // The whole Message lands → the reducer signals `fold_streaming` (the loop)
+        // to commit the remaining block; it does NOT push a duplicate whole block.
         let _ = app.update(
             Msg::Engine(Box::new(EngineMsg::Event(Box::new(Event::Message {
                 message: Message {
@@ -1015,10 +1051,16 @@ mod tests {
             })))),
             t0,
         );
-        assert_eq!(app.streaming, None, "live cell cleared on finalize");
+        assert!(app.streaming_finalize, "finalize signalled to the loop");
         assert_eq!(
-            app.outbox,
-            vec![Block::AssistantText("Hello streamed world".into())]
+            app.streaming.as_deref(),
+            Some("Hello streamed world"),
+            "text kept for the loop to commit"
+        );
+        assert!(
+            app.outbox.is_empty(),
+            "no duplicate whole-text block pushed: {:?}",
+            app.outbox
         );
     }
 
