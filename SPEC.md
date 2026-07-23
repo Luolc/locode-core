@@ -68,7 +68,7 @@ rustfmt.toml, clippy.toml, deny.toml (later)
 justfile                 → dev commands
 docs/decisions/          → ADRs
 SPEC.md                  → this file
-tasks/                   → plan.md + todo.md (Phase 2/3 output)
+tasks/                   → tracker.md (status) + plans/ (per-task design records) + audits/
 crates/
 ├── locode-protocol/     → conversation model (4-role, ADR-0013), tool call/result, report envelope (pure types, no I/O)
 ├── locode-tools/        → Tool trait + registry + dispatch + shared primitives (framework; host-agnostic)

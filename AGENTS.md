@@ -21,7 +21,7 @@ what we are building and in what order:
 
 - [`SPEC.md`](SPEC.md) — objective, crate layout, tool contract, testing, boundaries, success criteria.
 - [`docs/decisions/`](docs/decisions/) — ADRs: the load-bearing decisions and the alternatives rejected. **The ADRs are the source of truth and must stay trustworthy — reconcile them *before* the code (see "ADR-first" in the Working agreement).**
-- [`tasks/plan.md`](tasks/plan.md) + [`tasks/todo.md`](tasks/todo.md) — phased build order and the current task list.
+- [`tasks/tracker.md`](tasks/tracker.md) — the **single source of truth for task status**: an "Active / Next" section, a shipped "Archive", and reserved "Deferred" seams. Design detail per task is an immutable record under [`tasks/plans/`](tasks/plans/) (indexed by [`tasks/plans/README.md`](tasks/plans/README.md)); rationale is in the ADRs.
 
 Design rationale and the source study behind every decision live in the separate
 `coding-cli-survey` repo (referenced from the ADRs).
@@ -107,8 +107,18 @@ Design rationale and the source study behind every decision live in the separate
   after the fact, reconcile the ADR in the fix — don't leave a "code is truth, ADR is
   legacy" gap.) The same holds for `SPEC.md`.
 - **Spec before code.** For any non-trivial change, work from `SPEC.md` and the
-  task list; if a task is missing, add it to `tasks/todo.md` first. Deliver in
+  task tracker; if a task is missing, add it to `tasks/tracker.md` first. Deliver in
   thin, verifiable vertical slices — implement, test, verify, then expand.
+- **One place for status: `tasks/tracker.md`.** The `tasks/` tree is deliberately flat:
+  `tracker.md` (the *only* live status — Active/Next · Archive · Deferred), `plans/`
+  (immutable, source-grounded per-task design records — no live checkboxes), and `audits/`.
+  A task's checkbox exists in exactly one file — the tracker. Do **not** recreate
+  `plan.md`/`todo.md`/`STATUS.md`: they were consolidated into `tracker.md` (2026-07-22)
+  because three status copies drifted (a task marked done in one, open in another). When a
+  task ships, flip its box in the tracker and add a plan "Result" addendum — never a second
+  status list. (Note: the generic `/plan` and `/build` skills still write `tasks/plan.md` +
+  `tasks/todo.md`; this repo does not use that path — it develops via the tracker and the
+  autonomous TUI loop in `docs/tui-dev-process.md`.)
 - **Route side effects through the seams the architecture defines** (see the ADRs):
   tools never touch the filesystem/shell directly, every side effect goes through
   the one dispatch door, and every `tool_use` is paired with exactly one

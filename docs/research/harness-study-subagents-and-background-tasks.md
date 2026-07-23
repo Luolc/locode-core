@@ -8,9 +8,8 @@ submodules. Citations are `harness: path:line`, relative to each submodule root
 (`~/dev/coding-cli-survey/submodules/{claude-code,codex,grok-build,opencode}`).
 Method: one deep source read per harness of the spawn tool(s), the context/loop
 plumbing behind them, and the background-task registry + notification path; then
-cross-comparison and a locode recommendation. This topic is flagged **Tier C**
-in `tasks/todo.md` (subagents) with background bash at **Tier B**
-(`tasks/todo.md:680-720`).
+cross-comparison and a locode recommendation. This topic is flagged in
+`tasks/tracker.md` (Active / Next → Tier B/C: subagents and background bash commands).
 
 This document feeds a future ADR pair (proposed at the end) and does not itself
 decide anything for locode.
@@ -516,7 +515,7 @@ loop, many tool skins.
 
 ### B. Background bash — do this first (Tier B, smaller, already scaffolded)
 
-`tasks/todo.md:562-563,720` already reserves the seam:
+`tasks/tracker.md` (Deferred seams) already reserves it:
 `Host::exec_background` + a task registry, `is_background`, a `<task-id>`
 envelope, `get_task_output`/`kill_task`. Concrete shape:
 
@@ -591,7 +590,7 @@ envelope, `get_task_output`/`kill_task`. Concrete shape:
 
 ### Sequencing / complexity
 Background bash first (self-contained, seam reserved, unblocks the grok/claude
-pack audit criteria 9–10 in `tasks/todo.md:562`). Subagents second, reusing the
+pack audit criteria 9–10). Subagents second, reusing the
 registry and notification path so the incremental cost is the nested-loop wiring
 + agent-type loader, not a new async subsystem. Both are **additive extension
 points** to ADR-0005's loop, consistent with "reserved slots, not rewrites."

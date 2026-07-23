@@ -11,7 +11,7 @@ the user.
 Grounding documents (the loop must stay anchored to these, in this order of
 authority): accepted ADRs → [`SPEC-TUI.md`](../SPEC-TUI.md) →
 [`docs/research/tui-harness-study.md`](research/tui-harness-study.md) →
-[`tasks/todo.md`](../tasks/todo.md) Task 27. The repo-wide rules in
+[`tasks/tracker.md`](../tasks/tracker.md) Task 27. The repo-wide rules in
 [`AGENTS.md`](../AGENTS.md) (ADR-first, faithful-vs-custom boundary, quality
 triangle, git workflow) apply unchanged; this document adds the TUI-specific
 loop on top.

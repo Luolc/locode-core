@@ -1,98 +1,65 @@
 # Per-task implementation plans
 
-Detailed, **source-grounded** plans, one file per task. Each was written by re-reading
-the actual harness source in the `coding-cli-survey` submodules (per the AGENTS.md "read
-the source before planning" rule) and cites concrete `file:line`. They expand
-[`../todo.md`](../todo.md) from a checklist into a reviewable design.
+Detailed, **source-grounded** design records — one file per task. Each was written by
+re-reading the actual harness source in the `coding-cli-survey` submodules (per the
+AGENTS.md "read the source before planning" rule) and cites concrete `file:line`.
 
-Two kinds live here:
-- **Retrospective (tasks 1, 3, 3b, 4, 5)** — written *after* the code merged, documenting
-  what is built and **why**, grounded in source, with exhaustive open-questions sections
-  as an interview surface. (The CI/`justfile` task 2 is intentionally not covered.)
-- **Pre-implementation (tasks 6–14, 17–20)** — written *before* code. Tasks 6–14 are now
-  built (v0 complete, Checkpoint D); **17–20 are the next-milestone drafts** (written
-  2026-07-19), with open-questions sections awaiting sign-off. Implementation order:
-  **18 → 17 → 19 → 20** (see `../todo.md` banner).
+**These are point-in-time records, not status trackers.** A plan captures the design as of
+when it was written (and, for shipped tasks, often a "Result" addendum); it may say
+"planning" in its header even though the task has since shipped. **Live task status —
+what is done, in progress, or next — lives only in [`../tracker.md`](../tracker.md).**
 
-| Plan | Task | Kind |
-|---|---|---|
-| [task-01-workspace-scaffold.md](task-01-workspace-scaffold.md) | Cargo workspace + crate boundaries + toolchain/lints | retrospective |
-| [task-03-protocol-conversation-report.md](task-03-protocol-conversation-report.md) | `locode-protocol` — conversation model + report envelope | retrospective |
-| [task-03b-streaming-events.md](task-03b-streaming-events.md) | `locode-protocol` — `stream-json` events + reconstruction | retrospective |
-| [task-04-tools-contract-registry.md](task-04-tools-contract-registry.md) | `locode-tools` — `Tool` contract + registry + dispatch | retrospective |
-| [task-05-provider-mock.md](task-05-provider-mock.md) | `locode-provider` — trait + `Completion` + mock + repair | retrospective |
-| [task-06-engine-loop.md](task-06-engine-loop.md) | `locode-engine` — the sample→dispatch→append loop + `Session` | built |
-| [task-07-host.md](task-07-host.md) | `locode-host` — path jail, shell exec (timeout/caps), truncation | draft |
-| [task-08-packs.md](task-08-packs.md) | `locode-packs` — pack framework + grok pack wiring | draft |
-| [task-09-grok-read-terminal.md](task-09-grok-read-terminal.md) | grok `run_terminal_cmd` + `read_file` | draft |
-| [task-10-grok-edit.md](task-10-grok-edit.md) | grok `search_replace` (edit invariants; no standalone `write`) | draft |
-| [task-11-grok-search.md](task-11-grok-search.md) | grok `grep` + `glob` (ripgrep-backed) | draft |
-| [task-12-anthropic-wire.md](task-12-anthropic-wire.md) | Anthropic Messages wire (the live `Provider`) | draft |
-| [task-13-grok-prompt.md](task-13-grok-prompt.md) | grok pack system prompt (minijinja) | draft |
-| [task-14-facade-exec.md](task-14-facade-exec.md) | `locode` facade + `locode-exec` binary | draft |
-| [task-18-openai-responses-wire.md](task-18-openai-responses-wire.md) | OpenAI Responses wire (`openai-responses`; stateless, freeform tools, encrypted-reasoning replay, transport hoist) | draft — **next** |
-| [task-17-openai-chat-wire.md](task-17-openai-chat-wire.md) | OpenAI Chat Completions wire (`openai-chat`; LCD/control wire) | draft |
-| [task-19-codex-pack.md](task-19-codex-pack.md) | codex pack (`shell_command` + freeform `apply_patch` + `update_plan` + prompt) | draft |
-| [task-20-claude-pack.md](task-20-claude-pack.md) | claude pack (Bash/Read/Edit/Write/Glob/Grep + freshness gate + prompt) | draft |
+## Index
 
-## Already resolved since these were written
+Grouped as in the tracker. Status column intentionally omitted (see above) — check the
+tracker.
 
-- **`Completion` / `StopReason` / `ConversationRequest` shapes** — settled and shipped
-  in Task 5 (`Completion` carries `Vec<ContentBlock>`; no `system` field on the
-  request; `StopReason` is `#[non_exhaustive]` + `Unknown(String)`). Some plans list
-  these as open — they are not.
+### v0 core spine
+| Plan | Task |
+|---|---|
+| [task-01-workspace-scaffold.md](task-01-workspace-scaffold.md) | Cargo workspace + crate boundaries + toolchain/lints |
+| [task-03-protocol-conversation-report.md](task-03-protocol-conversation-report.md) | `locode-protocol` — conversation model + report envelope |
+| [task-03b-streaming-events.md](task-03b-streaming-events.md) | `locode-protocol` — `stream-json` events + reconstruction |
+| [task-04-tools-contract-registry.md](task-04-tools-contract-registry.md) | `locode-tools` — `Tool` contract + registry + dispatch door |
+| [task-05-provider-mock.md](task-05-provider-mock.md) | `locode-provider` — trait + `Completion` + mock + repair |
+| [task-06-engine-loop.md](task-06-engine-loop.md) | `locode-engine` — the sample→dispatch→append loop + `Session` |
 
-## Cross-cutting decisions — RESOLVED
+### grok harness pack + host seam
+| Plan | Task |
+|---|---|
+| [task-07-host.md](task-07-host.md) | `locode-host` — path jail, shell exec (timeout/caps), truncation |
+| [task-08-packs.md](task-08-packs.md) | `locode-packs` — pack framework + grok pack wiring |
+| [task-09-grok-read-terminal.md](task-09-grok-read-terminal.md) | grok `run_terminal_cmd` + `read_file` |
+| [task-10-grok-edit.md](task-10-grok-edit.md) | grok `search_replace` (edit invariants; no standalone `write`) |
+| [task-11-grok-search.md](task-11-grok-search.md) | grok `grep` (ripgrep) + `list_dir` (grok's fs walker) |
 
-- **`repair_pairing` home → `locode-provider`.** Provider-layer concern (ADR-0004);
-  the engine depends on provider, so it calls it each iteration. Landed in Task 6.
-- **`provider` → `api_schema` rename → done** in the report envelope, `Event::Init`,
-  ADR-0009, and the golden snapshot (Task 6). The CLI flag becomes `--api-schema` in
-  Task 14. It names the wire *schema*, not a gateway.
-- **`run_terminal_cmd`** — use grok's real name (the SPEC/todo `run_terminal_command`
-  was a voice-input artifact, not a real discrepancy). Applies at Task 9.
-- **Standalone `write` tool → skip in the grok pack.** Grok creates files via
-  `search_replace` with empty `old_string`; a dedicated `write` is not grok's. Revisit
-  when implementing other harness packs. Applies at Task 10.
-- **Faithfully mimic Grok Build** for the grok pack tools' behavior/details — this
-  governs the edit-invariant question (implement grok's real `search_replace`
-  semantics). Applies at Tasks 9–11.
+### Live wires + facade
+| Plan | Task |
+|---|---|
+| [task-12-anthropic-wire.md](task-12-anthropic-wire.md) | Anthropic Messages wire (the live `Provider`) |
+| [task-13-grok-prompt.md](task-13-grok-prompt.md) | grok pack system prompt (MiniJinja) |
+| [task-14-facade-exec.md](task-14-facade-exec.md) | `locode` facade + `locode-exec` binary |
+| [task-18-openai-responses-wire.md](task-18-openai-responses-wire.md) | OpenAI Responses wire (`openai-responses`; stateless, freeform tools, encrypted-reasoning replay, transport hoist) |
+| [task-17-openai-chat-wire.md](task-17-openai-chat-wire.md) | OpenAI Chat Completions wire (`openai-chat`; LCD/control wire) |
 
-## Interview decisions (2026-07-18)
+### More harness packs
+| Plan | Task |
+|---|---|
+| [task-19-codex-pack.md](task-19-codex-pack.md) | codex pack (`shell_command` + freeform `apply_patch` + `update_plan` + prompt) |
+| [task-20-claude-pack.md](task-20-claude-pack.md) | claude pack (Bash/Read/Edit/Write/Glob/Grep + freshness gate + prompt) |
 
-A working-through of the plans' open questions. Full context in the git history; the
-load-bearing outcomes:
-
-- **Pack faithfulness is a rule** (AGENTS.md): ported packs mimic their harness's real
-  tools; custom choices apply only to our own `locode` pack. Consequence: the grok pack
-  ships `list_dir` (grok's fs walker), **not** an rg-glob — ADR-0011's rg-glob is scoped to
-  the `locode` pack (ADR-0011 amendment).
-- **Edit invariants (grok pack): mimic grok** — runtime #2 (exact+unique) + #4 (reject
-  no-op); #1 read-before-edit via contract; **no #3 mtime store** (grok has none). SPEC
-  success-criterion 3 reworded.
-- **`repair_pairing` stays in `locode-provider`; `reconstruct_conversation` stays in
-  `locode-protocol`.** No `locode-transcript` crate.
-- **Dispatch-door policy / OS sandbox → deferred post-v0.**
-- **v0 scope holds:** structured-output/`--json-schema`, cost/`total_cost_usd`, streaming,
-  parallel dispatch all deferred.
-- **Facade goal:** `locode` re-exports the driving API **and the full tool surface** so
-  downstream can use our tools in *their own* loop (SPEC Users #4).
-- **Wire config (Task 12/14):** a modest extensible record `{api_schema, base_url, api_key,
-  model}` (env + `--api-schema`), growable to per-model `{extra_headers, auth}`.
-- **Tool schema:** assume APIs share one JSON Schema → keep `specs()` + a shared
-  normalization helper; **verify Anthropic/OpenAI compatibility** before the wire relies
-  on it (SPEC Open Q3).
-- **Lints:** keep clippy `pedantic`; **added workspace `print_stdout`/`print_stderr`
-  deny** (exec allows narrowly).
-- **Host:** `nix` + dev-`tempfile` approved; shell `bash -lc` + configurable-shell seam;
-  10s timeout (configurable); middle-truncation with marker.
-- **grok prompt:** cwd/OS/shell/date as a `Role::Developer` message (keeps the
-  system-prompt cache boundary).
-- **Path jail is a configurable policy with a skip flag** (ADR-0008 amendment):
-  `PathPolicy::{Jailed(default), Unrestricted}`; `Unrestricted` = the full-access behavior
-  of Codex `DangerFullAccess` / Claude `bypassPermissions`, exposed as
-  `--dangerously-skip-permissions` (alias `--yolo`). Only the FS tools are jailed (never the
-  shell); shell timeout/output caps stay on even under `--yolo`.
-- **Shell loads the login profile/RC by default** (`bash -lc`) — matches all four harnesses
-  (grok/codex/opencode use login `-lc`; Claude uses an env snapshot). Shell program is a
-  configurable field for later shell-detection.
+### TUI core prerequisites + TUI + streaming
+| Plan | Task |
+|---|---|
+| [task-23-25-tui-core-prereqs.md](task-23-25-tui-core-prereqs.md) | Session continuity (ADR-0016) + cancellation (ADR-0018) + approval seam (ADR-0017) |
+| [task-27-slice-1-shell.md](task-27-slice-1-shell.md) | TUI slice 1 — shell: crates, terminal lifecycle, event loop, composer |
+| [task-27-slice-2-drive-a-run.md](task-27-slice-2-drive-a-run.md) | TUI slice 2 — drive a run (mock) |
+| [task-27-slice-3-cancel.md](task-27-slice-3-cancel.md) | TUI slice 3 — cancel |
+| [task-27-slice-4-approvals.md](task-27-slice-4-approvals.md) | TUI slice 4 — approvals |
+| [task-27-slice-5-polish.md](task-27-slice-5-polish.md) | TUI slice 5 — conversation polish |
+| [task-27-slice-6-hardening.md](task-27-slice-6-hardening.md) | TUI slice 6 — hardening / release |
+| [task-27-slice-7-markdown-fixes.md](task-27-slice-7-markdown-fixes.md) | TUI slice 7 — markdown fixes |
+| [task-27-slice-8-composer-status.md](task-27-slice-8-composer-status.md) | TUI slice 8 — composer + status bar |
+| [task-27-slice-9-code-highlighting.md](task-27-slice-9-code-highlighting.md) | TUI slice 9 — code highlighting (ADR-0020) |
+| [task-28-unified-p-headless.md](task-28-unified-p-headless.md) | unified `locode` binary — `-p` headless mode |
+| [task-29-live-streaming.md](task-29-live-streaming.md) | live token streaming (ADR-0021) |
