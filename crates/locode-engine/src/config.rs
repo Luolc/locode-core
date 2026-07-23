@@ -35,8 +35,8 @@ pub struct EngineConfig {
     pub sampling_args: SamplingArgs,
     /// Prompt-cache placement hint for the wire.
     pub cache_hint: CacheHint,
-    /// Use the streaming sample path ([`Provider::stream`]) instead of
-    /// [`Provider::complete`] (ADR-0021). Default **false** — the headless one-shot
+    /// Use the streaming sample path ([`locode_provider::Provider::stream`]) instead of
+    /// [`locode_provider::Provider::complete`] (ADR-0021). Default **false** — the headless one-shot
     /// stays non-streaming; the TUI sets this, and headless can opt in via
     /// `--stream` (Anthropic rejects non-streaming requests past ~10 min, so
     /// streaming is required for unbounded output). Emits `Event::MessageDelta`s;

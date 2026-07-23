@@ -34,16 +34,16 @@ pub trait Provider: Send + Sync {
     async fn complete(&self, request: &ConversationRequest) -> Result<Completion, ProviderError>;
 
     /// Sample one completion, emitting [`CompletionDelta`]s to `on_delta` as they
-    /// arrive, and returning the **same final [`Completion`]** as [`complete`]
+    /// arrive, and returning the **same final [`Completion`]** as [`Self::complete`]
     /// (ADR-0021). Deltas are a display-only side channel; the returned
     /// `Completion` is what the engine appends and dispatches from.
     ///
-    /// **Default** (this impl): non-streaming wires call [`complete`] and emit one
+    /// **Default** (this impl): non-streaming wires call [`Self::complete`] and emit one
     /// synthetic text delta, so the seam works for every provider (`mock`, and any
     /// wire that hasn't implemented SSE). SSE wires override this to stream live.
     ///
     /// # Errors
-    /// Returns [`ProviderError`], same taxonomy as [`complete`].
+    /// Returns [`ProviderError`], same taxonomy as [`Self::complete`].
     async fn stream(
         &self,
         request: &ConversationRequest,

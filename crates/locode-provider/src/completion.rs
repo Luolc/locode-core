@@ -52,9 +52,9 @@ impl Completion {
 }
 
 /// One incremental piece of a streaming completion (ADR-0021), normalized across
-/// wires — the display-oriented side channel of [`Provider::stream`].
+/// wires — the display-oriented side channel of [`crate::Provider::stream`].
 ///
-/// This is **display-only**: [`Provider::stream`] still returns the same whole
+/// This is **display-only**: [`crate::Provider::stream`] still returns the same whole
 /// [`Completion`] (assembled via [`ToolCallAssembler`](crate::ToolCallAssembler)),
 /// so tool dispatch and history are unaffected. The parts mirror what the wires
 /// actually stream (text/reasoning on distinct channels; tool name/id early, args
