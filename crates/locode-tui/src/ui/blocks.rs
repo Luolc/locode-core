@@ -244,6 +244,41 @@ fn wrap_plain(text: &str, width: usize) -> Vec<String> {
     out
 }
 
+/// Rows a live streaming cell shows at most, so a long in-progress turn scrolls
+/// within the pinned live region instead of shoving the transcript into
+/// scrollback prematurely.
+const STREAM_MAX_ROWS: usize = 12;
+
+/// Render the in-progress streaming buffer as a live cell (ADR-0021): a leading
+/// `●` bullet and the **plain, wrapped** assistant text — mirroring
+/// [`Block::AssistantText`] so finalize is a seamless swap. Slice 1 is
+/// plain-text; the codex-style incremental-markdown re-parse is slice 3. Capped
+/// to the last `STREAM_MAX_ROWS` wrapped rows; an empty buffer renders nothing.
+#[must_use]
+pub fn render_streaming(buffer: &str, width: u16) -> Vec<Line<'static>> {
+    if buffer.is_empty() {
+        return Vec::new();
+    }
+    let inner = usize::from(width.saturating_sub(2 * MARGIN));
+    let content_width = inner.saturating_sub(GUTTER).max(4);
+    let wrapped = wrap_plain(buffer, content_width);
+    let start = wrapped.len().saturating_sub(STREAM_MAX_ROWS);
+    wrapped[start..]
+        .iter()
+        .enumerate()
+        .map(|(i, line)| {
+            // Bullet only on the true first row; scrolled/continuation rows hang
+            // under it (Claude Code's message hierarchy).
+            let lead = if i == 0 && start == 0 {
+                Span::styled("● ", Style::default().fg(Color::White))
+            } else {
+                Span::raw("  ")
+            };
+            with_left_margin(Line::from(vec![lead, Span::raw(line.clone())]))
+        })
+        .collect()
+}
+
 /// Tool body, head/tail-kept with a middle marker past the cap (codex's
 /// shape: `… +N lines`), each line dimmed and indented.
 fn truncated_body(body: &str, width: u16) -> Vec<Line<'static>> {
@@ -428,5 +463,49 @@ mod tests {
         let lines = text_of(&Block::AssistantText("one two three four five".into()).render(16));
         assert!(lines.len() > 2, "{lines:?}");
         assert!(lines.iter().all(|l| l.chars().count() <= 16), "{lines:?}");
+    }
+
+    #[test]
+    fn render_streaming_empty_is_no_rows() {
+        assert!(render_streaming("", 40).is_empty());
+    }
+
+    #[test]
+    fn render_streaming_has_bullet_then_hanging_indent() {
+        let lines = text_of(&render_streaming("first line here", 40));
+        // 2-col margin + `● ` bullet on the first row (text at col 4), like AssistantText.
+        assert!(lines[0].starts_with("  ● first"), "{lines:?}");
+    }
+
+    #[test]
+    fn render_streaming_wraps_to_width() {
+        let lines = render_streaming("one two three four five six seven", 18);
+        assert!(lines.len() > 1, "should wrap");
+        assert!(
+            text_of(&lines).iter().all(|l| l.chars().count() <= 18),
+            "{:?}",
+            text_of(&lines)
+        );
+    }
+
+    #[test]
+    fn render_streaming_caps_to_max_rows_and_scrolls_the_tail() {
+        // Many short lines → capped to the last STREAM_MAX_ROWS, showing the tail.
+        let buffer = (0..40)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let lines = text_of(&render_streaming(&buffer, 40));
+        assert_eq!(lines.len(), STREAM_MAX_ROWS, "capped");
+        // Scrolled past the top → no bullet, and the last source line is visible.
+        assert!(
+            !lines[0].contains('●'),
+            "no bullet once scrolled: {:?}",
+            lines[0]
+        );
+        assert!(
+            lines.last().unwrap().contains("line39"),
+            "tail shown: {lines:?}"
+        );
     }
 }

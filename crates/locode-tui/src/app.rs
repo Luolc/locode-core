@@ -139,6 +139,10 @@ pub struct App {
     pub engine_failed: bool,
     /// Spinner frame counter (advanced by `Msg::Tick`).
     pub spinner_frame: usize,
+    /// The in-progress assistant text of a streaming turn (ADR-0021): deltas
+    /// accumulate here and render in a live cell, then clear when the whole
+    /// `Message` lands (or the run ends). `None` when not streaming.
+    pub streaming: Option<String>,
     /// Ctrl+C quit arm: armed until this instant.
     quit_armed_until: Option<Instant>,
     /// Esc clear-draft arm: armed until this instant.
@@ -175,6 +179,7 @@ impl App {
             session_tokens: 0,
             engine_failed: false,
             spinner_frame: 0,
+            streaming: None,
             quit_armed_until: None,
             esc_armed_until: None,
             hint: None,
@@ -300,8 +305,16 @@ impl App {
     /// Translate one engine event into transcript state (SPEC-TUI mapping).
     fn on_event(&mut self, event: Event) {
         match event {
+            // A streaming assistant-text fragment: accumulate into the live cell
+            // (ADR-0021). The whole `Message` still lands below and finalizes it.
+            Event::MessageDelta { text } => {
+                self.streaming.get_or_insert_default().push_str(&text);
+            }
             Event::Message { message } => match message.role {
                 Role::Assistant => {
+                    // The finalized turn arrived — drop the live streaming cell;
+                    // the `Text` block below becomes the permanent transcript row.
+                    self.streaming = None;
                     for block in message.content {
                         match block {
                             ContentBlock::Text { text } => {
@@ -387,6 +400,10 @@ impl App {
             RunState::Idle => 0,
         };
         self.session_tokens += report.usage.input_tokens + report.usage.output_tokens;
+        // Defensive: a cancelled/errored streaming turn never emits the whole
+        // `Message`, so drop any partial live cell here (Q2 — the partial is
+        // discarded, not committed).
+        self.streaming = None;
         self.outbox.push(turn_end(report, elapsed));
         self.run = RunState::Idle;
         // Defensive: a terminal report clears any lingering overlay (the loop
@@ -965,6 +982,66 @@ mod tests {
             t0,
         );
         assert!(app.outbox.is_empty(), "wrapped echo must not render");
+    }
+
+    // ---- streaming live cell (ADR-0021 slice 1c) ----
+
+    #[test]
+    fn streaming_deltas_accumulate_then_finalize_to_a_block() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        let _ = app.update(run_started(), t0);
+        for frag in ["Hello ", "streamed ", "world"] {
+            let _ = app.update(
+                Msg::Engine(Box::new(EngineMsg::Event(Box::new(Event::MessageDelta {
+                    text: frag.into(),
+                })))),
+                t0,
+            );
+        }
+        // Deltas live in the streaming cell; nothing finalized yet.
+        assert_eq!(app.streaming.as_deref(), Some("Hello streamed world"));
+        assert!(app.outbox.is_empty(), "nothing finalized while streaming");
+
+        // The whole Message lands → the live cell clears and the block appears.
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::Event(Box::new(Event::Message {
+                message: Message {
+                    role: Role::Assistant,
+                    content: vec![ContentBlock::Text {
+                        text: "Hello streamed world".into(),
+                    }],
+                },
+            })))),
+            t0,
+        );
+        assert_eq!(app.streaming, None, "live cell cleared on finalize");
+        assert_eq!(
+            app.outbox,
+            vec![Block::AssistantText("Hello streamed world".into())]
+        );
+    }
+
+    #[test]
+    fn run_finished_discards_a_partial_streaming_cell() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        let _ = app.update(run_started(), t0);
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::Event(Box::new(Event::MessageDelta {
+                text: "partial".into(),
+            })))),
+            t0,
+        );
+        assert_eq!(app.streaming.as_deref(), Some("partial"));
+        // A cancelled turn ends without the whole Message → drop the partial (Q2).
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::RunFinished(Box::new(report(
+                Status::Cancelled,
+            ))))),
+            t0,
+        );
+        assert_eq!(app.streaming, None, "partial discarded on run end");
     }
 
     #[test]
