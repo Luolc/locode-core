@@ -26,3 +26,7 @@ live in `~/dev/coding-cli-survey`.
 | [0016](ADR-0016-session-continuity.md) | Session continuity — multi-turn conversations in the engine | Accepted |
 | [0017](ADR-0017-interactive-approval-seam.md) | Interactive approval seam at the engine's dispatch step | Accepted |
 | [0018](ADR-0018-cancellation-and-cancelled-status.md) | Public cancellation — handle, semantics, `cancelled` status | Accepted |
+| [0019](ADR-0019-tui-architecture.md) | TUI architecture — reducer loop, library-plus-thin-binary crates | Accepted (Rendering decision superseded by 0022) |
+| [0020](ADR-0020-markdown-code-highlighting.md) | TUI Markdown code-block syntax highlighting (`syntect` + `two-face`) | Accepted |
+| [0021](ADR-0021-live-token-streaming.md) | Live token streaming — provider SSE → engine deltas → TUI incremental render | Accepted |
+| [0022](ADR-0022-vendored-terminal-relative-frame.md) | Dynamic composer via a vendored terminal + relative-frame rendering (supersedes 0019 §Rendering) | Accepted |
