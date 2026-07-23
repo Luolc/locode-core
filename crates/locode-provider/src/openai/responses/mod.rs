@@ -9,6 +9,7 @@
 
 pub mod build;
 pub mod parse;
+mod stream;
 pub mod wire;
 
 use std::sync::Arc;
@@ -18,7 +19,7 @@ use async_trait::async_trait;
 pub use build::{build_request, freeform_fallback_parameters, freeform_tool_names};
 pub use parse::response_to_completion;
 
-use crate::completion::Completion;
+use crate::completion::{Completion, CompletionDelta};
 use crate::http::{self, HttpFailure, RetryPolicy};
 use crate::openai::{OpenAiModelConfig, classify};
 use crate::provider::{Provider, ProviderError};
@@ -152,6 +153,31 @@ impl Provider for OpenAiResponsesProvider {
             self.send_once(&wire_request, freeform_ref)
         })
         .await
+    }
+
+    async fn stream(
+        &self,
+        request: &ConversationRequest,
+        on_delta: &mut (dyn FnMut(CompletionDelta) + Send),
+    ) -> Result<Completion, ProviderError> {
+        // Same repair + build as `complete`, but streaming (the whole final
+        // response still rides the terminal SSE event → byte-identical result).
+        let mut repaired = request.clone();
+        let _ = repair_pairing(&mut repaired.messages);
+        let mut wire_request = build_request(&repaired, &self.config);
+        wire_request.stream = true;
+        let freeform_names = freeform_tool_names(&repaired.tools);
+
+        // Single attempt — a retryable failure surfaces to the engine's resample.
+        stream::send_once_streaming(
+            &self.http,
+            &self.config,
+            &wire_request,
+            &freeform_names,
+            on_delta,
+        )
+        .await
+        .map_err(|f| f.error)
     }
 }
 
