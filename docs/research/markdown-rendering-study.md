@@ -226,4 +226,4 @@ for a single-binary agent.
 
 **Next step:** if you approve Phase 1 (the `syntect`/`two-face` dependency),
 this becomes an ADR (markdown rendering decision) + a TUI slice task. Phases 2–4
-are follow-on slices tracked in `tasks/todo.md`.
+are follow-on slices tracked in `tasks/tracker.md`.

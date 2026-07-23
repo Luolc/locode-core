@@ -299,8 +299,9 @@ deferred polish.
 Done on acceptance (2026-07-22):
 - `SPEC.md` principle #5 (non-streaming in v0) now points here and marks streaming
   **scheduled** (still gating tool dispatch on the finalized whole completion).
-- `tasks/todo.md`: streaming moved out of the Deferred seams list into a scheduled
-  **Task 29** with the three slices (Open Question 6).
+- The task list: streaming moved out of the Deferred seams list into a scheduled
+  **Task 29** with the three slices (Open Question 6). (Task 29 now archived as shipped
+  in [`tasks/tracker.md`](../../tasks/tracker.md).)
 
 The `SPEC.md` ADR index table is separately stale (missing ADR-0015–0022); a
 broader index refresh is out of scope for this ADR and left as doc hygiene.

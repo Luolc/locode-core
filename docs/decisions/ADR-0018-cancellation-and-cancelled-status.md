@@ -25,7 +25,7 @@ plumbing half-exists:
   (`crates/locode-protocol/src/…:216-224`) — none of which honestly describes
   "the user stopped it." **The report envelope is an ask-first boundary**
   (AGENTS.md), so the status question is called out explicitly below.
-- **Task 21 discrepancy (repair in this change-set):** `tasks/todo.md` shows
+- **Task 21 discrepancy (repair in this change-set):** the task list showed
   Task 21's acceptance criteria checked `[x]`, but no signal-handling or
   cancellation code exists anywhere in `locode-exec` (verified by search: no
   `signal`/`SIGTERM`/`cancel` references; no implementing commit in history).

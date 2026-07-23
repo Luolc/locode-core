@@ -1,6 +1,7 @@
 # Task 29 — Live token streaming (ADR-0021): implementation plan
 
-**Status:** planning (2026-07-22). Grounded in [ADR-0021](../../docs/decisions/ADR-0021-live-token-streaming.md)
+**Status:** shipped 2026-07-22 (all three slices, PRs #117–123; see [`../tracker.md`](../tracker.md)).
+This document is the point-in-time implementation plan. Grounded in [ADR-0021](../../docs/decisions/ADR-0021-live-token-streaming.md)
 (Accepted) and a fresh source pass over our own crates + the four studied
 harnesses. This plan covers **all three slices**; each slice's wire SSE work
 still gets the process's Phase-1 harness revisit + a per-wire test plan before it
