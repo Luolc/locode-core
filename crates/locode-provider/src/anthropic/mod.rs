@@ -27,7 +27,7 @@ pub use error::{HttpFailure, classify, parse_retry_after};
 pub use parse::response_to_completion;
 pub use retry::{RetryPolicy, backoff, run_with_retry};
 
-use crate::completion::Completion;
+use crate::completion::{Completion, CompletionDelta};
 use crate::provider::{Provider, ProviderError};
 use crate::repair::repair_pairing;
 use crate::request::ConversationRequest;
@@ -174,6 +174,58 @@ impl Provider for AnthropicProvider {
                 }
             }
             other => other,
+        }
+    }
+
+    async fn stream(
+        &self,
+        request: &ConversationRequest,
+        on_delta: &mut (dyn FnMut(CompletionDelta) + Send),
+    ) -> Result<Completion, ProviderError> {
+        // Same pre-send validation + repair + build as `complete`, but streaming.
+        if let Some(crate::request::ReasoningEffort::Other(tier)) =
+            &request.sampling_args.reasoning_effort
+            && self.config.reasoning_encoding == config::ReasoningEncoding::Budget
+        {
+            return Err(ProviderError::Config(format!(
+                "unknown reasoning-effort tier {tier:?} has no budget mapping on the \
+                 anthropic wire (Budget encoding)"
+            )));
+        }
+        let mut repaired = request.clone();
+        let _ = repair_pairing(&mut repaired.messages);
+        let mut wire_request = build_request(&repaired, &self.config);
+        wire_request.stream = Some(true);
+
+        // Single-attempt streaming send: a retryable failure surfaces to the
+        // engine's loop-level resample (which re-runs the stream). We still
+        // refresh once on a terminal Auth error, mirroring `complete` — an auth
+        // failure lands at the HTTP status check, before any delta is emitted, so
+        // re-borrowing `on_delta` for the retry is sound (borrows don't overlap).
+        let first = client::send_once_streaming(
+            &self.http,
+            &self.config,
+            &self.current_auth(),
+            &wire_request,
+            on_delta,
+        )
+        .await;
+        match first {
+            Ok(completion) => Ok(completion),
+            Err(failure)
+                if matches!(failure.error, ProviderError::Auth(_)) && self.try_refresh() =>
+            {
+                client::send_once_streaming(
+                    &self.http,
+                    &self.config,
+                    &self.current_auth(),
+                    &wire_request,
+                    on_delta,
+                )
+                .await
+                .map_err(|f| f.error)
+            }
+            Err(failure) => Err(failure.error),
         }
     }
 }

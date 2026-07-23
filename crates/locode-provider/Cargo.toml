@@ -21,6 +21,7 @@ thiserror = { workspace = true }
 # The Anthropic wire (Task 12): HTTP client, backoff sleeps + jitter.
 reqwest = { workspace = true }
 tokio = { workspace = true, features = ["time"] }
+tokio-stream = { workspace = true }
 rand = { workspace = true }
 
 [dev-dependencies]
