@@ -293,12 +293,27 @@ impl StreamAssembler {
             E::ContentBlockStop { index } => {
                 if let Some(raw) = self.tool_json.remove(&index) {
                     // Parse the accumulated arguments ONCE, at the finalize boundary.
+                    // Malformed args are a MODEL mistake, not a wire failure — e.g.
+                    // grok's grep exposes `-A`/`-B`/`-C`/`-i` as literal JSON keys
+                    // (faithful port, Task 26) and the model sometimes emits them
+                    // unquoted (`{…,-A:3}`). Do NOT fail the whole response (which
+                    // would hard-stop the run as a terminal `model_error`): keep the
+                    // raw as a `Value::String`, exactly as the OpenAI-Responses wire
+                    // does for invalid function-call arguments
+                    // (`openai/responses/parse.rs::decode_arguments`). The tool_use
+                    // stays in the transcript (pairing holds, ADR-0004); dispatch's
+                    // typed decode rejects a bare string for ANY tool — even one whose
+                    // args are all-optional, so the error is never masked — as a SOFT
+                    // `Respond`, and the loop lets the model retry. The Anthropic wire
+                    // requires an object on replay, so `build.rs` coerces this
+                    // non-object input back to `{}`.
                     let value = if raw.trim().is_empty() {
                         serde_json::json!({})
                     } else {
-                        serde_json::from_str(&raw).map_err(|e| {
-                            HttpFailure::decode(format!("tool arguments JSON (block {index}): {e}"))
-                        })?
+                        match serde_json::from_str(&raw) {
+                            Ok(v) => v,
+                            Err(_) => serde_json::Value::String(raw),
+                        }
                     };
                     if let Some(wire::ContentBlock::ToolUse { input, .. }) =
                         self.resp_mut()?.content.get_mut(index as usize)
@@ -695,8 +710,12 @@ mod stream_tests {
         }
     }
 
+    /// Malformed streamed tool args are a MODEL mistake, not a wire failure: the
+    /// stream must NOT hard-error (which would terminate the run as `model_error`).
+    /// The raw is preserved as a `Value::String` (parity with the OpenAI-Responses
+    /// wire) so dispatch soft-rejects it and the loop lets the model retry.
     #[test]
-    fn malformed_tool_json_at_stop_is_a_decode_error() {
+    fn malformed_tool_json_recovers_as_string_not_a_hard_error() {
         let mut asm = StreamAssembler::new();
         let mut sink = |_d| {};
         asm.handle(
@@ -718,24 +737,31 @@ mod stream_tests {
             &mut sink,
         )
         .unwrap();
+        // The model emitted an unquoted key (grok's `-A`/`-B` dash-flag style).
         asm.handle(
             E::ContentBlockDelta {
                 index: 0,
                 delta: D::InputJsonDelta {
-                    partial_json: "{ not json".into(),
+                    partial_json: "{\"pattern\":\"x\",-A:3}".into(),
                 },
             },
             &mut sink,
         )
         .unwrap();
-        let err = asm
-            .handle(E::ContentBlockStop { index: 0 }, &mut sink)
-            .unwrap_err();
-        assert!(
-            matches!(err.error, ProviderError::Decode(_)),
-            "{:?}",
-            err.error
-        );
+        // No error at stop — the run keeps going.
+        asm.handle(E::ContentBlockStop { index: 0 }, &mut sink)
+            .unwrap();
+        asm.handle(E::MessageStop, &mut sink).unwrap();
+        let completion = asm.finish().unwrap();
+        // The tool_use survives with the raw args preserved as a string, so
+        // typed dispatch will reject it as a soft error (never masked).
+        match &completion.content[0] {
+            PBlock::ToolUse { input, name, .. } => {
+                assert_eq!(name, "n");
+                assert_eq!(input, &json!("{\"pattern\":\"x\",-A:3}"));
+            }
+            other => panic!("expected ToolUse, got {other:?}"),
+        }
     }
 
     #[test]

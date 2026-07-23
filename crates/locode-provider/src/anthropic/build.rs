@@ -256,10 +256,19 @@ fn map_assistant_blocks(blocks: &[ContentBlock]) -> Vec<wire::ContentBlock> {
             }
             ContentBlock::ToolUse { id, name, input } => {
                 // id preserved VERBATIM — pairing is load-bearing (ADR-0004).
+                // Anthropic requires `tool_use.input` to be a JSON OBJECT. A
+                // recovered malformed-args call preserves the model's raw as a
+                // JSON string (streaming assembler, client.rs); coerce any
+                // non-object here so replaying that turn stays a valid request.
+                let input = if input.is_object() {
+                    input.clone()
+                } else {
+                    serde_json::json!({})
+                };
                 out.push(wire::ContentBlock::ToolUse {
                     id: id.clone(),
                     name: name.clone(),
-                    input: input.clone(),
+                    input,
                 });
             }
             // ToolResult/Image in an assistant turn (or future kinds): no wire
@@ -410,4 +419,43 @@ pub fn count_cache_controls(req: &wire::MessagesRequest) -> usize {
         }
     }
     count
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use locode_protocol::ContentBlock;
+    use serde_json::json;
+
+    /// A recovered malformed-args tool call preserves the model's raw as a JSON
+    /// string (streaming assembler); Anthropic requires `tool_use.input` to be an
+    /// object, so replaying that turn must coerce the non-object to `{}`. A valid
+    /// object passes through unchanged.
+    #[test]
+    fn assistant_tool_use_non_object_input_coerces_to_empty_object() {
+        let coerced = map_assistant_blocks(&[ContentBlock::ToolUse {
+            id: "t1".into(),
+            name: "grep".into(),
+            input: json!("{\"pattern\":\"x\",-A:3}"),
+        }]);
+        match &coerced[0] {
+            wire::ContentBlock::ToolUse { id, input, .. } => {
+                assert_eq!(id, "t1");
+                assert_eq!(input, &json!({}), "non-object input coerced to {{}}");
+            }
+            other => panic!("expected ToolUse, got {other:?}"),
+        }
+
+        let passthrough = map_assistant_blocks(&[ContentBlock::ToolUse {
+            id: "t2".into(),
+            name: "grep".into(),
+            input: json!({"pattern": "x"}),
+        }]);
+        match &passthrough[0] {
+            wire::ContentBlock::ToolUse { input, .. } => {
+                assert_eq!(input, &json!({"pattern": "x"}), "valid object unchanged");
+            }
+            other => panic!("expected ToolUse, got {other:?}"),
+        }
+    }
 }
