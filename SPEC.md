@@ -1,6 +1,8 @@
 # Spec: locode-core
 
-> Status: **Draft (v0, Phase 1 — Specify)**. Living document; update before implementing when a decision changes.
+> Status: **v0 delivered** (0.1.x shipped) — living document. The core architecture below still
+> holds; features layered on since (the TUI, a second wire, streaming) are noted inline, and live
+> task status is in [`tasks/tracker.md`](tasks/tracker.md). Update before implementing when a decision changes.
 > Rationale and source study live in `~/dev/coding-cli-survey` — primarily
 > `survey/06-design-lessons/minimal-headless-rust-agent.md` (the design) and `rust-ci-and-tooling.md`.
 > Cross-cutting decisions are recorded as ADRs in [`docs/decisions/`](docs/decisions/).
@@ -9,17 +11,17 @@
 
 These are the assumptions this spec is built on. Correct any that are wrong before implementation begins.
 
-1. **The core is a library, not an application.** Its deliverable is a set of `locode-*` library crates. The full agent binary (`locode` = `locode-app` → `locode-tui`) is built **in this repo** layered on the core (ADR-0001/0019 amendments): the interactive TUI by default and a headless one-shot under `-p`/`--print` (Task 28). `locode-exec` is the standalone headless binary, slated for retirement once `locode -p` is the shipped path; the core crates themselves stay headless.
-2. **Primary target model is Claude** (Anthropic Messages wire first; `cache_control` breakpoint caching from day one). OpenAI Chat Completions is the planned second wire but not in v0.
+1. **The core is a library, not an application.** Its deliverable is a set of `locode-*` library crates. The full agent binary (`locode` = `locode-app` → `locode-tui`) is built **in this repo** layered on the core (ADR-0001/0019 amendments): the interactive TUI by default and a headless one-shot under `-p`/`--print` (Task 28). The standalone `locode-exec` binary has been **retired** (2026-07-22): `locode -p` is the shipped headless path, and `locode-exec` remains a headless-runner *library* (`run_headless`) feeding it. The core crates themselves stay headless.
+2. **Primary target model is Claude** (Anthropic Messages wire first; `cache_control` breakpoint caching from day one). The **second wire shipped is OpenAI Responses** (`openai-responses`; stateless, freeform tools, encrypted-reasoning replay); an OpenAI Chat Completions wire remains deferred.
 3. **v0 is the `grok` harness pack** — a faithful port of Grok Build's real tools (ADR-0012). Other packs (`codex`/`claude`/`opencode`) and our own `locode` pack are the next milestone — real per-harness implementations, not re-skins.
 4. **Single-user, trusted-workspace threat model for v0.** A `workspace_root` path jail (**default**, on the first-class FS tools) + shell timeout/output caps is the security posture. The jail is a **configurable host `PathPolicy`** (`Jailed`, default / `Unrestricted`), skippable via `--dangerously-skip-permissions` (alias `--yolo`) for the harnesses' full-access behavior — the shell caps stay on regardless (ADR-0008 amendment). The shell tool is *not* path-jailed. OS sandboxing (Seatbelt/Landlock/seccomp) is a deferred extension behind the one dispatch door, not a v0 requirement.
-5. **Non-streaming model calls in v0.** Buffer each assistant turn fully before dispatching tools. Streaming is an additive optimization, not a second loop — now **scheduled** as an opt-in layer over the loop ([ADR-0021](docs/decisions/ADR-0021-live-token-streaming.md), Accepted 2026-07-22; tool dispatch still gates on the finalized whole completion).
+5. **Streaming is an additive layer over the loop, not a second loop.** v0 buffered each assistant turn fully; live token streaming has since **shipped** ([ADR-0021](docs/decisions/ADR-0021-live-token-streaming.md), Task 29 complete 2026-07-22) as an opt-in layer — tool dispatch still gates on the finalized whole completion, and the headless path defaults to non-streaming (opt in with `--stream`).
 6. **In-memory sessions.** History lives in memory on the `Session` and persists across `run()` calls — a second `run()` continues the same conversation, with `Init` emitted once per session and one per-run `Report` each (multi-turn continuity, ADR-0016). Durable JSONL session files are deferred.
 7. **Rust stable, current pinned toolchain**, `tokio` async runtime, `reqwest` HTTP.
 
 ## Objective
 
-Build the **headless engine of a coding agent**: a production-grade, robust Rust core library that owns the classic *sample → dispatch → append → re-sample* loop, exposes a typed tool registry (shell + filesystem + search) whose JSON schemas are derived from the arg types, organized into a selectable **harness pack** (a faithful per-harness toolset), talks to a model through a **provider trait** with one wire implementation, and returns a single structured result — with **no TUI and no interactive permission prompts**.
+Build the **headless engine of a coding agent**: a production-grade, robust Rust core library that owns the classic *sample → dispatch → append → re-sample* loop, exposes a typed tool registry (shell + filesystem + search) whose JSON schemas are derived from the arg types, organized into a selectable **harness pack** (a faithful per-harness toolset), talks to a model through a **provider trait** with pluggable wire implementations, and returns a single structured result — with **no TUI and no interactive permission prompts**.
 
 **Users:** (1) the future `locode-app` (TUI + features) as a library consumer driving the engine programmatically; (2) researchers running headless A/B comparisons of harness packs and provider wires; (3) `locode-exec` as a thin reference consumer; (4) downstream consumers who want **just the tools** — the pack's tool implementations are a reusable library that can be dropped into *their own* harness loop, without using our engine (the `locode-core` facade re-exports the tool surface for this).
 
@@ -34,26 +36,27 @@ Build the **headless engine of a coding agent**: a production-grade, robust Rust
 | Errors | `thiserror` |
 | HTTP | `reqwest` (with `rustls`) |
 | Prompt templating | `minijinja` (per-pack system prompts) |
-| CLI (locode-exec only) | `clap` |
+| CLI (`locode-app`/`-tui` + `locode-exec`) | `clap` |
 | First provider wire | Anthropic Messages |
 
 ## Commands
 
 ```sh
-# Format / lint / test — the mandatory triangle (fail on warnings)
+# Format / lint / test / doc — the mandatory four-part gate (fail on warnings)
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps   # catches broken intra-doc links
 
 # Auto-fix loop
 cargo fmt --all
 cargo clippy --workspace --all-targets --fix --allow-dirty -- -D warnings
 
-# Run the minimal headless binary (v0)
-cargo run -p locode-exec -- "summarize this repo" --harness grok --provider anthropic
+# Run the headless path (one-shot)
+cargo run -p locode-app -- -p "summarize this repo" --harness grok --api-schema anthropic
 
 # Convenience (justfile)
-just check      # fmt-check + clippy + test
+just check      # fmt-check + clippy + test + doc
 just fix        # fmt + clippy --fix
 ```
 
@@ -77,10 +80,12 @@ crates/
 ├── locode-host/         → fs/shell/path-jail/truncation/rg-resolution (injectable side-effect seam)
 ├── locode-engine/       → the sample→dispatch→append loop + Session driving API
 ├── locode-core/         → thin facade re-exporting the public surface (the bare name `locode` is taken on crates.io)
-└── locode-exec/          → minimal headless binary (Codex-exec-style stdout discipline)
+├── locode-exec/         → headless runner library (`run_headless`, Codex-exec-style stdout discipline); standalone binary retired 2026-07-22
+├── locode-tui/          → TUI components + interactive app + `-p` headless dispatch (ADR-0019)
+└── locode-app/          → flag-free product binary — the shipped `locode`
 ```
 
-Dependency direction: `protocol` ← everything; `tools` → `protocol`; `host` → `protocol`; `packs` → `tools` + `host` + `protocol`; `provider` → `protocol`; `engine` → `packs` + `tools` + `provider` + `host` + `protocol`; `locode-core` → all; `locode-exec` → `locode-core`.
+Dependency direction: `protocol` ← everything; `tools` → `protocol`; `host` → `protocol`; `packs` → `tools` + `host` + `protocol`; `provider` → `protocol`; `engine` → `packs` + `tools` + `provider` + `host` + `protocol`; `locode-core` → all; `locode-exec` → `locode-core`; `locode-tui` → `locode-exec` + `locode-core`; `locode-app` → `locode-tui`.
 
 ## Code Style
 
@@ -120,7 +125,7 @@ Conventions: `kind()` is a classification tag for cross-pack A/B alignment — n
 
 ## Boundaries
 
-- **Always:** run the fmt+clippy+test triangle before commit; derive tool schemas from types; route every side effect through the one `dispatch` door and the `locode-host` seam (never call `std::fs`/`Command` from a tool body); guarantee every `tool_use` id gets exactly one `tool_result` before the next sample; keep stdout to exactly one JSON document.
+- **Always:** run the four-part gate (`fmt · clippy · test · doc`) before merge; derive tool schemas from types; route every side effect through the one `dispatch` door and the `locode-host` seam (never call `std::fs`/`Command` from a tool body); guarantee every `tool_use` id gets exactly one `tool_result` before the next sample; keep stdout to exactly one JSON document.
 - **Ask first:** adding a dependency; changing the report envelope `schema_version` or any public trait signature (`Tool`, `Provider`); changing the crate boundaries; enabling new `[workspace.lints]` denies.
 - **Never:** commit secrets/API keys; `println!` from library crates or non-report paths (stdout is sacred — enforce with `#![deny(clippy::print_stdout)]` in `locode-exec`); bury allow/deny policy inside individual tools; leave a `tool_use` unpaired; introduce a second, throwaway loop for headless.
 
@@ -130,9 +135,9 @@ Conventions: `kind()` is a classification tag for cross-pack A/B alignment — n
 2. The `grok` pack's tools — `run_terminal_cmd`, `read_file`, `search_replace`, `grep`, and `list_dir` — ported **faithfully** from `xai-grok-tools` (real names + behavior; **no standalone `write`** — grok creates files via `search_replace` with an empty `old_string`; **`list_dir` is grok's fs walker**, not an rg-glob — ADR-0011 amendment), schemas derived from arg types, selected via `--harness grok`.
 3. The grok pack enforces grok's **real `search_replace` guardrails**: exact + unique match (soft error with match count otherwise) and reject-no-op at runtime; read-before-edit is grok's prompt/contract expectation (grok does **not** do a runtime mtime-freshness check, so neither do we — faithful mimicry). Path jail rejects `..` escapes; shell honors a hard timeout + output byte cap with a truncation marker.
 4. Every tool failure is a soft `tool_result{is_error}`; a pre-send pass guarantees transcript validity (no dangling/duplicate tool results); an explicit `max_turns` ceiling terminates cleanly.
-5. `locode-exec` emits **exactly one** JSON report on stdout (stamping `harness` + `api_schema`), all diagnostics on stderr, exit 0 on clean terminal state / non-zero on fatal.
-6. The mandatory CI triangle is green; the loop is covered by mock-provider unit tests.
-7. Extension seams exist but are unimplemented: additional harness packs (`codex`/`claude`/`opencode`/`locode`), `apply_patch` (JSON-string framing), a second `Provider` wire, parallel tools, compaction, sandbox, MCP.
+5. The headless path (`locode -p`, formerly the standalone `locode-exec` binary) emits **exactly one** JSON report on stdout (stamping `harness` + `api_schema`), all diagnostics on stderr, exit 0 on clean terminal state / non-zero on fatal.
+6. The mandatory four-part CI gate (`fmt · clippy · test · doc`) is green; the loop is covered by mock-provider unit tests.
+7. Extension seams exist — some now filled: **shipped since v0** — a second `Provider` wire (OpenAI Responses) and streaming (ADR-0021); **still unimplemented** — additional harness packs (`codex`/`claude`/`opencode`/`locode`), `apply_patch`, parallel tools, compaction, sandbox, MCP.
 
 ## Open Questions
 

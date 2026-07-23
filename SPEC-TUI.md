@@ -1,6 +1,11 @@
 # SPEC-TUI — `locode-tui` + `locode-app`, the minimal interactive frontend
 
-Status: **Proposed** (2026-07-21) — review before implementation.
+Status: **Implemented** (slices 1–9 + polish shipped through 0.1.8). This is the
+original design spec; several v1 decisions were **superseded or extended** as the
+work landed — the **Rendering model** below was replaced by a vendored terminal +
+relative-frame render (ADR-0022), and two v1 non-goals (streaming, code
+highlighting) shipped via ADR-0021 / ADR-0020. Those points are annotated inline;
+live task status is in [`tasks/tracker.md`](tasks/tracker.md).
 Grounding: [`docs/research/tui-harness-study.md`](docs/research/tui-harness-study.md)
 (source study of the grok-build, codex, claude-code, and opencode TUIs).
 Scope authority: ADR-0001 amendment 2026-07-21 (TUI crates live in this repo;
@@ -24,12 +29,13 @@ mouse, multi-session) is explicitly deferred.
 
 ## Non-goals for v1
 
-Streaming token deltas (core is non-streaming, ADR-0005 — the codex
-newline-commit pattern is the documented extension); markdown syntax
-highlighting (plain markdown styling only); mouse support; themes/config
-files; session persistence/resume; multiple sessions/tabs; steer/interject
-mid-turn; Windows; alt-screen or app-owned scrollback; vim mode; `@`-file
-mentions; image/paste chips.
+> **Two of these shipped after v1:** live streaming token deltas (ADR-0021, Task 29)
+> and markdown code-block syntax highlighting (ADR-0020). The rest below still hold.
+
+Mouse support; themes/config files; session persistence/resume; multiple
+sessions/tabs; steer/interject mid-turn; Windows; ~~alt-screen or app-owned
+scrollback~~ (ADR-0022 now runs a small vendored terminal for a relative-frame
+render, still over native scrollback); vim mode; `@`-file mentions; image/paste chips.
 
 ## Crates & dependencies
 
@@ -61,16 +67,18 @@ vibe): forking/vendoring a widget crate → sibling crate; a second frontend
 consuming the block renderers → extract them; a wire-protocol extraction or
 material compile-time pain → extract. Until a trigger fires, modules.
 - **New dependencies (ask-first list, approve with this spec):**
-  - `ratatui` (stock, `crossterm` backend) — the Rust-ecosystem standard;
-    both Rust harnesses use it (via forks we do not need: our v1 uses the
-    stock `Viewport::Inline` + `Terminal::insert_before`, not DECSTBM
-    scroll-region writes).
-  - `crossterm` (bracketed paste; no kitty protocol in v1).
+  - `ratatui` (stock, `crossterm` backend) — the Rust-ecosystem standard.
+    *(v1 used the stock `Viewport::Inline` + `Terminal::insert_before`; ADR-0022
+    later replaced this with a minimal **vendored terminal** driving a
+    relative-frame render — see the Rendering model note below.)*
+  - `crossterm` (bracketed paste; kitty `DISAMBIGUATE_ESCAPE_CODES` added for
+    Shift/Alt+Enter — the "no kitty protocol in v1" plan was revised, TUI slice 7).
   - `tui-textarea` — multiline composer (grok forked one; codex hand-rolled;
     for minimal-robust the crate suffices, and the composer is behind our own
     `Composer` wrapper so replacing it later is local).
   - `pulldown-cmark` — assistant markdown → styled `Line`s (headings bold,
-    lists bulleted, fenced code dim/indented; **no syntect**).
+    lists bulleted, fenced code dim/indented). *(Code-block syntax highlighting
+    later added `syntect` + `two-face` — ADR-0020, TUI slice 9.)*
   - Existing workspace deps reused: `tokio`, `tokio-util`, `serde_json`.
 
 ## Architecture
@@ -111,6 +119,16 @@ by the loop. Keep the enums namespaced per subsystem from day one (the
 
 ## Rendering model
 
+> **Superseded by [ADR-0022](docs/decisions/ADR-0022-vendored-terminal-relative-frame.md)
+> (2026-07-22).** The inline `insert_before` / print-once model below was the v1
+> design; it was replaced by a minimal **vendored terminal** driving a
+> **relative-frame full re-render** of a bottom-anchored frame (the transcript
+> tail + a dynamic composer), with rows overflowing the top committed to native
+> scrollback. This gave the grow/shrink composer and removed the idle gap that the
+> fixed inline viewport couldn't. The block model and the print-once *goal* (native
+> scrollback owns finalized history) carry over; the mechanism does not. Kept below
+> as the historical v1 design.
+
 **Inline viewport, print-once transcript, one screen mode.** The terminal's
 native scrollback owns finalized history; the ratatui inline viewport renders
 only the **live region** (max ~a dozen rows): status row, composer, and the
@@ -142,11 +160,11 @@ at a given width:
   calmly, not as an error.
 - `Notice(text)` / `Error(text)` — engine `Event::Error` retry notes, etc.
 
-Because the core is non-streaming, blocks arrive whole from `Event::Message`
-— there is no mutable tail cell in v1. The engine's per-message events give
-natural progress: the user sees each assistant turn and tool batch as it
-lands. (When streaming deltas ship in the core, the extension is exactly
-codex's stable/tail + newline-commit pattern.)
+In v1, blocks arrived whole from `Event::Message` — no mutable tail cell. **This
+shipped since:** live streaming (ADR-0021, Task 29) added a mutable live cell that
+re-renders the growing buffer (with incremental markdown) each paint and commits
+completed blocks to scrollback, finalized by a seamless swap on `Event::Message`.
+The engine's per-message events still bound each turn.
 
 **Status row** (only while a run is active): spinner + elapsed +
 `esc to interrupt` hint; approval-waiting swaps the spinner for a distinct
@@ -235,6 +253,10 @@ small core change + ADR note when the TUI work confirms the shape.
 
 ## Build order (thin slices, each PR-sized and green)
 
+> Shipped as **nine** slices, not six: slices 1–6 below, then 7 (markdown fixes),
+> 8 (composer + status bar), 9 (code highlighting, ADR-0020), plus the dynamic
+> composer (ADR-0022) and two-row footer polish. See [`tasks/tracker.md`](tasks/tracker.md).
+
 1. **Shell**: both crate scaffolds (`locode-tui` lib + thin `locode-app`
    bin), terminal init/teardown/panic/signal plumbing,
    event loop, composer, quit keys. Runs and exits clean; reducer + teardown
@@ -260,5 +282,6 @@ small core change + ADR note when the TUI work confirms the shape.
 - Against the real Anthropic wire, a multi-turn grok-pack session is usable
   end-to-end with approvals on and with `--yolo`.
 - An idle TUI generates zero wakeups; a busy one never drops keystrokes.
-- The core crates remain untouched except (optionally) the ADR-0017
-  amendment above — proving the 0.1.4 seams were sufficient.
+- The core crates remained untouched for v1 (proving the 0.1.4 seams were
+  sufficient) — the ADR-0017 amendment aside. *(Core was later extended
+  deliberately for streaming: `Provider::stream` + `Event::MessageDelta`, ADR-0021.)*
