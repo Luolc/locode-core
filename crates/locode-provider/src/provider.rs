@@ -5,7 +5,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::completion::Completion;
+use crate::completion::{Completion, CompletionDelta};
 use crate::request::ConversationRequest;
 
 /// A model-sampling wire: builds a request, calls the model, normalizes the response.
@@ -32,6 +32,29 @@ pub trait Provider: Send + Sync {
     /// retry-vs-terminal. The transport-tier backoff lives in the wire; the
     /// bounded loop-level resample lives in the engine.
     async fn complete(&self, request: &ConversationRequest) -> Result<Completion, ProviderError>;
+
+    /// Sample one completion, emitting [`CompletionDelta`]s to `on_delta` as they
+    /// arrive, and returning the **same final [`Completion`]** as [`Self::complete`]
+    /// (ADR-0021). Deltas are a display-only side channel; the returned
+    /// `Completion` is what the engine appends and dispatches from.
+    ///
+    /// **Default** (this impl): non-streaming wires call [`Self::complete`] and emit one
+    /// synthetic text delta, so the seam works for every provider (`mock`, and any
+    /// wire that hasn't implemented SSE). SSE wires override this to stream live.
+    ///
+    /// # Errors
+    /// Returns [`ProviderError`], same taxonomy as [`Self::complete`].
+    async fn stream(
+        &self,
+        request: &ConversationRequest,
+        on_delta: &mut (dyn FnMut(CompletionDelta) + Send),
+    ) -> Result<Completion, ProviderError> {
+        let completion = self.complete(request).await?;
+        if let Some(text) = completion.text() {
+            on_delta(CompletionDelta::Text(text));
+        }
+        Ok(completion)
+    }
 }
 
 /// Why a model call failed (ADR-0007).
@@ -98,5 +121,72 @@ impl ProviderError {
             | ProviderError::Decode(_)
             | ProviderError::Config(_) => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::completion::StopReason;
+    use crate::request::{CacheHint, SamplingArgs};
+    use locode_protocol::{ContentBlock, Usage};
+
+    /// A minimal provider that implements only `complete`, exercising the default
+    /// `stream` fallback (non-streaming wires emit one synthetic text delta).
+    struct TextOnly(String);
+
+    #[async_trait]
+    impl Provider for TextOnly {
+        #[allow(clippy::unnecessary_literal_bound)]
+        fn api_schema(&self) -> &str {
+            "text-only"
+        }
+        async fn complete(
+            &self,
+            _request: &ConversationRequest,
+        ) -> Result<Completion, ProviderError> {
+            Ok(Completion {
+                content: vec![ContentBlock::Text {
+                    text: self.0.clone(),
+                }],
+                usage: Usage::default(),
+                stop: StopReason::EndTurn,
+            })
+        }
+    }
+
+    fn req() -> ConversationRequest {
+        ConversationRequest {
+            messages: vec![],
+            tools: vec![],
+            sampling_args: SamplingArgs::default(),
+            cache_hint: CacheHint::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn default_stream_emits_one_text_delta_and_same_completion() {
+        let provider = TextOnly("hello there".into());
+        let mut deltas = Vec::new();
+        let completion = provider
+            .stream(&req(), &mut |d| deltas.push(d))
+            .await
+            .expect("default stream ok");
+        assert_eq!(deltas, vec![CompletionDelta::Text("hello there".into())]);
+        assert_eq!(completion.text().as_deref(), Some("hello there"));
+    }
+
+    #[tokio::test]
+    async fn default_stream_with_empty_text_emits_nothing() {
+        let provider = TextOnly(String::new());
+        let mut deltas = Vec::new();
+        provider
+            .stream(&req(), &mut |d| deltas.push(d))
+            .await
+            .expect("ok");
+        assert!(
+            deltas.is_empty(),
+            "no text → no synthetic delta: {deltas:?}"
+        );
     }
 }

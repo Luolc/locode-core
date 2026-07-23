@@ -398,6 +398,15 @@ pub enum Event {
         /// The appended message.
         message: Message,
     },
+    /// An incremental assistant-text fragment during a **streaming** turn
+    /// (ADR-0021). **Display-only**: the whole [`Message`] is still appended at
+    /// turn end, so deltas are *not* part of the reconstructed history (the trace
+    /// stays whole-message — Q1). Emitted only when the engine runs in `streaming`
+    /// mode; consumers that want a whole-message trace drop this variant.
+    MessageDelta {
+        /// One assistant-text fragment — append to the live buffer.
+        text: String,
+    },
     /// The terminal event: the final report (identical to `--output-format json`).
     Result {
         /// The run's report envelope.
@@ -436,7 +445,12 @@ pub fn reconstruct_conversation(events: &[Event]) -> Conversation {
         match event {
             Event::Init { preamble, .. } => messages.extend(preamble.iter().cloned()),
             Event::Message { message } => messages.push(message.clone()),
-            Event::Result { .. } | Event::Error { .. } | Event::Approval { .. } => {}
+            // Deltas are display-only — the whole `Message` is appended at turn
+            // end, so skipping them here keeps reconstruction whole-message (Q1).
+            Event::MessageDelta { .. }
+            | Event::Result { .. }
+            | Event::Error { .. }
+            | Event::Approval { .. } => {}
         }
     }
     Conversation { messages }
@@ -652,6 +666,54 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&event).unwrap()["type"],
             json!("message")
+        );
+    }
+
+    #[test]
+    fn message_delta_round_trips_as_jsonl() {
+        let event = Event::MessageDelta {
+            text: "hello ".into(),
+        };
+        let value = serde_json::to_value(&event).unwrap();
+        assert_eq!(value["type"], json!("message_delta"), "{value}");
+        assert_eq!(value["text"], json!("hello "));
+        let back: Event = serde_json::from_value(value).unwrap();
+        assert_eq!(back, event);
+    }
+
+    #[test]
+    fn message_delta_is_not_part_of_reconstructed_history() {
+        // A streaming turn: deltas then the whole Message. Reconstruction must
+        // ignore the deltas (the trace stays whole-message — ADR-0021 Q1).
+        let assistant = Message {
+            role: Role::Assistant,
+            content: vec![ContentBlock::Text {
+                text: "hello world".into(),
+            }],
+        };
+        let with_deltas = vec![
+            Event::MessageDelta {
+                text: "hello ".into(),
+            },
+            Event::MessageDelta {
+                text: "world".into(),
+            },
+            Event::Message {
+                message: assistant.clone(),
+            },
+        ];
+        let without_deltas = vec![Event::Message {
+            message: assistant.clone(),
+        }];
+        assert_eq!(
+            reconstruct_conversation(&with_deltas),
+            reconstruct_conversation(&without_deltas),
+            "deltas must not affect reconstruction"
+        );
+        // And the reconstructed history is exactly the one whole message.
+        assert_eq!(
+            reconstruct_conversation(&with_deltas).messages,
+            vec![assistant]
         );
     }
 

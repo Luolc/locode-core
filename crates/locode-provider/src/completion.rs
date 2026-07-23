@@ -51,6 +51,34 @@ impl Completion {
     }
 }
 
+/// One incremental piece of a streaming completion (ADR-0021), normalized across
+/// wires — the display-oriented side channel of [`crate::Provider::stream`].
+///
+/// This is **display-only**: [`crate::Provider::stream`] still returns the same whole
+/// [`Completion`] (assembled via [`ToolCallAssembler`](crate::ToolCallAssembler)),
+/// so tool dispatch and history are unaffected. The parts mirror what the wires
+/// actually stream (text/reasoning on distinct channels; tool name/id early, args
+/// as a raw partial-JSON channel that is **never** parsed here — see ADR-0021's
+/// granularity table).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompletionDelta {
+    /// A fragment of assistant text.
+    Text(String),
+    /// A fragment of reasoning/thinking text (its own channel).
+    Thinking(String),
+    /// A tool call has started — name + id are known early (before args stream).
+    ToolUseStart {
+        /// The `tool_use` id.
+        id: String,
+        /// The client-facing tool name.
+        name: String,
+    },
+    /// A raw partial-JSON fragment of the current tool call's arguments. **Not**
+    /// valid JSON in isolation — display-only; the call is assembled and parsed
+    /// once at its finalize boundary.
+    ToolArgs(String),
+}
+
 /// Why the model stopped generating (Anthropic-shaped, provider-neutral).
 ///
 /// Mirrors an **open** wire enum (a provider can return a reason we don't model),

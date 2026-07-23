@@ -35,6 +35,14 @@ pub struct EngineConfig {
     pub sampling_args: SamplingArgs,
     /// Prompt-cache placement hint for the wire.
     pub cache_hint: CacheHint,
+    /// Use the streaming sample path ([`locode_provider::Provider::stream`]) instead of
+    /// [`locode_provider::Provider::complete`] (ADR-0021). Default **false** — the headless one-shot
+    /// stays non-streaming; the TUI sets this, and headless can opt in via
+    /// `--stream` (Anthropic rejects non-streaming requests past ~10 min, so
+    /// streaming is required for unbounded output). Emits `Event::MessageDelta`s;
+    /// the final `Message` is still appended whole, so the trace can stay
+    /// whole-message by dropping the deltas (Q1).
+    pub streaming: bool,
 }
 
 impl Default for EngineConfig {
@@ -51,6 +59,7 @@ impl Default for EngineConfig {
             resample_backoff: Duration::from_millis(500),
             sampling_args: SamplingArgs::default(),
             cache_hint: CacheHint::default(),
+            streaming: false,
         }
     }
 }
