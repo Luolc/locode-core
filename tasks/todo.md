@@ -697,13 +697,14 @@ Core-public-surface change (`Provider::stream` + default fallback,
 a second loop. Each wire's SSE gets its own plan + golden tests. Resolved design
 in [ADR-0021](../docs/decisions/ADR-0021-live-token-streaming.md); three slices:
 
-- [ ] **Slice 1** — the seam end-to-end on one wire: `Provider::stream` +
-  `CompletionDelta` + default fallback, `mock` streaming, **Anthropic SSE**
-  (`content_block_delta`), engine forwards deltas via a **callback** into the
-  existing `EventSink` as `Event::MessageDelta`, cancel-mid-stream aborts the SSE
-  read + discards the partial, and a **minimal plain-text newline-gated** TUI
-  streaming cell. Pacing rides the existing 32-drain + 16 ms loop (no new channel).
-- [ ] **Slice 2** — OpenAI-Responses SSE (`response.*.delta`).
+- [x] **Slice 1** — the seam end-to-end: `Provider::stream` + `CompletionDelta` +
+  default fallback + `mock` streaming (#117); **Anthropic SSE** — byte-identical
+  assembly, live-smoke-verified (#118); **TUI live cell** (#119); headless
+  `--stream` + whole-message trace (#120). Deps added (user-approved): reqwest
+  `stream` feature + `tokio-stream`.
+- [x] **Slice 2** — OpenAI-Responses SSE (`response.*.delta`): assemble from the
+  terminal event's whole response → reuse `response_to_completion` (byte-identical);
+  live-smoke-verified vs OpenRouter Responses (this PR).
 - [ ] **Slice 3** — codex-style incremental-markdown re-parse in the streaming
   cell (unblocks markdown study **Phase 4**).
 - Deferred within streaming: `--include-deltas` trace flag, inline/transcript
