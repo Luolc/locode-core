@@ -152,9 +152,10 @@ impl Block {
                 // with the composer's top rule read as a redundant "extra rule"
                 // (user vibe-check, 2026-07-22). Aligned to the message gutter.
                 let label = format!(
-                    "{} · {turns} turn{} · {tokens} tok · {elapsed_secs}s",
+                    "{} · {turns} turn{} · {tokens} tokens · {}",
                     status_str(*status),
                     if *turns == 1 { "" } else { "s" },
+                    fmt_elapsed(*elapsed_secs),
                 );
                 vec![Line::from(""), Line::styled(format!("  {label}"), dim)]
             }
@@ -366,6 +367,20 @@ fn status_str(status: Status) -> &'static str {
     }
 }
 
+/// Human-readable elapsed time for the turn-end summary: `20s`, `1m 20s`,
+/// `1h 2m 3s` — never a bare `1234s`. Minutes/hours are shown only once the
+/// coarser unit is non-zero.
+fn fmt_elapsed(secs: u64) -> String {
+    let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
+    if h > 0 {
+        format!("{h}h {m}m {s}s")
+    } else if m > 0 {
+        format!("{m}m {s}s")
+    } else {
+        format!("{s}s")
+    }
+}
+
 /// Build the `TurnEnd` block from a run's report + UI-measured elapsed time.
 #[must_use]
 pub fn turn_end(report: &Report, elapsed_secs: u64) -> Block {
@@ -474,11 +489,21 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].trim(), "");
         assert!(
-            lines[1].contains("completed · 3 turns · 1234 tok · 41s"),
+            lines[1].contains("completed · 3 turns · 1234 tokens · 41s"),
             "{lines:?}"
         );
         // No longer a full-width `──…──` rule (it read as an extra rule).
         assert!(!lines[1].contains("──"), "should not be a rule: {lines:?}");
+    }
+
+    #[test]
+    fn elapsed_reads_as_minutes_and_hours_never_a_bare_seconds_count() {
+        assert_eq!(fmt_elapsed(20), "20s");
+        assert_eq!(fmt_elapsed(59), "59s");
+        assert_eq!(fmt_elapsed(60), "1m 0s");
+        assert_eq!(fmt_elapsed(80), "1m 20s");
+        assert_eq!(fmt_elapsed(1234), "20m 34s");
+        assert_eq!(fmt_elapsed(3661), "1h 1m 1s");
     }
 
     #[test]
