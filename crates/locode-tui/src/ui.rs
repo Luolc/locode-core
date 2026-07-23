@@ -57,7 +57,7 @@ pub fn draw(
     // The live streaming cell (ADR-0021): the in-progress assistant text, pinned
     // just above the status row and redrawn each frame (never committed to
     // scrollback while live — it finalizes to an `AssistantText` block on turn end).
-    let stream = streaming_cell(app, frame.area().width);
+    let stream = streaming_cell(app, frame.area().width, frame.area().height, composer_rows);
     let stream_height = u16::try_from(stream.len()).unwrap_or(u16::MAX);
     let status_height = u16::from(app.is_running());
     let queue_height = u16::try_from(app.prompt_queue.len()).unwrap_or(u16::MAX);
@@ -115,7 +115,8 @@ pub fn live_rows(app: &App, width: u16, screen_h: u16) -> (u16, u16) {
         .min(crate::term::max_composer_rows(screen_h));
     let status = u16::from(app.is_running());
     let queue = u16::try_from(app.prompt_queue.len()).unwrap_or(u16::MAX);
-    let stream = u16::try_from(streaming_cell(app, width).len()).unwrap_or(u16::MAX);
+    let stream =
+        u16::try_from(streaming_cell(app, width, screen_h, composer).len()).unwrap_or(u16::MAX);
     let non_tail = status
         .saturating_add(queue)
         .saturating_add(stream)
@@ -124,9 +125,23 @@ pub fn live_rows(app: &App, width: u16, screen_h: u16) -> (u16, u16) {
     (composer, non_tail)
 }
 
-/// The live streaming cell's rendered rows (empty when not streaming).
-fn streaming_cell(app: &App, width: u16) -> Vec<Line<'static>> {
-    blocks::render_streaming(app.streaming.as_deref().unwrap_or(""), width)
+/// The live streaming cell's rendered rows (empty when not streaming), capped to
+/// the height available in the live region — the screen minus everything pinned
+/// below the cell (status + queue + composer + footer). The finalized tail above
+/// takes what's left and commits its overflow to native scrollback, so a long
+/// stream fills the screen showing its latest lines instead of a tiny window.
+fn streaming_cell(app: &App, width: u16, screen_h: u16, composer_rows: u16) -> Vec<Line<'static>> {
+    let Some(buffer) = app.streaming.as_deref() else {
+        return Vec::new();
+    };
+    let status = u16::from(app.is_running());
+    let queue = u16::try_from(app.prompt_queue.len()).unwrap_or(u16::MAX);
+    let below = status
+        .saturating_add(queue)
+        .saturating_add(composer_rows)
+        .saturating_add(FOOTER_ROWS);
+    let max_rows = usize::from(screen_h.saturating_sub(below));
+    blocks::render_streaming(buffer, width, max_rows)
 }
 
 /// Dim `queued: …` previews for prompts waiting to run.
@@ -499,6 +514,46 @@ mod tests {
         assert!(
             text.contains('●'),
             "bulleted like an assistant message: {text}"
+        );
+    }
+
+    #[test]
+    fn streaming_cell_fills_available_height_not_a_fixed_window() {
+        // Regression: the live cell used to hard-cap at 12 rows regardless of
+        // terminal height, so a long turn looked "cut" on a tall screen. It now
+        // scales with the available live-region height and always shows the tail.
+        let mut app = App::new();
+        app.run = RunState::Running {
+            started: Instant::now(),
+            cancelling: false,
+        };
+        app.streaming = Some(
+            (0..30)
+                .map(|i| format!("- line{i}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        let tall = streaming_cell(&app, 60, 40, 3);
+        let short = streaming_cell(&app, 60, 10, 3);
+        assert!(
+            tall.len() > 12,
+            "a tall terminal shows more than the old fixed 12 rows: {}",
+            tall.len()
+        );
+        assert!(
+            short.len() < tall.len(),
+            "shorter screen → fewer visible rows: {} vs {}",
+            short.len(),
+            tall.len()
+        );
+        // Both always show the latest content (the tail), not the head.
+        assert!(
+            tall.last().unwrap().to_string().contains("line29"),
+            "tall shows the tail"
+        );
+        assert!(
+            short.last().unwrap().to_string().contains("line29"),
+            "short shows the tail"
         );
     }
 }

@@ -244,27 +244,27 @@ fn wrap_plain(text: &str, width: usize) -> Vec<String> {
     out
 }
 
-/// Rows a live streaming cell shows at most, so a long in-progress turn scrolls
-/// within the pinned live region instead of shoving the transcript into
-/// scrollback prematurely.
-const STREAM_MAX_ROWS: usize = 12;
-
 /// Render the in-progress streaming buffer as a live cell (ADR-0021): a leading
 /// `●` bullet and the **incrementally rendered markdown** of the assistant text
 /// — re-rendered each paint via the *same* [`crate::ui::markdown::render`]
 /// `Block::AssistantText` uses (pure over `(text, width)`), so finalize is a
-/// seamless swap (slice 3, unblocking markdown study Phase 4). Capped to the last
-/// `STREAM_MAX_ROWS` rows so a long turn scrolls within the live region; an empty
-/// buffer renders nothing.
+/// seamless swap (slice 3, unblocking markdown study Phase 4).
+///
+/// Shows the **last `max_rows`** rendered rows — the caller passes the live
+/// region's available height so a long in-progress turn fills the screen showing
+/// its latest lines (its head scrolls off above), rather than a tiny fixed
+/// window. An empty buffer or `max_rows == 0` renders nothing. (Committing the
+/// stable prefix to native scrollback mid-stream — so the head stays
+/// scrollable — is codex's model, still deferred.)
 #[must_use]
-pub fn render_streaming(buffer: &str, width: u16) -> Vec<Line<'static>> {
-    if buffer.is_empty() {
+pub fn render_streaming(buffer: &str, width: u16, max_rows: usize) -> Vec<Line<'static>> {
+    if buffer.is_empty() || max_rows == 0 {
         return Vec::new();
     }
     let inner = usize::from(width.saturating_sub(2 * MARGIN));
     let content_width = inner.saturating_sub(GUTTER).max(4);
     let rendered = crate::ui::markdown::render(buffer, content_width);
-    let start = rendered.len().saturating_sub(STREAM_MAX_ROWS);
+    let start = rendered.len().saturating_sub(max_rows);
     rendered[start..]
         .iter()
         .enumerate()
@@ -472,19 +472,21 @@ mod tests {
 
     #[test]
     fn render_streaming_empty_is_no_rows() {
-        assert!(render_streaming("", 40).is_empty());
+        assert!(render_streaming("", 40, 20).is_empty());
+        // max_rows == 0 (a too-short screen) also renders nothing.
+        assert!(render_streaming("something", 40, 0).is_empty());
     }
 
     #[test]
     fn render_streaming_has_bullet_then_hanging_indent() {
-        let lines = text_of(&render_streaming("first line here", 40));
+        let lines = text_of(&render_streaming("first line here", 40, 20));
         // 2-col margin + `● ` bullet on the first row (text at col 4), like AssistantText.
         assert!(lines[0].starts_with("  ● first"), "{lines:?}");
     }
 
     #[test]
     fn render_streaming_wraps_to_width() {
-        let lines = render_streaming("one two three four five six seven", 18);
+        let lines = render_streaming("one two three four five six seven", 18, 20);
         assert!(lines.len() > 1, "should wrap");
         assert!(
             text_of(&lines).iter().all(|l| l.chars().count() <= 18),
@@ -495,13 +497,13 @@ mod tests {
 
     #[test]
     fn render_streaming_caps_to_max_rows_and_scrolls_the_tail() {
-        // A markdown list → one rendered line per item; capped to the tail.
+        // A markdown list → one rendered line per item; capped to `max_rows`, tail.
         let buffer = (0..40)
             .map(|i| format!("- item{i}"))
             .collect::<Vec<_>>()
             .join("\n");
-        let lines = text_of(&render_streaming(&buffer, 40));
-        assert_eq!(lines.len(), STREAM_MAX_ROWS, "capped");
+        let lines = text_of(&render_streaming(&buffer, 40, 8));
+        assert_eq!(lines.len(), 8, "capped to max_rows");
         // Scrolled past the top → no leading assistant bullet.
         assert!(
             !lines[0].contains('●'),
@@ -512,12 +514,20 @@ mod tests {
             lines.last().unwrap().contains("item39"),
             "tail shown: {lines:?}"
         );
+        // A generous cap shows everything (no truncation) with the bullet.
+        let full = text_of(&render_streaming(&buffer, 40, 100));
+        assert_eq!(full.len(), 40, "no cap → all rows");
+        assert!(
+            full[0].contains('●'),
+            "bullet on the true first row: {:?}",
+            full[0]
+        );
     }
 
     #[test]
     fn render_streaming_applies_markdown_formatting() {
         // A bold span proves the live cell renders markdown (not plain text).
-        let lines = render_streaming("this is **bold** now", 40);
+        let lines = render_streaming("this is **bold** now", 40, 20);
         let has_bold = lines
             .iter()
             .flat_map(|l| &l.spans)
