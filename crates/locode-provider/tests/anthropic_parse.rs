@@ -8,7 +8,12 @@ use locode_provider::anthropic::{ModelConfig, build_request, response_to_complet
 use locode_provider::{CacheHint, ConversationRequest, ProviderError, SamplingArgs, StopReason};
 
 fn fixture(name: &str) -> wire::MessagesResponse {
-    let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
+    // Prefer the runtime env var over the compile-time `env!` macro: some build
+    // systems (e.g. Bazel) compile and run tests in different sandbox paths, so
+    // the value baked in at compile time can be stale by the time the test runs.
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
+        .unwrap_or_else(|_| env!("CARGO_MANIFEST_DIR").to_string());
+    let path = format!("{manifest_dir}/tests/fixtures/{name}");
     let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"));
     serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {path}: {e}"))
 }
