@@ -144,7 +144,12 @@ the platform CLI (`gh` or equivalent); do not ask the user to push or click.
 - **Open a PR** with a real title and body describing what and why, then
   immediately arm auto-merge: `gh pr merge --auto --squash --delete-branch`.
   GitHub merges on green — no watcher process needed; a red check simply never
-  merges.
+  merges. **Because a red check never merges,** run the full four-part gate above
+  locally first — and if you *do* watch a PR (e.g. an autonomous serialize-then-wait
+  loop), the waiter must exit on **CI-failure** too (`statusCheckRollup`
+  conclusion `FAILURE`/`CANCELLED`/`TIMED_OUT`), never poll only for `MERGED` — a
+  merged-only waiter loops forever on red and looks "stuck". Never report a PR as
+  "on track / auto-merge armed" without confirming its checks aren't already red.
 - **Tidy local branches after merging.** Deleting the branch (above) removes only
   the *remote* one; the local branch lingers, and since we **squash**-merge it
   isn't an ancestor of `main`, so `git branch -d` refuses it. Prune stale tracking
@@ -159,19 +164,29 @@ the platform CLI (`gh` or equivalent); do not ask the user to push or click.
   `Co-Authored-By:` trailer for the model that wrote it) — do not hardcode another
   harness's attribution.
 
-## Quality bar (the mandatory triangle)
+## Quality bar (the mandatory gate)
 
-Every change must pass, before merge (see [`docs/decisions/ADR-0010`](docs/decisions/ADR-0010-rust-tooling-baseline.md)):
+Every change must pass, before merge (see [`docs/decisions/ADR-0010`](docs/decisions/ADR-0010-rust-tooling-baseline.md)).
+These **four** commands are exactly the branch-protection required check
+(`fmt · clippy · test · doc`) — run **all four locally before every push/PR**, not
+just the first three:
 
 ```sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps   # NOT optional — CI runs it
 cargo test --workspace
 ```
 
+The `doc` step is easy to forget and catches **broken intra-doc links** (a public
+item linking `[`Foo::bar`]` from a module where `Foo` isn't in scope needs a fully
+qualified path — `crate::…` / `locode_provider::…` / `Self::…`; a public doc
+linking a private item needs a plain `` `code` `` span, not a `[link]`). Skipping
+it red-CI'd a PR and stalled a whole task once — don't repeat that.
+
 Prefer scoping to a crate while iterating (`-p <crate>`); run the full workspace
-before merge. See `SPEC.md` → Commands for the full list (and `just check` once the
-`justfile` lands).
+(all four) before merge. See `SPEC.md` → Commands for the full list (and `just check`
+once the `justfile` lands).
 
 ## Boundaries
 
