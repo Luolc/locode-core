@@ -139,18 +139,23 @@ history / headless trace are **byte-identical** to today. Proves the whole
 
 - Add variant (`lib.rs`, ~after `Message` at :400), wire tag `message_delta`:
   ```rust
-  MessageDelta { delta: MessageDeltaBody },   // { text?: String, thinking?: String }  (tool parts omitted from the trace)
+  MessageDelta { text: String },   // one assistant-text fragment; display-only
   ```
-  Keep the body minimal — **text** (and optionally **thinking**, though the UI
-  ignores it) — since deltas are display-only and never reconstructed.
+  **Text-only body** (user decision, 2026-07-23): the UI ignores thinking (Q4)
+  and the trace is whole-message (Q1), so nothing consumes a thinking chunk in
+  slice 1 — thinking correctness lives in the finalized `Message`, not the delta.
+  A `thinking` field can be added later (behind `#[non_exhaustive]` evolution) if
+  we want a reasoning-driven spinner. (Name kept as `MessageDelta` — the user is
+  fine with "delta" for the type/event; only the engine flag is renamed, below.)
 - Add the ignore arm to `reconstruct_conversation` (`lib.rs:436-440`):
   `Event::MessageDelta { .. } => {}` — deltas are **not** history (the whole
   `Message` is still appended), so reconstruction must skip them (no double-count).
 
 ### 1e. `locode-engine` — forward deltas, loop otherwise unchanged
 
-- **Decision (flag, not blanket-swap):** add `EngineConfig.stream_deltas: bool`
-  (default **false**). The sample step (`run.rs:301-308`) becomes:
+- **Decision — an `EngineConfig.streaming` flag** (user decision, 2026-07-23;
+  renamed from the draft's `stream_deltas` — the flag is "use SSE transport",
+  not merely "emit deltas"). Default **false**. The sample step (`run.rs:301-308`):
   ```rust
   let cancel = self.cancel.clone();
   let provider = Arc::clone(&self.provider);   // clone Arc so on_delta can borrow &mut self.sink
@@ -158,8 +163,8 @@ history / headless trace are **byte-identical** to today. Proves the whole
       biased;
       () = cancel.cancelled() => return Err(SampleError::Cancelled),
       result = async {
-          if self.stream_deltas {
-              let mut on_delta = |d: CompletionDelta| { /* map → Event::MessageDelta */ self.sink.emit(..) };
+          if self.streaming {
+              let mut on_delta = |d: CompletionDelta| { /* map → Event::MessageDelta { text } */ self.sink.emit(..) };
               provider.stream(&request, &mut on_delta).await
           } else {
               provider.complete(&request).await
@@ -167,13 +172,16 @@ history / headless trace are **byte-identical** to today. Proves the whole
       } => result,
   };
   ```
-  *Why the flag:* it keeps the **headless `-p` path byte-for-byte unchanged**
-  (it stays on `complete`, no SSE, satisfying Q1 trivially) and lets the TUI opt
-  in. This is a small, ADR-consistent refinement of ADR-0021 §3's "call `stream`
-  instead of `complete`" — worth a one-line ADR note when it lands. *(Alternative
-  considered: always call `stream` + have the headless `stream-json` writer drop
-  `MessageDelta`. Rejected: it puts SSE on the `-p` transport path and changes its
-  failure modes for the A/B researchers, for no gain.)*
+  *Why default-off + opt-in:* headless `-p` defaults to **non-streaming**
+  (byte-for-byte unchanged) and the **TUI sets `streaming = true`**. But headless
+  can **opt in via a `--stream` CLI flag** — because **Anthropic rejects
+  non-streaming requests that may exceed ~10 min** (large `max_tokens`), so
+  *streaming is required for unlimited output*, not just live UI (user's rationale;
+  our `http.rs` already carries a 10-min budget). **Q1 is preserved even when
+  headless streams:** the `stream-json` writer **drops `Event::MessageDelta`** so
+  the trace stays whole-message (see 1g). This is a small, ADR-consistent
+  refinement of ADR-0021 §3 ("call `stream` instead of `complete`") — record a
+  one-line ADR-0021 note (`streaming` flag + `--stream`) when Slice 1 lands.
 - **Cancellation (Q2):** unchanged — a cancel drops the `stream` future mid-SSE,
   which aborts the HTTP read (`run.rs:291-296` comment) and returns
   `SampleError::Cancelled` → `Status::Cancelled`. The whole `Message` is only
@@ -190,8 +198,8 @@ history / headless trace are **byte-identical** to today. Proves the whole
 - **App state** (`app.rs:103-148`): add `pub streaming: Option<String>` (the live
   buffer for the in-progress assistant turn).
 - **`on_event`** (`app.rs:300-342`): new arm
-  `Event::MessageDelta { delta } => { self.streaming.get_or_insert_default().push_str(&delta.text) }`
-  (ignore `thinking` per Q4). Set `dirty`.
+  `Event::MessageDelta { text } => { self.streaming.get_or_insert_default().push_str(&text) }`.
+  Set `dirty`.
 - **Finalize:** the existing `Event::Message` / `Role::Assistant` / `Text` arm
   (`app.rs:307-309`) clears `self.streaming = None` (the full `Text` block arrives
   and becomes the `AssistantText` outbox block — visually seamless). Also clear
@@ -208,8 +216,19 @@ history / headless trace are **byte-identical** to today. Proves the whole
   (scroll to the tail) so a long turn doesn't push transcript into scrollback.
 - **No changes** to the engine channel/`FnSink`, `route_engine`, the batched drain,
   `flush_outbox`, or `paint`'s scrollback logic (Agent C).
-- **Turn on streaming:** `locode-tui/src/engine.rs` sets `stream_deltas: true` in
-  the `EngineConfig` it builds (`engine.rs:157-168`).
+- **Turn on streaming:** `locode-tui/src/engine.rs` sets `streaming: true` in the
+  `EngineConfig` it builds (`engine.rs:157-168`).
+
+### 1g. `locode-exec` — headless `--stream` flag + whole-message trace (Q1)
+
+- Add a **`--stream`** CLI flag (`cli.rs`) that sets `EngineConfig.streaming =
+  true`; default off. Motivation: Anthropic's non-streaming ceiling (1e) — a
+  headless run needing unbounded output opts in.
+- **Keep the trace whole-message (Q1):** the `stream-json` writer
+  (`locode-exec/src/output.rs`) adds `Event::MessageDelta { .. } => {}` (skip) so
+  token chunks never enter the JSONL trace, even when `--stream` is on. The single
+  `json` report path already ignores events. So `--stream` changes *transport*,
+  not the trace shape — the assembled `Report`/history stay byte-identical.
 
 ### Slice 1 test matrix
 
@@ -221,8 +240,9 @@ history / headless trace are **byte-identical** to today. Proves the whole
 | wire | SSE delta sequence | `on_delta` receives the expected `Text`/`ToolUseStart`/`ToolArgs`/`Thinking` sequence; tool args never parsed mid-stream |
 | wire | mid-stream transport error | reuses `ProviderError` taxonomy + bounded retry; terminal vs retryable classified as non-streaming |
 | protocol | `MessageDelta` round-trip | JSONL serialize/deserialize; `reconstruct_conversation` ignores it (history == non-streaming) |
-| engine | `stream_deltas=true` run | deltas emitted as `Event::MessageDelta` **and** the whole `Event::Message` still appended; report identical |
-| engine | `stream_deltas=false` (headless) | **no** `MessageDelta` emitted; path identical to today |
+| engine | `streaming=true` run | deltas emitted as `Event::MessageDelta { text }` **and** the whole `Event::Message` still appended; report identical to `streaming=false` |
+| engine | `streaming=false` (default) | `complete()` path; no `MessageDelta`; identical to today |
+| headless | `--stream` (streaming=true) | SSE transport used, but the `stream-json` **trace stays whole-message** — `MessageDelta` dropped by the writer (Q1); `Report` byte-identical |
 | engine | cancel mid-stream | future dropped → `Status::Cancelled`; no assistant `Message` appended (partial discarded) |
 | TUI (reducer) | feed `MessageDelta`s then `Message` | live buffer accumulates, then clears; final `AssistantText` block present; matches existing `Event::Message` test template (`app.rs:905`) |
 | TUI (reducer) | cancel/`RunFinished` mid-stream | `streaming` buffer cleared; no stray block |
@@ -308,15 +328,16 @@ changes; this is TUI-only.
   **in-progress last line as a mutable tail**. Re-use `crate::ui::markdown::render`
   (`markdown.rs:23`, pure over `(text, width)`) — re-render the growing buffer each
   paint.
-- **Provable invariant:** the streamed final frame == the finalized
+- **Provable invariant:** the last streamed **render** == the finalized
   `AssistantText` render for the same text (so finalize is a no-op visual swap).
+  ("Render" = one rendered TUI paint — not an HTTP/SSE frame.)
 - **Deferred (not this slice):** codex's 120 Hz line-reveal "typing animation" and
   the ~16 ms partial-line flush timer (Q3) — add only if long lines feel laggy.
 
 ### Slice 3 test matrix
 
-- "streamed frame == final frame": feed a markdown doc as deltas, assert the last
-  streamed render equals `Block::AssistantText(doc).render(width)`.
+- "streamed render == final render": feed a markdown doc as deltas, assert the
+  last streamed render equals `Block::AssistantText(doc).render(width)`.
 - Newline-gated re-parse: an unbalanced fence / half-table mid-stream doesn't
   panic or flash a broken render (stable prefix only).
 - Wide content (tables/code) inside the live cell wraps/gates correctly.
@@ -331,26 +352,43 @@ changes; this is TUI-only.
 # Cross-cutting
 
 - **Quality gate** each slice: `cargo fmt --all --check`, `cargo clippy --workspace
-  --all-targets -D warnings`, `cargo test --workspace`. Wire slices add golden SSE
-  fixtures (as the non-streaming wires did).
+  --all-targets -D warnings`, `cargo test --workspace`.
+- **Testing philosophy — strict and thorough** (user preference, 2026-07-23):
+  prefer over-strict assertions. Wire slices add **golden SSE fixtures** asserting
+  the assembled `Completion` is **byte-identical** to the non-streaming path
+  (content order, tool id/name/input, thinking + signature, usage, stop), plus
+  exact delta-sequence assertions and every error/cancel/truncation path.
+- **Live smoke tests** (user-authorized, 2026-07-23): the wire slices run real
+  smoke tests against **Anthropic Messages** and **OpenAI Responses** via the
+  OpenRouter key in `.envrc.local` (gitignored) — set
+  `LOCODE_API_KEY=$OPENROUTER_API_KEY` + `LOCODE_BASE_URL` at OpenRouter (the wires
+  read `LOCODE_*`; `config.rs:187-193`, `openai/mod.rs:136-142`). These are
+  ignored-by-default / opt-in tests (no key in CI), like a live-network tier.
 - **Public-surface changes** (ask-first, already ADR-approved): `Provider::stream`
   + `CompletionDelta` (`locode-provider`), `Event::MessageDelta` (`locode-protocol`),
-  `EngineConfig.stream_deltas` (`locode-engine`), facade re-exports for the new
-  types. Each rides its own PR.
+  `EngineConfig.streaming` (`locode-engine`), a `--stream` CLI flag
+  (`locode-exec`), facade re-exports for the new types. Each rides its own PR.
 - **ADR note:** when Slice 1 lands, add a one-line ADR-0021 amendment recording the
-  `stream_deltas` flag refinement (engine chooses `stream` vs `complete`) so the
-  ADR stays authoritative.
+  `streaming` flag + headless `--stream` refinement (engine chooses `stream` vs
+  `complete`; headless can opt in for Anthropic's non-streaming output ceiling)
+  so the ADR stays authoritative.
 - **Ordering:** Slice 1 → 2 → 3, each independently shippable. Slice 1 is the only
   one that touches the core public surface end-to-end; 2 is wire-local; 3 is TUI-local.
 - **Stays deferred** (per ADR-0021): `--include-deltas` trace flag, inline/transcript
   thinking UI, the 120 Hz typing animation, the long-line flush timer.
 
-## Open implementation decisions (flagged for the slice PRs)
+## Resolved decisions (user review, 2026-07-23)
 
-1. **`stream_deltas` flag vs blanket `stream`** (1e) — recommended: the flag (keeps
-   `-p` unchanged). Confirm at Slice 1.
-2. **`MessageDelta` body** (1d) — text-only, or text+thinking? Recommended text-only
-   (UI ignores thinking); thinking correctness is handled in the finalized `Message`,
-   not the delta.
-3. **Mock streaming granularity** (1c) — per-word vs per-line chunking for the test
-   mock. Cosmetic; per-word exercises coalescing harder.
+1. **Flag** (1e) — ✅ an `EngineConfig.streaming` flag (renamed from `stream_deltas`),
+   default off; headless stays non-streaming but opts in via **`--stream`** (Anthropic
+   non-streaming output ceiling). Blanket-swap rejected.
+2. **`MessageDelta` body** (1d) — ✅ **text-only** `{ text: String }`.
+3. **Type/event naming** — ✅ keep `CompletionDelta` / `Event::MessageDelta` ("delta"
+   is fine); only the engine flag was renamed. "Frame" wording → "render".
+4. **Testing** — ✅ strict/thorough golden byte-identical fixtures + opt-in live smoke
+   tests via the OpenRouter key.
+
+## Still-open (minor, for the slice PRs)
+
+- **Mock streaming granularity** (1c) — per-word vs per-line chunking for the test
+  mock. Cosmetic; per-word exercises coalescing harder.
