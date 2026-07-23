@@ -195,12 +195,12 @@ linking a private item needs a plain `` `code` `` span, not a `[link]`). Skippin
 it red-CI'd a PR and stalled a whole task once — don't repeat that.
 
 Prefer scoping to a crate while iterating (`-p <crate>`); run the full workspace
-(all four) before merge. See `SPEC.md` → Commands for the full list (and `just check`
-once the `justfile` lands).
+(all four) before merge. The canonical shortcut is `just check` (`fmt-check ·
+clippy · test · doc`); `SPEC.md` → Commands lists the raw commands.
 
 ## Boundaries
 
-- **Always:** run the mandatory triangle before merge; derive tool schemas from
+- **Always:** run the mandatory four-part gate (`fmt · clippy · test · doc`) before merge; derive tool schemas from
   types; keep stdout to exactly one JSON report in the binary; guarantee transcript
   validity (every `tool_use` → one `tool_result`).
 - **Ask first:** adding a dependency; changing the report envelope `schema_version`
