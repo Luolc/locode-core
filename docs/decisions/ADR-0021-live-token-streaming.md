@@ -304,3 +304,34 @@ Done on acceptance (2026-07-22):
 
 The `SPEC.md` ADR index table is separately stale (missing ADR-0015–0022); a
 broader index refresh is out of scope for this ADR and left as doc hygiene.
+
+## Amendment (2026-07-22): implementation refinements as Task 29 shipped
+
+Recorded as the three slices landed (#117–#122); the accepted design held, with
+these refinements to §Decision:
+
+- **§3 engine — a `streaming` flag, not a blanket swap.** The sample step does not
+  unconditionally call `stream`; it branches on **`EngineConfig.streaming`**
+  (default `false`) — `stream` when set, else `complete`. The interactive TUI sets
+  it; the headless one-shot stays non-streaming by default and opts in via a new
+  **`--stream`** CLI flag. *Why:* Anthropic rejects non-streaming requests that may
+  exceed ~10 min, so streaming is required for **unbounded output**, not just live
+  UI — but forcing SSE on every `-p` run would change its transport/failure modes
+  for no gain. Q1 is preserved even under `--stream`: the `stream-json` writer
+  **drops `Event::MessageDelta`** (`in_whole_message_trace`), so the trace stays
+  whole-message.
+- **Event body is text-only.** `Event::MessageDelta { text: String }` — the UI
+  ignores thinking (Q4) and the trace is whole-message (Q1), so no thinking/tool
+  fields are carried on the delta. (`CompletionDelta` keeps the full
+  text/thinking/tool-start/tool-args channels at the provider layer.)
+- **Byte-identical via reuse, not re-implementation.** Both wires assemble the SSE
+  back into their *whole* wire response and call the existing
+  `response_to_completion` — Anthropic folds `content_block` events into a
+  `MessagesResponse`; Responses captures the whole response object off the terminal
+  event. Verified by golden tests **and** live smoke against both wires (OpenRouter).
+- **Two deps added (user-approved):** the `reqwest` `stream` feature +
+  `tokio-stream` (`StreamExt::next`) to consume `bytes_stream`; SSE is framed by
+  hand (no eventsource dep).
+- **Slice 1's cell shipped plain-text; Slice 3 made it markdown.** Whole-buffer
+  markdown re-render each paint (the newline-gate/holdback for incomplete-block
+  flicker and the 120 Hz typing animation stay deferred).
