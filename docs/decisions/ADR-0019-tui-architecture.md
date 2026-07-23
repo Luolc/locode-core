@@ -155,24 +155,34 @@ and codex (AGENTS.md "planning is a research task"):
   on the block and would break `Block: PartialEq` determinism) — deferred.
   Implemented in `ui/blocks.rs` (`render_user_prompt`).
 
-- **Footer clock**: the bottom status row right-aligns the current local date +
-  `HH:MM` (grok/codex both surface a wall clock). Uses `chrono::Local`, which
-  honors the `TZ` env var and `/etc/localtime`, so `TZ=America/Los_Angeles
-  locode` (or a shell that exports `TZ`) sets the zone — no in-app timezone
-  config, matching a zsh status bar (user's mental model, their server and
-  workstation differ in zone). **No timezone label**: `Local`'s `%Z` can only
-  print the numeric offset (`-07:00`, not `PDT`) because chrono has no zone
-  abbreviation; a real `PST/PDT` label would need a tz-database dep, deferred as
-  ask-first (user preferred dropping it, 2026-07-22). **Minute precision** (not
-  seconds) because the loop has zero idle repaints (`event_loop`: animation ticks
-  only while a run is active) — the clock refreshes on the next paint, like a
-  shell prompt, and a seconds display would look frozen between keystrokes. When
-  the row is too narrow to fit both status and clock, the clock is dropped.
+- **Footer status bar: two rows, a component pinned in each corner** (user
+  layout, 2026-07-22) — cwd top-left, clock+time top-right, model bottom-left,
+  session tokens bottom-right. Replaces the earlier single-row `cwd · model · N
+  tok  …  clock`; the ` · ` separators are gone (each corner stands alone). The
+  frame footer is now `FOOTER_ROWS = 2` (grep: `live_rows`/`draw`). The tokens
+  corner is **always shown** (a fresh 0-token session renders `0 tokens`) so the
+  corner never looks empty. A pending armed-key hint replaces the cwd corner.
 
-- **Footer component colors** (user scheme, 2026-07-22): the left status
-  components render **bold**, each in its own terminal-relative (ANSI-named,
-  theme-following) color — cwd `LightBlue`, model `Gray`, tokens `Red`
-  ("Cayenne"), clock `Gray`; the ` · ` separators stay **dim and un-bold** (the
-  same lighter gray as dimmed output) so the colored components read as the
-  foreground. Exact-RGB pinning is deferred to the future color-theme system.
-  Implemented in `ui.rs` (`footer_left` / `footer_clock` / `compose_footer`).
+- **Footer clock**: the top-right corner shows the current local date + `HH:MM`
+  behind a Nerd Font clock icon (`nf-fa-clock_o`, `\u{f017}`). Uses
+  `chrono::Local`, which honors the `TZ` env var and `/etc/localtime`, so
+  `TZ=America/Los_Angeles locode` (or a shell that exports `TZ`) sets the zone —
+  no in-app timezone config, matching a zsh status bar (user's mental model,
+  their server and workstation differ in zone). **No timezone label**: `Local`'s
+  `%Z` can only print the numeric offset (`-07:00`, not `PDT`) because chrono has
+  no zone abbreviation; a real `PST/PDT` label would need a tz-database dep,
+  deferred as ask-first (user preferred dropping it, 2026-07-22). **Minute
+  precision** (not seconds) because the loop has zero idle repaints (`event_loop`:
+  animation ticks only while a run is active) — the clock refreshes on the next
+  paint, like a shell prompt, and a seconds display would look frozen between
+  keystrokes. When the row is too narrow to fit both corners, the right one is
+  dropped.
+
+- **Footer component colors** (user scheme, sourced from the user's
+  `ccstatusline` config `~/.config/ccstatusline/settings.json`, 2026-07-22):
+  each corner is **bold** in its own terminal-relative (ANSI-named,
+  theme-following) color — cwd `LightBlue` (matches the config's
+  `current-working-dir: brightBlue`), model `Gray`, tokens `Red` ("Cayenne");
+  the clock/time is **dim** (the same lighter gray the old separators used) and
+  not bold. Exact-RGB pinning is deferred to the future color-theme system.
+  Implemented in `ui.rs` (`footer_lines` / `footer_row` / `footer_clock`).
