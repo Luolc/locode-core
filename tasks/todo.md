@@ -705,10 +705,18 @@ in [ADR-0021](../docs/decisions/ADR-0021-live-token-streaming.md); three slices:
 - [x] **Slice 2** — OpenAI-Responses SSE (`response.*.delta`): assemble from the
   terminal event's whole response → reuse `response_to_completion` (byte-identical);
   live-smoke-verified vs OpenRouter Responses (this PR).
-- [ ] **Slice 3** — codex-style incremental-markdown re-parse in the streaming
-  cell (unblocks markdown study **Phase 4**).
+- [x] **Slice 3** — incremental markdown in the live cell: re-render the growing
+  buffer via the same `markdown::render` as `AssistantText` each paint (this PR),
+  so streamed prose gets lists/bold/code live and finalize is a seamless swap.
+  Unblocks markdown study **Phase 4**.
 - Deferred within streaming: `--include-deltas` trace flag, inline/transcript
-  thinking UI, the 120 Hz typing animation, the long-line flush timer.
+  thinking UI, the 120 Hz typing animation, the long-line flush timer, and the
+  newline-gate/holdback to suppress incomplete-block flicker (whole-buffer render
+  for v1).
+
+**Task 29 complete** (2026-07-22): live token streaming ships end-to-end — both
+wires (Anthropic + Responses, live-verified), TUI live cell with markdown, headless
+`--stream`, whole-message trace preserved.
 
 ## Deferred (reserved seams, not scheduled)
 parallel tool batches (RwLock read/write) · compaction · OS sandbox · MCP ·
