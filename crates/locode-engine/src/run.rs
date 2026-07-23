@@ -1,7 +1,7 @@
 //! The sample → dispatch → append → re-sample loop (ADR-0005, ADR-0004, ADR-0014).
 
 use locode_protocol::{ContentBlock, Event, Message, Report, ResultChunk, Role, ToolCallRecord};
-use locode_provider::{Completion, ConversationRequest, ProviderError};
+use locode_provider::{Completion, CompletionDelta, ConversationRequest, ProviderError};
 use locode_tools::{ToolCtx, ToolKind};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
@@ -299,12 +299,33 @@ impl Session {
         request: ConversationRequest,
     ) -> Result<Completion, SampleError> {
         let cancel = self.cancel.clone();
+        let streaming = self.config.streaming;
+        let provider = std::sync::Arc::clone(&self.provider);
         let mut attempt: u32 = 0;
         loop {
-            let result = tokio::select! {
-                biased;
-                () = cancel.cancelled() => return Err(SampleError::Cancelled),
-                result = self.provider.complete(&request) => result,
+            // Scope the `&mut self.sink` borrow (via `on_delta`) to just the
+            // sample await, so the retry arm below can emit on `self.sink` again.
+            let result = {
+                let sink = &mut self.sink;
+                let mut on_delta = |delta: CompletionDelta| {
+                    // Slice 1: forward only assistant-text fragments (the UI shows
+                    // no thinking, and tool blocks are assembled from the returned
+                    // whole `Completion`). `Event::MessageDelta` is display-only.
+                    if let CompletionDelta::Text(text) = delta {
+                        sink.emit(Event::MessageDelta { text });
+                    }
+                };
+                tokio::select! {
+                    biased;
+                    () = cancel.cancelled() => return Err(SampleError::Cancelled),
+                    result = async {
+                        if streaming {
+                            provider.stream(&request, &mut on_delta).await
+                        } else {
+                            provider.complete(&request).await
+                        }
+                    } => result,
+                }
             };
             match result {
                 Ok(completion) => return Ok(completion),

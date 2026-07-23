@@ -168,6 +168,96 @@ mod tests {
         assert!(matches!(evs.last(), Some(Event::Result { .. })));
     }
 
+    // ---- streaming (ADR-0021 slice 1) ----
+
+    #[tokio::test]
+    async fn streaming_run_emits_text_deltas_and_the_whole_message() {
+        let mut cfg = config();
+        cfg.streaming = true;
+        let (mut s, events) = session_with(
+            vec![Ok(text_turn("hello streamed world"))],
+            Registry::new(),
+            cfg,
+        );
+        let report = s.run_text("hi").await;
+        assert_eq!(report.status, Status::Completed);
+        assert_eq!(
+            report.final_message.as_deref(),
+            Some("hello streamed world")
+        );
+
+        let evs = dump(&events);
+        // The deltas concatenate exactly to the finalized assistant text...
+        let delta_text: String = evs
+            .iter()
+            .filter_map(|e| match e {
+                Event::MessageDelta { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(delta_text, "hello streamed world", "{evs:?}");
+        // ...and there was more than one (proving it actually streamed).
+        let n_deltas = evs
+            .iter()
+            .filter(|e| matches!(e, Event::MessageDelta { .. }))
+            .count();
+        assert!(n_deltas > 1, "expected multiple deltas, got {n_deltas}");
+        // The whole assistant Message is STILL appended — deltas don't replace it.
+        assert!(
+            evs.iter().any(|e| matches!(
+                e,
+                Event::Message { message } if message.role == Role::Assistant
+            )),
+            "whole assistant Message still emitted: {evs:?}"
+        );
+        // Deltas precede the finalized assistant Message in the stream.
+        let first_delta = evs
+            .iter()
+            .position(|e| matches!(e, Event::MessageDelta { .. }))
+            .expect("a delta");
+        let asst_msg = evs
+            .iter()
+            .position(
+                |e| matches!(e, Event::Message { message } if message.role == Role::Assistant),
+            )
+            .expect("assistant message");
+        assert!(
+            first_delta < asst_msg,
+            "deltas come before the whole message"
+        );
+    }
+
+    #[tokio::test]
+    async fn non_streaming_run_emits_no_deltas() {
+        let (mut s, events) =
+            session_with(vec![Ok(text_turn("no stream"))], Registry::new(), config());
+        let _ = s.run_text("hi").await;
+        let evs = dump(&events);
+        assert!(
+            !evs.iter().any(|e| matches!(e, Event::MessageDelta { .. })),
+            "default (non-streaming) run must not emit deltas: {evs:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn streaming_and_non_streaming_reports_match() {
+        let (mut a, _ea) = session_with(
+            vec![Ok(text_turn("same result"))],
+            Registry::new(),
+            config(),
+        );
+        let mut cfg = config();
+        cfg.streaming = true;
+        let (mut b, _eb) = session_with(vec![Ok(text_turn("same result"))], Registry::new(), cfg);
+        let ra = a.run_text("go").await;
+        let rb = b.run_text("go").await;
+        // Streaming is display-only: the Report is identical either way.
+        assert_eq!(ra.status, rb.status);
+        assert_eq!(ra.final_message, rb.final_message);
+        assert_eq!(ra.turns, rb.turns);
+        assert_eq!(ra.tool_calls.len(), rb.tool_calls.len());
+    }
+
     #[tokio::test]
     async fn tool_call_then_complete() {
         let (mut s, _e) = session_with(
