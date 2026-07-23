@@ -39,6 +39,20 @@ code blocks in the markdown renderer.
   it encodes colors as **ANSI palette indices** (bat's alpha-marker encoding),
   not hard RGB — so highlighted code **adapts to the user's terminal theme** and
   reads on both light and dark backgrounds. No per-user theme config at v1.
+  - **Amendment (2026-07-23): default theme → `Dracula` (fixed RGB).** The
+    ANSI-palette premise above did **not** hold: `base16-256`'s comment scope
+    (`base03`) resolves to a dim palette index that assumes the theme's *own*
+    background, so on a darker terminal comments collapsed into the background and
+    were unreadable (first-user report). A re-read of the two harnesses we model on
+    settled it — **neither uses an ANSI-palette default**: codex detects the
+    terminal background and defaults to **Catppuccin Mocha** (dark) / Latte (light)
+    — `tui/src/render/highlight.rs:184` — and grok ships fixed RGB themes
+    (**Tokyo Night**, comment `#565f89`) picked by an OSC-11 background query. Both
+    default to a **fixed RGB theme designed for a known background**. We adopt the
+    same shape with `Dracula` (bundled in two-face; readable comment `#6272a4`);
+    `convert_color` already renders RGB. This trades the (unrealized) light-terminal
+    adaptivity for guaranteed dark-background contrast; **auto-detecting light/dark
+    to pick a variant (codex/grok's move) is the clean follow-up.**
 - **Foreground only** — backgrounds omitted so the terminal background shows
   through; **italic and underline suppressed** (poor/again-terminal rendering,
   and some themes underline type scopes). These mirror codex's `convert_style`.
