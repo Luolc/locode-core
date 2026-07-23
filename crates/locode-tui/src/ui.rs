@@ -69,7 +69,7 @@ pub fn draw(
         Constraint::Length(status_height),
         Constraint::Length(queue_height),
         Constraint::Length(composer_rows),
-        Constraint::Length(1),
+        Constraint::Length(FOOTER_ROWS),
     ])
     .areas(frame.area());
 
@@ -82,7 +82,7 @@ pub fn draw(
     }
     app.composer.render(frame, composer_area);
     frame.render_widget(
-        Paragraph::new(footer_line(app, footer_area.width)),
+        Paragraph::new(footer_lines(app, footer_area.width)),
         footer_area,
     );
 }
@@ -108,7 +108,7 @@ pub fn live_rows(app: &App, width: u16, screen_h: u16) -> (u16, u16) {
     let non_tail = status
         .saturating_add(queue)
         .saturating_add(composer)
-        .saturating_add(1);
+        .saturating_add(FOOTER_ROWS);
     (composer, non_tail)
 }
 
@@ -175,58 +175,93 @@ fn status_line(app: &App) -> Line<'static> {
     )
 }
 
-/// A 2-col right margin for the footer clock, mirroring the transcript's left
-/// margin so the time doesn't hug the terminal edge.
+/// Footer height in rows: a 2-row status bar with a component in each corner
+/// (user layout, 2026-07-22).
+const FOOTER_ROWS: u16 = 2;
+
+/// 4-space left margin (aligns the status with the composer's input column,
+/// 2 margin + `❯ `) and a 2-col right margin so corners don't hug the edge.
+const FOOTER_LEFT_MARGIN: usize = 4;
 const FOOTER_RIGHT_MARGIN: usize = 2;
 
-/// The bottom status line: bold `cwd · model · N tok` when idle (user choice,
-/// 2026-07-22) on the left, replaced by the transient armed-key hint when one is
-/// active; the current local date+time is right-aligned on the same row (user
-/// request 2026-07-22). Git branch and cost/usage-with-cap are deferred (named
-/// extension points).
-fn footer_line(app: &App, width: u16) -> Line<'static> {
-    compose_footer(footer_left(app), &footer_clock(&Local::now()), width)
-}
+/// Clock glyph before the time (Nerd Font `nf-fa-clock_o`), in the same dim gray
+/// as the time. Requires a Nerd Font (the user's terminal has one).
+const CLOCK_ICON: &str = "\u{f017}";
 
-/// The left segment as styled spans: each component **bold** in its own
-/// terminal-relative color (user scheme, 2026-07-22) — cwd light blue, model
-/// gray, tokens red ("Cayenne"); the ` · ` separators stay dim and un-bold (the
-/// same lighter gray as dimmed output) so the colored components pop. A pending
-/// key-hint replaces the whole segment as one bold span.
-fn footer_left(app: &App) -> Vec<Span<'static>> {
+/// The bottom status bar: two rows, one component pinned in each corner (user
+/// layout, 2026-07-22) —
+/// ```text
+///     <cwd>                      <clock> <time>
+///     <model>                            <N tokens>
+/// ```
+/// cwd is bright blue (matches the user's `ccstatusline` `current-working-dir`
+/// color), model gray, tokens red ("Cayenne"), all **bold**; the time is dim
+/// (the same lighter gray as the old separators) with a clock icon. A pending
+/// armed-key hint replaces the cwd corner. Git branch and cost/usage-with-cap
+/// are deferred (named extension points).
+fn footer_lines(app: &App, width: u16) -> Vec<Line<'static>> {
     let bold = |color: Color| Style::default().fg(color).add_modifier(Modifier::BOLD);
-    if let Some(hint) = app.hint {
+    let dim = Style::default().add_modifier(Modifier::DIM);
+
+    // Row 1 left: armed hint (bold) or cwd (bright blue, bold).
+    let left1 = if let Some(hint) = app.hint {
         let text = match hint {
             Hint::QuitArmed => "press ctrl+c again to quit",
             Hint::ClearArmed => "press esc again to clear",
             Hint::Cancelling => "cancelling — esc again to retry",
         };
-        return vec![Span::styled(
+        Some(Span::styled(
             text,
             Style::default().add_modifier(Modifier::BOLD),
-        )];
-    }
-    let sep = || Span::styled(" · ", Style::default().add_modifier(Modifier::DIM));
-    let mut spans: Vec<Span<'static>> = Vec::new();
-    if let Some(cwd) = &app.cwd {
-        spans.push(Span::styled(cwd.clone(), bold(Color::LightBlue)));
-    }
-    if let Some(model) = &app.model {
-        if !spans.is_empty() {
-            spans.push(sep());
+        ))
+    } else {
+        app.cwd
+            .as_ref()
+            .map(|cwd| Span::styled(cwd.clone(), bold(Color::LightBlue)))
+    };
+    // Row 1 right: clock icon + local time, dim (same gray as the old separators).
+    let time = Span::styled(format!("{CLOCK_ICON} {}", footer_clock(&Local::now())), dim);
+
+    // Row 2 left: model (gray, bold).
+    let left2 = app
+        .model
+        .as_ref()
+        .map(|model| Span::styled(model.clone(), bold(Color::Gray)));
+    // Row 2 right: session tokens (red "Cayenne", bold) — always shown so the
+    // corner stays populated (a 0-token fresh session still shows `0 tok`).
+    let tokens = Span::styled(
+        format!("{} tokens", fmt_tokens(app.session_tokens)),
+        bold(Color::Red),
+    );
+
+    vec![
+        footer_row(left1, Some(time), width),
+        footer_row(left2, Some(tokens), width),
+    ]
+}
+
+/// Lay out one footer row: `left` pinned to the left margin, `right` pinned to
+/// the right margin, blank fill between. When the row is too narrow to fit both
+/// without touching, the right corner is dropped.
+fn footer_row(
+    left: Option<Span<'static>>,
+    right: Option<Span<'static>>,
+    width: u16,
+) -> Line<'static> {
+    let left_len = FOOTER_LEFT_MARGIN + left.as_ref().map_or(0, |s| s.content.chars().count());
+    let total = usize::from(width);
+
+    let mut spans = vec![Span::raw(" ".repeat(FOOTER_LEFT_MARGIN))];
+    spans.extend(left);
+    if let Some(right) = right {
+        let right_len = right.content.chars().count();
+        if total > left_len + right_len + FOOTER_RIGHT_MARGIN {
+            let pad = total - left_len - right_len - FOOTER_RIGHT_MARGIN;
+            spans.push(Span::raw(" ".repeat(pad)));
+            spans.push(right);
         }
-        spans.push(Span::styled(model.clone(), bold(Color::Gray)));
     }
-    if app.session_tokens > 0 {
-        if !spans.is_empty() {
-            spans.push(sep());
-        }
-        spans.push(Span::styled(
-            format!("{} tok", fmt_tokens(app.session_tokens)),
-            bold(Color::Red),
-        ));
-    }
-    spans
+    Line::from(spans)
 }
 
 /// Format a clock stamp for the footer: full local date + `HH:MM`, no timezone
@@ -243,33 +278,6 @@ where
     Tz::Offset: std::fmt::Display,
 {
     now.format("%Y-%m-%d %H:%M").to_string()
-}
-
-/// Lay out the footer: 4-space left margin + `left` spans, then the right-aligned
-/// bold gray `clock`. The 4-space margin aligns the status with the composer's
-/// input column (2 margin + `❯ `). When the row is too narrow to fit both without
-/// touching, the clock is dropped and only the status shows.
-fn compose_footer(left: Vec<Span<'static>>, clock: &str, width: u16) -> Line<'static> {
-    let left_len: usize = 4 + left
-        .iter()
-        .map(|s| s.content.chars().count())
-        .sum::<usize>();
-    let total = usize::from(width);
-    let clock_len = clock.chars().count();
-
-    let mut spans = vec![Span::raw("    ")];
-    spans.extend(left);
-    if !clock.is_empty() && total > left_len + clock_len + FOOTER_RIGHT_MARGIN {
-        let pad = total - left_len - clock_len - FOOTER_RIGHT_MARGIN;
-        spans.push(Span::raw(" ".repeat(pad)));
-        spans.push(Span::styled(
-            clock.to_string(),
-            Style::default()
-                .fg(Color::Gray)
-                .add_modifier(Modifier::BOLD),
-        ));
-    }
-    Line::from(spans)
 }
 
 /// Compact token count: `842`, `3.1k`, `1.2M`.
@@ -327,19 +335,39 @@ mod tests {
     }
 
     #[test]
-    fn status_line_shows_cwd_model_and_tokens() {
+    fn footer_is_two_rows_cwd_time_over_model_tokens() {
         let mut app = App::new();
         app.cwd = Some("~/proj".into());
         app.model = Some("opus".into());
         app.session_tokens = 3100;
-        // 4-space left margin (aligns with the composer's input text); the clock
-        // is appended on the right so the left segment is a prefix.
-        let s = footer_line(&app, 80).to_string();
+        let rows = footer_lines(&app, 80);
+        assert_eq!(rows.len(), 2, "footer is a 2-row status bar");
+        let (r0, r1) = (rows[0].to_string(), rows[1].to_string());
+        // Row 1: cwd left, clock icon + time right.
+        assert!(r0.starts_with("    ~/proj"), "cwd top-left: {r0:?}");
+        assert!(r0.contains(CLOCK_ICON), "clock icon present: {r0:?}");
         assert!(
-            s.starts_with("    ~/proj · opus · 3.1k tok"),
-            "status is the left segment: {s:?}"
+            r0.trim_end().ends_with(|c: char| c.is_ascii_digit()),
+            "time ends the row: {r0:?}"
         );
-        assert!(s.contains(':'), "right-aligned clock present: {s:?}");
+        // Row 2: model left, tokens right.
+        assert!(r1.starts_with("    opus"), "model bottom-left: {r1:?}");
+        assert!(
+            r1.trim_end().ends_with("3.1k tokens"),
+            "tokens bottom-right: {r1:?}"
+        );
+    }
+
+    #[test]
+    fn footer_tokens_corner_shows_even_at_zero() {
+        let app = App::new();
+        // Fresh session (0 tokens) still populates the tokens corner.
+        let rows = footer_lines(&app, 80);
+        assert!(
+            rows[1].to_string().trim_end().ends_with("0 tokens"),
+            "{:?}",
+            rows[1].to_string()
+        );
     }
 
     #[test]
@@ -351,48 +379,53 @@ mod tests {
     }
 
     #[test]
-    fn compose_footer_right_aligns_the_clock() {
-        let left = vec![Span::raw("~/proj")];
-        let line = compose_footer(left, "2026-07-22 00:53", 40);
+    fn footer_row_pins_corners_and_drops_right_when_narrow() {
+        let left = Some(Span::raw("~/proj"));
+        let right = Some(Span::raw("2026-07-22 00:53"));
+        let line = footer_row(left.clone(), right.clone(), 40);
         let s = line.to_string();
         assert_eq!(
             s.chars().count(),
             40 - FOOTER_RIGHT_MARGIN,
-            "clock ends 2 cols from the edge"
+            "right corner ends 2 cols from the edge"
         );
-        assert!(s.starts_with("    ~/proj"), "left segment first: {s:?}");
+        assert!(s.starts_with("    ~/proj"), "left corner first: {s:?}");
         assert!(
             s.ends_with("2026-07-22 00:53"),
-            "clock is right-aligned: {s:?}"
+            "right corner pinned: {s:?}"
         );
+        // Too narrow to fit both — only the left corner shows, no panic.
+        let narrow = footer_row(left, right, 20);
+        assert_eq!(narrow.to_string(), "    ~/proj");
     }
 
     #[test]
-    fn compose_footer_drops_clock_when_too_narrow() {
-        // Width can't fit both — only the left status shows, no panic.
-        let line = compose_footer(vec![Span::raw("~/proj")], "2026-07-22 00:53", 20);
-        assert_eq!(line.to_string(), "    ~/proj");
-    }
-
-    #[test]
-    fn footer_components_are_bold_with_dim_separators() {
+    fn footer_components_are_bold_in_their_colors() {
         let mut app = App::new();
         app.cwd = Some("~/proj".into());
         app.model = Some("opus".into());
         app.session_tokens = 3100;
-        let spans = footer_left(&app);
-        // cwd / model / tokens are bold + colored; the ` · ` separators are dim,
-        // not bold (user scheme, 2026-07-22).
-        let cwd = &spans[0];
+        let rows = footer_lines(&app, 80);
+        // Corner colors (user scheme, 2026-07-22): cwd bright blue, model gray,
+        // tokens red ("Cayenne"), all bold; the time is dim, not bold.
+        let cwd = &rows[0].spans[1];
         assert_eq!(cwd.content.as_ref(), "~/proj");
         assert_eq!(cwd.style.fg, Some(Color::LightBlue));
         assert!(cwd.style.add_modifier.contains(Modifier::BOLD));
-        let sep = &spans[1];
-        assert_eq!(sep.content.as_ref(), " · ");
-        assert!(sep.style.add_modifier.contains(Modifier::DIM));
-        assert!(!sep.style.add_modifier.contains(Modifier::BOLD));
-        assert_eq!(spans[2].style.fg, Some(Color::Gray), "model gray");
-        assert_eq!(spans[4].style.fg, Some(Color::Red), "tokens cayenne/red");
+        let time = rows[0].spans.last().unwrap();
+        assert!(
+            time.style.add_modifier.contains(Modifier::DIM),
+            "time is dim"
+        );
+        assert!(
+            !time.style.add_modifier.contains(Modifier::BOLD),
+            "time not bold"
+        );
+        let model = &rows[1].spans[1];
+        assert_eq!(model.style.fg, Some(Color::Gray), "model gray");
+        let tokens = rows[1].spans.last().unwrap();
+        assert_eq!(tokens.style.fg, Some(Color::Red), "tokens cayenne/red");
+        assert!(tokens.style.add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]
@@ -427,7 +460,8 @@ mod tests {
     fn footer_swaps_to_armed_hints() {
         let mut app = App::new();
         app.hint = Some(Hint::QuitArmed);
-        let line = footer_line(&app, 80);
-        assert!(line.to_string().contains("again to quit"));
+        // The hint replaces the cwd corner on the first footer row.
+        let rows = footer_lines(&app, 80);
+        assert!(rows[0].to_string().contains("again to quit"));
     }
 }
