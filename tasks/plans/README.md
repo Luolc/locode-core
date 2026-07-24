@@ -49,6 +49,7 @@ tracker.
 | [task-20-claude-pack.md](task-20-claude-pack.md) | claude pack (Bash/Read/Edit/Write/Glob/Grep + freshness gate + prompt) |
 | [task-20-slice-1-scaffold-bash.md](task-20-slice-1-scaffold-bash.md) | claude pack slice 1 — pack scaffold + Bash + minimal prompt |
 | [task-20-slice-2-read-freshness.md](task-20-slice-2-read-freshness.md) | claude pack slice 2 — Read + ClaudeSessionState freshness store |
+| [task-20-slice-3-edit.md](task-20-slice-3-edit.md) | claude pack slice 3 — Edit (read-before-edit + staleness gate) |
 
 ### TUI core prerequisites + TUI + streaming
 | Plan | Task |
