@@ -34,12 +34,10 @@ Full crate layout and rationale: [`../SPEC.md`](../SPEC.md), ADR-0002 (workspace
 
 ### Priorities (user, 2026-07-24)
 The immediate queue, ahead of the remaining packs:
-- **P0 — Task 31: settings.json + trace persistence (continue/resume).** Design is
-  **accepted** — [ADR-0024](../docs/decisions/ADR-0024-locode-home-settings-and-traces.md)
-  (`~/.locode`, layered JSON settings, cwd-keyed JSONL rollout, open extension
-  contract), grounded in the shipped research doc
-  [`../docs/research/harness-study-home-dotfolders.md`](../docs/research/harness-study-home-dotfolders.md).
-  Implementation plan: [`plans/task-31-locode-home-settings-and-trace.md`](plans/task-31-locode-home-settings-and-trace.md).
+- **DONE — Task 31: settings.json + trace persistence (continue/resume)** — shipped
+  2026-07-24 (PRs #173–#176) under
+  [ADR-0024](../docs/decisions/ADR-0024-locode-home-settings-and-traces.md); see the
+  Home-dotfolder section below.
 - **P0 — Task 32: Skills.** Full skills implementation (discovery + invocation + the
   skill markdown loading). Roots + `skills.extra` are fixed by ADR-0024 §3/§1.4;
   the rest (frontmatter set, two-switch gate, `User`-reminder listing per ADR-0023)
@@ -52,16 +50,17 @@ The immediate queue, ahead of the remaining packs:
 - **P1 — our own `locode` best-of pack** (the other half of Task 15).
 
 ### Home dotfolder (`~/.locode`, ADR-0024)
-- [ ] **Task 31 — settings + trace persistence** (P0, scope L, 4 slices — plan:
+- [x] **Task 31 — settings + trace persistence** (P0, **complete 2026-07-24**, PRs
+  #173–#176 — plan + Result:
   [`plans/task-31-locode-home-settings-and-trace.md`](plans/task-31-locode-home-settings-and-trace.md)):
-  - [ ] **S1** — `locode_home()` resolver + layered settings loader (merge + project
-    denylist) + `model`/`api_schema`/`harness` defaults wired into exec/tui.
-  - [ ] **S2** — `instructions.root_stop_pattern` activation (adds the approved `regex`
+  - [x] **S1** — `locode_home()` resolver + layered settings loader (merge + project
+    denylist + `extends`) + `model`/`api_schema`/`harness` defaults wired into exec/tui.
+  - [x] **S2** — `instructions.root_stop_pattern` activation (the approved `regex`
     dep; wakes ADR-0023's dormant seam).
-  - [ ] **S3** — trace writer: bijective cwd encoding + rollout JSONL as an `EventSink`
-    wrapper (session_meta + message lines, torn-tail healing, 0600/0700).
-  - [ ] **S4** — `--continue`/`--resume <id>`: tolerant reader + scoped-then-global
-    resolver + ADR-0016 continuity seeding; resumed runs append in place.
+  - [x] **S3** — trace writer: bijective cwd encoding + rollout JSONL as sink
+    decoration (session_meta + message lines, torn-tail healing, 0600/0700).
+  - [x] **S4** — `--continue`/`--resume <id>`: tolerant reader + scoped-then-global
+    resolver + resume-as-preamble seeding; resumed runs append in place.
 - [ ] **Task 32 — skills** (P0, needs its own ADR first — see Priorities).
 
 ### More harness packs + wires (the A/B bed)

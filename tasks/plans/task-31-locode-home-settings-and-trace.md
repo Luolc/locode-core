@@ -130,4 +130,32 @@ them).
   auto-merge on green.
 
 ## Result
-_(filled per slice at merge — Phase 4)_
+
+**Complete** (2026-07-24, PRs #173–#176 — all four slices, autonomous run).
+
+- **S1 (#173):** `locode_home()` (LOCODE_HOME must-exist+canonicalize, else
+  `~/.locode`) + the five-layer settings loader (user < `extends` < project <
+  project-local < flag; array-union merge; project denylist for `api_schema`/
+  `extends`; `extends` user-only/non-recursive/loud-on-missing; `skills.extra`
+  validation) + defaults wired into exec/tui (`--settings` flag; flag/env beat
+  settings; `ProviderInit.model` override; `AnthropicProvider::config_mut`).
+  12 new tests.
+- **S2 (#174):** `root_stop_pattern` active (the approved `regex` dep): an
+  ancestor whose absolute path matches is the root; invalid patterns warn at
+  settings load and degrade in the loader; settings' own root stays marker-only
+  (no cycle). Verified end-to-end scoping the AGENTS.md injection.
+- **S3 (#175):** the bijective cwd encoding (`session_dirs.rs`, collision
+  quartet + CJK pinned) + `TraceWriter` (`trace.rs`) as pure sink decoration —
+  `session_meta` header + verbatim protocol-`Message` lines, torn-tail heal,
+  `0600`/`0700`, error-disable; on by default in both front-ends; git provenance
+  best-effort. ADR-0024 dated note: v1 keeps `sess-` ids (no `uuid` dep).
+- **S4 (#176):** tolerant reader (unknown types/fields skipped — the §2.4
+  contract pinned by tests; `compacted` folding), scoped-then-global resolvers,
+  header-wins identity with flag-mismatch errors, resume-as-preamble (zero
+  engine changes), `TraceWriter::resume` (one header, ever), `-c`/`-r` on exec
+  and tui with interactive replay + fresh `/new`.
+
+Final state: 595 workspace tests; every slice shipped through the four-part
+gate + its preset. Deviations, both reconciled in ADR-0024 dated notes:
+session-id format (`sess-` not UUIDv7); TUI drops settings warnings silently
+(no stderr surface — headless prints them).
