@@ -399,6 +399,9 @@ mod sigterm {
             .env_remove("LOCODE_API_SCHEMA")
             .env_remove("LOCODE_MOCK_SCRIPT")
             .env_remove("RUST_LOG")
+            // Hermetic like `locode()`: never touch the developer's real
+            // `~/.locode` (these spawn real runs that write a trace).
+            .env("LOCODE_HOME", super::TEST_HOME.path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

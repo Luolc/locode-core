@@ -47,6 +47,12 @@ pub struct Cli {
     #[arg(long)]
     pub settings: Option<String>,
 
+    /// Do not write (or append to) a session trace for this run — nothing lands
+    /// under `~/.locode/sessions` (ADR-0024 §2; Claude Code's
+    /// `--no-session-persistence`). `--continue`/`--resume` still *read*.
+    #[arg(long)]
+    pub no_session_persistence: bool,
+
     /// Continue the newest session started in this cwd (ADR-0024 §2.5): the
     /// recovered transcript seeds the run and the same rollout keeps appending.
     #[arg(short = 'c', long = "continue", conflicts_with = "resume")]

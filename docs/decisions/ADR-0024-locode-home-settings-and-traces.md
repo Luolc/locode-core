@@ -146,11 +146,11 @@ existing or imminent run parameter; a flag always wins):
   a breaking list→object reshape later (§1.5's own rules).
 
 **Deliberately CLI-only — not settings** *(user decision)*:
-`--no-project-instructions`, `--max-turns` — per-invocation switches the user will
-essentially never want as durable state; keeping them out of settings avoids a
-forgotten config permanently distorting runs. `--stream`, `--strip-identity`, and
-`--dangerously-skip-permissions` follow the same principle (the last is additionally
-a trust-class switch that must never be durable).
+`--no-project-instructions`, `--max-turns`, `--no-session-persistence` (§2.2) — per-
+invocation switches the user will essentially never want as durable state; keeping them
+out of settings avoids a forgotten config permanently distorting runs. `--stream`,
+`--strip-identity`, and `--dangerously-skip-permissions` follow the same principle (the
+last is additionally a trust-class switch that must never be durable).
 
 **First-run scaffold** *(amendment 2026-07-24, user decision)*: when the **user**
 `settings.json` is absent, the loader writes it with every v1 key at its **current
@@ -247,6 +247,11 @@ JSONL is authoritative — the trace maps 1:1 onto the engine's sample→dispatc
 loop (the file literally *is* the appended history, preserving the
 `tool_use`→`tool_result` pairing invariant), stays greppable/jq-able while the format
 is young, and is the shape both Claude and Codex ship. **No database in v0** (§2.5).
+
+Tracing is **on by default**; `--no-session-persistence` skips writing (no rollout is
+created or appended) while `--continue`/`--resume` still *read* — Claude Code's flag of
+the same name *(amendment 2026-07-24)*. It is a CLI-only per-run switch (§1.4's rule),
+never durable settings.
 
 ### 2.3 Line format — the data structure
 

@@ -24,6 +24,9 @@ fn cli(dir: &tempfile::TempDir, api_schema: &str) -> Cli {
         harness: Some(locode_exec::Harness::Grok),
         api_schema: Some(api_schema.into()),
         model: None,
+        // Hermetic: never write a rollout into the developer's real
+        // `~/.locode` (these tests build real in-process sessions).
+        no_session_persistence: true,
         settings: None,
         continue_session: false,
         resume: None,

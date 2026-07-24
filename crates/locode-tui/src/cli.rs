@@ -45,6 +45,11 @@ pub struct Cli {
     #[arg(long)]
     pub settings: Option<String>,
 
+    /// Do not write a session trace for this run (ADR-0024 §2; Claude Code's
+    /// `--no-session-persistence`). `--continue`/`--resume` still read.
+    #[arg(long)]
+    pub no_session_persistence: bool,
+
     /// Continue the newest session started in this cwd (ADR-0024 §2.5).
     #[arg(short = 'c', long = "continue", conflicts_with = "resume")]
     pub continue_session: bool,
@@ -102,6 +107,7 @@ impl Cli {
             harness: self.harness,
             api_schema: self.api_schema.clone(),
             model: self.model.clone(),
+            no_session_persistence: self.no_session_persistence,
             settings: self.settings.clone(),
             continue_session: self.continue_session,
             resume: self.resume.clone(),
