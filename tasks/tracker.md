@@ -50,6 +50,16 @@ and resolve the plan's open-questions section first.
   covers GPT + Grok natively). The reasoning-blind LCD/control wire; revisit when a target
   model only speaks chat-completions. Plan: [`plans/task-17-openai-chat-wire.md`](plans/task-17-openai-chat-wire.md). Scope L.
 
+### Shared context machinery (ADR-0023)
+- [ ] **Task 30 — shared `AGENTS.md` project-instruction loading** (ADR-0023): one shared
+  loader in `locode-host` (cwd→git-root walk, `AGENTS.override.md` per-dir override, global
+  `~/.locode/AGENTS.md`, dedup/gitignore), engine-side `User`-role `<system-reminder>`
+  injection with per-turn rescan/diff, default-on with `--no-project-instructions`. Seams
+  deferred (recorded): `--add-dir`/`extra_roots` + tool-jail widening (ADR-0008),
+  `root_stop_pattern` (pending `settings.json`). Plan:
+  [`plans/task-30-agents-md-project-instructions.md`](plans/task-30-agents-md-project-instructions.md).
+  Scope M, 6 slices.
+
 ### TUI backlog
 - [ ] **OSC-8 hyperlinks** (P2) — clickable links (iTerm2 etc.).
 - [ ] **Built-in slash commands** — deferred pending a *holistic* design pass
@@ -60,11 +70,8 @@ and resolve the plan's open-questions section first.
   XDG `~/.config/locode/` ADR). Read-only `/model` becomes Tier-A once the seam exists.
 
 ### Tier B/C future capability (short ADR, then mostly-autonomous)
-- [ ] Background bash commands · **shared** AGENTS.md project-instruction
-  loading (design of record: [ADR-0023](../docs/decisions/ADR-0023-fidelity-boundary-and-agents-md-loading.md)
-  — one shared loader, AGENTS.md only, `User`-role `<system-reminder>` injection,
-  git+regex root detection) · custom slash-command files · subagents · plugins ·
-  config-file persistence (XDG).
+- [ ] Background bash commands · custom slash-command files · subagents · plugins ·
+  config-file persistence (XDG). *(Shared AGENTS.md loading promoted to Task 30, above.)*
 
 ### Tech debt
 - [ ] **Collapse the `locode-exec` crate** — migrate the headless logic
