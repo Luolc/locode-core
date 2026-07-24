@@ -40,12 +40,6 @@ and resolve the plan's open-questions section first.
   + `update_plan` + base prompt; shared `apply_patch` parser. Native delivery uses Task 18
   (done); degrades via `{input: string}` elsewhere. Plan:
   [`plans/task-19-codex-pack.md`](plans/task-19-codex-pack.md). Scope L.
-- [ ] **Task 20 — claude pack** (`--harness claude`): Bash/Read/Edit/Write/Glob/Grep with
-  verbatim schemas + the read-before-edit / modified-since-read freshness gate + static
-  prompt. No wire dependency. **Autonomous workstream** — entry point + resolved decisions +
-  slice plan: [`../docs/claude-pack-dev-process.md`](../docs/claude-pack-dev-process.md);
-  design detail: [`plans/task-20-claude-pack.md`](plans/task-20-claude-pack.md). Scope L,
-  ~7 slices.
 - [ ] **Task 15 — remaining packs: `opencode` + our own `locode`** (after 19/20). `opencode`
   is a faithful port; `locode` is our best-of pack (grok-build-style naming; ADR-0011's
   rg-glob is scoped here). Plan from source when scheduled. Scope L (split per pack).
@@ -103,6 +97,18 @@ One line per task. Design detail is the matching file under [`plans/`](plans/) (
   `read_file`, `search_replace`, `run_terminal_cmd`, `list_dir` all faithful (per-tool audits
   in [`audits/`](audits/)); type-strict arg decoding. Release 0.1.3. Deferred tiers (multimodal
   `read_file`, background commands) → Deferred below.
+
+### claude harness pack (Task 20 · autonomous 7-slice workstream, 2026-07-24)
+- [x] **Task 20** — claude pack (`--harness claude`): a faithful port of Claude Code's six
+  headless-relevant tools (`Bash`/`Read`/`Edit`/`Write`/`Glob`/`Grep` — real UpperCamelCase
+  wire names, verbatim schemas/descriptions/caps) + the **read-before-edit / staleness gate**
+  (`ClaudeSessionState`, CC's signature guardrail, absent in grok) + the **byte-exact static
+  system prompt** (all D7 sections + env block + `currentDate` first-turn reminder). Wire-
+  independent. Framework additions: `Pack::shape_user_prompt`; `PackContext` grew
+  `is_git_repo`/`model`/`os_version`. Process + resolved decisions:
+  [`../docs/claude-pack-dev-process.md`](../docs/claude-pack-dev-process.md); design detail
+  [`plans/task-20-claude-pack.md`](plans/task-20-claude-pack.md) + per-slice records
+  `plans/task-20-slice-{1..7}-*.md` (ADR-0012 amendment 2026-07-24). PRs #156–#162.
 
 ### Live wires + facade
 - [x] **Task 12** — Anthropic Messages wire (ADR-0007): caching, two-tier retry, pairing.

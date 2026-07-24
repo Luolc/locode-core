@@ -177,6 +177,9 @@ mod tests {
             shell: "/bin/zsh".into(),
             date: "2025-01-15".into(),
             headless,
+            is_git_repo: false,
+            model: None,
+            os_version: None,
             strip_identity: false,
         }
     }

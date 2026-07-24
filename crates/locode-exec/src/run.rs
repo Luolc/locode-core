@@ -57,25 +57,11 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
     }
     let host = Arc::new(Host::new(host_config)?);
 
-    // ---- 3. Pack: tools + preamble (system prompt + <user_info> prefix). ----
+    // ---- 3. Provider: registry-resolved (ADR-0015); unknown names and factory
+    //         failures (missing env, …) fail BEFORE driving the loop. Built first
+    //         so the pack env block can name the model (D9). ----
     let pack = locode_core::resolve(cli.harness.as_str())?;
     let registry = pack.build_registry(&host);
-    let pack_ctx = PackContext {
-        cwd: cwd.clone(),
-        os: std::env::consts::OS.to_string(),
-        shell: std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string()),
-        date: chrono::Local::now().format("%Y-%m-%d").to_string(),
-        headless: true,
-        strip_identity: cli.strip_identity,
-    };
-    let preamble = pack.preamble(&pack_ctx);
-
-    // Pack-specific user-prompt shaping (grok wraps in <user_query>; claude sends
-    // it verbatim). The pack owns the shape — the exec layer stays harness-agnostic.
-    let user_prompt = pack.shape_user_prompt(&prompt);
-
-    // ---- 4. Provider: registry-resolved (ADR-0015); unknown names and
-    //         factory failures (missing env, …) fail BEFORE driving the loop. ----
     let session_id = new_session_id();
     let built = providers
         .build(
@@ -86,6 +72,24 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
         )
         .map_err(|e| PreRunError(e.to_string()))?;
     let (provider, model) = (built.provider, built.model);
+
+    // ---- 4. Pack: preamble (system prompt + env + first-turn reminder). ----
+    let pack_ctx = PackContext {
+        cwd: cwd.clone(),
+        os: std::env::consts::OS.to_string(),
+        shell: std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string()),
+        date: chrono::Local::now().format("%Y-%m-%d").to_string(),
+        headless: true,
+        is_git_repo: detect_git_repo(&cwd),
+        model: Some(model.clone()),
+        os_version: os_version(),
+        strip_identity: cli.strip_identity,
+    };
+    let preamble = pack.preamble(&pack_ctx);
+
+    // Pack-specific user-prompt shaping (grok wraps in <user_query>; claude sends
+    // it verbatim). The pack owns the shape — the exec layer stays harness-agnostic.
+    let user_prompt = pack.shape_user_prompt(&prompt);
 
     // ---- 5. Engine config + event sink per output mode. ----
     let config = EngineConfig {
@@ -154,6 +158,34 @@ fn resolve_prompt(arg: Option<&str>) -> Result<String, PreRunError> {
         ));
     }
     Ok(prompt)
+}
+
+/// Whether `cwd` is inside a git repository — walk up looking for a `.git` entry
+/// (a cheap probe for the Claude pack's env `Is a git repository:` line, D9; no
+/// host handle needed in `preamble()`).
+fn detect_git_repo(cwd: &std::path::Path) -> bool {
+    cwd.ancestors().any(|dir| dir.join(".git").exists())
+}
+
+/// `uname -s -r` for the Claude pack's env `OS Version:` line; `None` off Unix or
+/// if the probe fails.
+fn os_version() -> Option<String> {
+    #[cfg(unix)]
+    {
+        let out = std::process::Command::new("uname")
+            .args(["-s", "-r"])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        (!s.is_empty()).then_some(s)
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
 }
 
 /// A unique-enough session id for a headless run (no uuid dep in v0).

@@ -69,15 +69,24 @@ impl Pack for ClaudePack {
     }
 
     fn preamble(&self, ctx: &PackContext) -> Vec<Message> {
-        // Slice 1: a single System message (the minimal render). Slice 7 adds the
-        // env block + the `<system-reminder>` currentDate User message (D10). CC
-        // sends the raw user prompt (no wrapper) — see `shape_user_prompt`.
-        vec![Message {
-            role: Role::System,
-            content: vec![ContentBlock::Text {
-                text: prompt::render(ctx),
-            }],
-        }]
+        // CC's real split (ADR-0013, D10): the full system prompt (identity + static
+        // sections + env) is the System message; the first-turn `currentDate`
+        // `<system-reminder>` (`prependUserContext`) is a `User` message. CC sends
+        // the raw user prompt after it (no wrapper) — see `shape_user_prompt`.
+        vec![
+            Message {
+                role: Role::System,
+                content: vec![ContentBlock::Text {
+                    text: prompt::render(ctx),
+                }],
+            },
+            Message {
+                role: Role::User,
+                content: vec![ContentBlock::Text {
+                    text: prompt::context_reminder(ctx),
+                }],
+            },
+        ]
     }
 }
 
@@ -206,21 +215,24 @@ mod tests {
     }
 
     #[test]
-    fn preamble_is_a_single_system_message() {
+    fn preamble_is_system_then_user_reminder() {
         let dir = tempfile::tempdir().unwrap();
-        let host = Arc::new(Host::new(HostConfig::new(dir.path())).unwrap());
-        let _ = host;
         let pc = PackContext {
             cwd: dir.path().to_path_buf(),
             os: "macos".into(),
             shell: "/bin/zsh".into(),
             date: "2026-07-24".into(),
             headless: true,
+            is_git_repo: false,
+            model: Some("claude-opus-4-8".into()),
+            os_version: Some("Darwin 24.6.0".into()),
             strip_identity: false,
         };
+        // D10: [System(prompt+env), User(<system-reminder> currentDate)].
         let msgs = ClaudePack.preamble(&pc);
-        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].role, Role::System);
+        assert_eq!(msgs[1].role, Role::User);
     }
 
     // ---- Bash behavior (via build_registry + dispatch over a tempdir host) ----
