@@ -205,7 +205,12 @@ mod tests {
             (false, "prompt_interactive.txt"),
         ] {
             let rendered = render_base_prompt(&ctx(headless));
-            let path = format!("{}/src/grok/snapshots/{name}", env!("CARGO_MANIFEST_DIR"));
+            // Prefer the runtime env var over the compile-time `env!` macro: some
+            // build systems (e.g. Bazel) compile and run tests in different sandbox
+            // paths, so the value baked in at compile time can be stale by run time.
+            let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
+                .unwrap_or_else(|_| env!("CARGO_MANIFEST_DIR").to_string());
+            let path = format!("{manifest_dir}/src/grok/snapshots/{name}");
             if std::env::var("UPDATE_SNAPSHOTS").is_ok() {
                 std::fs::write(&path, &rendered)
                     .unwrap_or_else(|e| panic!("write snapshot {path}: {e}"));
