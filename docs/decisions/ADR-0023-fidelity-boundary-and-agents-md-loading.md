@@ -301,6 +301,22 @@ reverse-lossy caveat recorded in the ADR-0013 amendment.
 
 None outstanding — the review closed every question above.
 
+## Amendment (2026-07-24): where the skills line of §1 stops
+
+§1 lists "skills discovery and listing/body injection" among the behaviors that
+are **not** reproduced per harness. [ADR-0025](ADR-0025-agent-skills.md) keeps
+that for **discovery and the listing** — one shared loader in `locode-host`, one
+`User` `<system-reminder>` listing format — but records that the **body envelope
+and its delivery are the `Skill` tool's own surface**, and that tool is a pack
+tool carried by the **grok pack only**. Under `--harness claude` or `codex` there
+is no skill tool and no listing.
+
+This does not widen the fidelity boundary: a pack still chooses only *tools +
+prompt*, and the loop is still never forked. It narrows §1's wording — "body
+injection" was written when the design assumed a neutral engine-owned injection
+format; the body now arrives as an ordinary tool result, so there is no separate
+injection path to share or fork.
+
 ## Implementation note (2026-07-23): what planning revealed (Task 30)
 
 Mapping the code before implementing (plan:
