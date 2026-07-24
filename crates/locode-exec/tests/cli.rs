@@ -107,6 +107,64 @@ fn stream_json_is_valid_jsonl_and_reconstructs() {
 }
 
 #[test]
+fn project_instructions_injected_from_agents_md() {
+    // A repo with an AGENTS.md at the root: the loader (default on) discovers it and the
+    // engine injects it as a User <system-reminder> in the trace (ADR-0023, Task 30).
+    let dir = tempdir();
+    std::fs::create_dir(dir.path().join(".git")).expect("mkdir .git");
+    std::fs::write(dir.path().join("AGENTS.md"), "Always be brief.").expect("write AGENTS.md");
+
+    let assert = exec()
+        .args([
+            "say hi",
+            "--api-schema",
+            "mock",
+            "--output-format",
+            "stream-json",
+            "--cwd",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8");
+    assert!(
+        stdout.contains("system-reminder"),
+        "injected reminder present: {stdout}"
+    );
+    assert!(
+        stdout.contains("Always be brief."),
+        "AGENTS.md content present: {stdout}"
+    );
+}
+
+#[test]
+fn no_project_instructions_flag_suppresses_injection() {
+    let dir = tempdir();
+    std::fs::create_dir(dir.path().join(".git")).expect("mkdir .git");
+    std::fs::write(dir.path().join("AGENTS.md"), "Always be brief.").expect("write AGENTS.md");
+
+    let assert = exec()
+        .args([
+            "say hi",
+            "--api-schema",
+            "mock",
+            "--output-format",
+            "stream-json",
+            "--no-project-instructions",
+            "--cwd",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8");
+    assert!(
+        !stdout.contains("system-reminder"),
+        "no reminder when disabled: {stdout}"
+    );
+    assert!(!stdout.contains("Always be brief."), "no AGENTS.md content");
+}
+
+#[test]
 fn logs_go_to_stderr_never_stdout() {
     let dir = tempdir();
     let assert = exec()

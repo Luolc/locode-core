@@ -63,6 +63,11 @@ pub struct Cli {
     /// whole-message (token deltas are dropped).
     #[arg(long)]
     pub stream: bool,
+
+    /// Skip project-instruction loading (`AGENTS.md`) — the `--bare`-style disable
+    /// (ADR-0023). Auto-discovery is otherwise on by default.
+    #[arg(long)]
+    pub no_project_instructions: bool,
 }
 
 impl Cli {
@@ -81,6 +86,7 @@ impl Cli {
             dangerously_skip_permissions: self.dangerously_skip_permissions,
             strip_identity: self.strip_identity,
             stream: self.stream,
+            no_project_instructions: self.no_project_instructions,
         }
     }
 }

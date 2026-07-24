@@ -26,6 +26,8 @@ fn cli(dir: &tempfile::TempDir, yolo: bool) -> Cli {
         dangerously_skip_permissions: yolo,
         strip_identity: false,
         stream: false,
+        // Isolate these tests from AGENTS.md discovery (they assert fixed trajectories).
+        no_project_instructions: true,
     }
 }
 

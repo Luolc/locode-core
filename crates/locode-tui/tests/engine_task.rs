@@ -29,6 +29,8 @@ fn cli(dir: &tempfile::TempDir, api_schema: &str) -> Cli {
         dangerously_skip_permissions: false,
         strip_identity: false,
         stream: false,
+        // Isolate these tests from AGENTS.md discovery (they assert fixed trajectories).
+        no_project_instructions: true,
     }
 }
 
