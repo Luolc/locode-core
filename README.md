@@ -1,19 +1,30 @@
-# Lo Code
+# LoCode
 
-A Rust-based custom coding agent: the
-sample → dispatch → append loop, a typed tool registry, faithful per-harness tool
-packs, and a provider/wire abstraction — shipped as a set of library crates
-plus the `locode` binary (run `locode -p "say hi"` for a headless rollout, or `locode` without `-p` for an experimental interactive TUI).
+A Rust-based custom coding agent: the sample → dispatch → append loop, a typed
+tool registry, faithful per-harness tool packs, and a provider/wire abstraction
+— shipped as a set of library crates plus the `locode` binary (run
+`locode -p "say hi"` for a headless rollout, or `locode` without `-p` for an
+experimental interactive TUI).
 
 ## Why
 
-locode-core is a distilled re-implementation of the agent cores of four
-studied coding harnesses (Claude Code, Codex, Grok Build, opencode). Each
-harness pack reproduces its harness's real tools and system prompt —
-names, schemas, caps, quirks — so different harness designs can be compared
-honestly, A/B, on the same engine and the same provider wire. The tool packs
-are also a first-class library surface: downstream consumers can drop the
-tools into their own agent loop without using our engine.
+LoCode is a distilled re-implementation of the agent cores of four studied
+coding harnesses (Claude Code, Codex, Grok Build, opencode). Each harness pack
+reproduces its harness's real tools and system prompt — names, schemas, caps,
+quirks — so different harness designs can be compared honestly, A/B, on the same
+engine and the same provider wire. The tool packs are also a first-class library
+surface: downstream consumers can drop the tools into their own agent loop
+without using our engine.
+
+The reproduction is deliberately scoped. What each pack faithfully mirrors is
+its harness's **system prompt** and its **tool behavior** — and the tool surface
+is the six core tools every coding agent shares (shell, read, write, edit, list,
+search). Everything above that line — memory files (`AGENTS.md` and friends),
+skills, and the fancier engine behaviors — is implemented once and shared across
+all packs rather than reproduced per harness, so the fancier per-harness
+features are not modeled. That core is enough to run most coding-benchmark
+evaluations and everyday tasks, but it is not exhaustive: LoCode is built for
+evaluation and research, not as an end-user product.
 
 ## Install
 
@@ -54,35 +65,31 @@ full surface.
 `LOCODE_BASE_URL` defaults to the wire's native endpoint
 (`https://api.anthropic.com` for `anthropic`, `https://api.openai.com` for
 `openai-responses`); point it at any compatible gateway (e.g. OpenRouter) to
-reach other providers over the same schema. `LOCODE_MODEL` defaults to
-`claude-sonnet-5` on the Anthropic wire and `gpt-5-mini` on the OpenAI
-Responses wire, and `LOCODE_API_KEY` must match whichever endpoint you target.
+reach other providers over the same schema. `LOCODE_API_KEY` must match
+whichever endpoint you target.
 
 ## Interactive app (`locode`)
 
-An interactive terminal UI is built in this repo as separate crates
-(`locode-tui` = components/library, `locode-app` = the `locode` binary) layered
-on the core (ADR-0019). It drives one session interactively: type a prompt,
-watch tool calls and the reply stream in, approve or deny tool calls, cancel a
-turn with Esc, continue the conversation.
+LoCode is primarily a headless engine for evaluation and data pipelines. It
+also ships an **experimental** interactive terminal UI, built in this repo as
+separate crates (`locode-tui` = components/library, `locode-app` = the `locode`
+binary) layered on the core (ADR-0019). It drives one session interactively:
+type a prompt, watch tool calls and the reply stream in, approve or deny tool
+calls, cancel a turn with Esc, and continue the conversation. Treat it as a
+convenience for exploring the engine, not a supported product.
 
 ```sh
 # Keyless demo (scripted mock wire — no API key):
-cargo run -p locode-app -- --api-schema mock
+locode --api-schema mock
 
 # Against a real wire, with tool approvals prompted:
-LOCODE_API_KEY=… cargo run -p locode-app
+LOCODE_API_KEY=… locode
 
 # …or skip approvals (auto-allow every tool, lift the path jail):
-LOCODE_API_KEY=… cargo run -p locode-app -- --yolo
+LOCODE_API_KEY=… locode --yolo
 ```
 
-Keys: Enter sends (Alt+Enter for a newline); Esc cancels a running turn, or
-pops a queued prompt / clears a draft when idle; Ctrl+C cancels then quits;
-Up/Down browse prompt history; `/new` starts a fresh session, `/quit` exits.
-`--harness`, `--api-schema`, and `--cwd` match the headless `-p` flags. The app
-crates are `publish = false`; the binary ships from the GitHub Release and
-`install.sh` installs it as `locode`.
+## Development
 
 To build and test everything:
 
@@ -92,21 +99,6 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 ```
-
-## Crates
-
-| Crate | What it is |
-| --- | --- |
-| `locode-protocol` | Conversation model, tool call/result types, report envelope — pure types, no I/O |
-| `locode-tools` | `Tool` trait, registry, and the one dispatch door — host-agnostic framework |
-| `locode-packs` | Harness packs: faithful per-harness toolsets + system prompts |
-| `locode-provider` | `Provider` trait, API-agnostic request type, and the wire implementations |
-| `locode-host` | Filesystem/shell/path-jail seam — every side effect goes through here |
-| `locode-engine` | The sample→dispatch→append loop and the `Session` driving API |
-| `locode-core` | Facade: re-exports the driving API and the full tool surface |
-| `locode-exec` | Headless engine library (`run_headless`, one JSON report) — reused by `locode -p`; the standalone binary is retired |
-| `locode-tui` | TUI components + interactive app + `-p` headless dispatch (`publish = false`) |
-| `locode-app` | Flag-free product binary — the shipped `locode` (`publish = false`) |
 
 ## Custom providers
 
