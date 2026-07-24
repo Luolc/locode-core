@@ -78,6 +78,10 @@ tokio-stream = "0.1"
 # against the dedicated input-reader thread; found in the slice-2 smoke).
 ratatui = { version = "0.29", features = ["scrolling-regions"] }
 crossterm = { version = "0.28", features = ["bracketed-paste"] }
+# Terminal display width (East-Asian/CJK = 2 cells, emoji = 2, zero-width = 0) for
+# wide-char-correct wrapping. Same crate + pin the codex/grok-build TUIs use; already
+# in the tree via ratatui.
+unicode-width = "0.2"
 # Multiline composer widget (grok forked one; the stock crate suffices for v1
 # behind our own Composer wrapper).
 tui-textarea = "0.7"
