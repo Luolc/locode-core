@@ -411,20 +411,23 @@ fn build_session(
     // Session trace (ADR-0024 §2): decoration on the sink, same as the headless
     // path. Interactive mode has no stderr surface; a trace failure silently
     // disables the writer (the headless path warns).
-    let mut trace = locode_core::locode_home().ok().and_then(|home| {
-        let root = home.join("sessions");
-        match &resumed {
-            Some((path, _)) => locode_core::TraceWriter::resume(path.clone(), root).ok(),
-            None => Some(locode_core::TraceWriter::new(
-                root,
-                locode_core::TraceExtras {
-                    cli_version: env!("CARGO_PKG_VERSION").to_string(),
-                    git: git_meta(&cwd),
-                    ..Default::default()
-                },
-            )),
-        }
-    });
+    let mut trace = locode_core::locode_home()
+        .ok()
+        .filter(|_| !cli.no_session_persistence)
+        .and_then(|home| {
+            let root = home.join("sessions");
+            match &resumed {
+                Some((path, _)) => locode_core::TraceWriter::resume(path.clone(), root).ok(),
+                None => Some(locode_core::TraceWriter::new(
+                    root,
+                    locode_core::TraceExtras {
+                        cli_version: env!("CARGO_PKG_VERSION").to_string(),
+                        git: git_meta(&cwd),
+                        ..Default::default()
+                    },
+                )),
+            }
+        });
     let sink: Box<dyn EventSink> = Box::new(FnSink(move |event| {
         if let Some(trace) = trace.as_mut() {
             trace.on_event(&event);

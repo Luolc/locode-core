@@ -145,26 +145,8 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
         ..EngineConfig::default()
     };
     // ---- 5b. Session trace (ADR-0024 §2): every run appends a rollout under
-    //          `<locode home>/sessions/<encoded-cwd>/`. Tracing is decoration on
-    //          the event sink — zero engine changes — and a failure disables the
-    //          writer with a warning, never the run. No home ⇒ no tracing.
-    let mut trace = locode_core::locode_home().ok().and_then(|home| {
-        let root = home.join("sessions");
-        match &identity.resumed {
-            // Reopen the same rollout for appending (id and file continue).
-            Some(resumed) => locode_core::TraceWriter::resume(resumed.path.clone(), root)
-                .map_err(|e| output::warning_line(&format!("trace: {e}; tracing disabled")))
-                .ok(),
-            None => Some(locode_core::TraceWriter::new(
-                root,
-                locode_core::TraceExtras {
-                    cli_version: env!("CARGO_PKG_VERSION").to_string(),
-                    git: git_meta(&config.cwd),
-                    ..Default::default()
-                },
-            )),
-        }
-    });
+    //          `<locode home>/sessions/<encoded-cwd>/`. See `build_trace_writer`.
+    let mut trace = build_trace_writer(&cli, &identity, &config.cwd);
 
     let sink = make_sink(cli.output_format, trace.take());
 
@@ -280,6 +262,36 @@ fn resolve_identity(
         session_id: new_session_id(),
         resumed: None,
     })
+}
+
+/// The session-trace writer (ADR-0024 §2): decoration over the event sink, so
+/// tracing needs zero engine changes. A resumed run reopens the same rollout for
+/// appending; a fresh run creates a new one. `None` — no rollout written — when
+/// there is no `~/.locode` home, `--no-session-persistence` is set, or a resume
+/// reopen fails (warned, never fatal).
+fn build_trace_writer(
+    cli: &Cli,
+    identity: &RunIdentity,
+    cwd: &std::path::Path,
+) -> Option<locode_core::TraceWriter> {
+    let root = locode_core::locode_home()
+        .ok()
+        .filter(|_| !cli.no_session_persistence)?
+        .join("sessions");
+    match &identity.resumed {
+        // Reopen the same rollout for appending (id and file continue).
+        Some(resumed) => locode_core::TraceWriter::resume(resumed.path.clone(), root)
+            .map_err(|e| output::warning_line(&format!("trace: {e}; tracing disabled")))
+            .ok(),
+        None => Some(locode_core::TraceWriter::new(
+            root,
+            locode_core::TraceExtras {
+                cli_version: env!("CARGO_PKG_VERSION").to_string(),
+                git: git_meta(cwd),
+                ..Default::default()
+            },
+        )),
+    }
 }
 
 /// The event sink for `output_format`, decorated with the session-trace writer
