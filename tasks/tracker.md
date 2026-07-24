@@ -60,11 +60,11 @@ and resolve the plan's open-questions section first.
   XDG `~/.config/locode/` ADR). Read-only `/model` becomes Tier-A once the seam exists.
 
 ### Tier B/C future capability (short ADR, then mostly-autonomous)
-- [ ] Background bash commands · **shared** AGENTS.md/CLAUDE.md project-instruction
+- [ ] Background bash commands · **shared** AGENTS.md project-instruction
   loading (design of record: [ADR-0023](../docs/decisions/ADR-0023-fidelity-boundary-and-agents-md-loading.md)
-  — one shared loader, `User`-role `<system-reminder>` injection, git+regex root
-  detection) · custom slash-command files · subagents · plugins · config-file
-  persistence (XDG).
+  — one shared loader, AGENTS.md only, `User`-role `<system-reminder>` injection,
+  git+regex root detection) · custom slash-command files · subagents · plugins ·
+  config-file persistence (XDG).
 
 ### Tech debt
 - [ ] **Collapse the `locode-exec` crate** — migrate the headless logic
@@ -129,7 +129,7 @@ One line per task. Design detail is the matching file under [`plans/`](plans/) (
 
 parallel tool batches (RwLock read/write) · compaction · OS sandbox · MCP · `--json-schema`
 answers · JSONL session durability · multi-platform `rg` bundle matrix + macOS notarization
-(packaging, ADR-0011) · shared engine session-start context (AGENTS.md/CLAUDE.md loading, ADR-0023) · codex
+(packaging, ADR-0011) · shared engine session-start context (AGENTS.md loading, ADR-0023) · codex
 unified exec (PTY) / `view_image` / hosted `web_search` · Claude Code
 TodoWrite/Task/WebFetch/WebSearch/NotebookEdit · per-model codex prompt variants · grok pack
 multimodal `read_file` (binary/image/PDF/PPTX) · grok pack background commands (`is_background`

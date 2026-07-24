@@ -89,7 +89,7 @@ the next milestone.
 "Faithful reproduction" here is bounded to exactly two surfaces: a pack reproduces
 its harness's **system prompt** and its **tool set** (the six core `ToolKind`s —
 names, schemas, behavior, caps, guardrails). Everything loop-adjacent —
-project-instruction loading (`AGENTS.md`/`CLAUDE.md`), skills, reminder/context
+project-instruction loading (`AGENTS.md`), skills, reminder/context
 injection, compaction, subagent orchestration — is **shared, single-implementation
 engine machinery, identical for every pack**, not reproduced per harness. A pack
 selects *tools + a prompt*; it never forks the loop or the context pipeline. This

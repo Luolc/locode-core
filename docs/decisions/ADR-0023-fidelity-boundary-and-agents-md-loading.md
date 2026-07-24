@@ -22,7 +22,7 @@ studies themselves remain accurate as *descriptions* of what each harness does.
 
 ## Context
 
-Two questions came due together while designing `AGENTS.md`/`CLAUDE.md`
+Two questions came due together while designing `AGENTS.md`
 project-instruction loading (a still-unbuilt capability):
 
 1. **How much of a harness do we faithfully reproduce?** ADR-0012 says a pack is a
@@ -67,7 +67,7 @@ A pack faithfully reproduces exactly two surfaces of its harness:
 **Everything else is shared, single-implementation engine machinery, identical for
 every pack.** In particular, the following are **not** reproduced per harness:
 
-- project-instruction loading (`AGENTS.md`/`CLAUDE.md`, rules dirs, global files);
+- project-instruction loading (`AGENTS.md` files, global file);
 - skills discovery and listing/body injection;
 - reminder / context injection and its wrapping (`<system-reminder>` framing);
 - compaction, session continuity, subagent orchestration, background tasks.
@@ -103,9 +103,11 @@ its existing path/query/read machinery (ADR-0008) rather than a new crate — ev
 filesystem read goes through the host seam, never `std::fs` in a tool, never the
 wire. The engine calls the loader and injects the neutral value.
 
-**Files.** `AGENTS.md` is canonical (this repo already standardizes on it).
-`CLAUDE.md` is recognized as a compatibility alias so existing repos load without
-renaming. A per-directory local override (`AGENTS.override.md`, à la Codex —
+**Files.** `AGENTS.md` **only** — it is the single canonical name (this repo already
+standardizes on it). We deliberately do **not** read `CLAUDE.md` as a compatibility
+alias, and do **not** special-case vendor directories (`.claude/`, `.cursor/`,
+`.grok/`): those exist in the source harnesses for cross-vendor ingestion, which is
+not a goal here. A per-directory local override (`AGENTS.override.md`, à la Codex —
 `codex: agents_md.rs:37-40`) and a global `~/.locode/AGENTS.md` are recognized. The
 override is **same-directory, first-match-wins**: within one directory, if
 `AGENTS.override.md` exists it **replaces** that directory's `AGENTS.md` entirely
@@ -115,11 +117,19 @@ conventionally-gitignored "local, uncommitted variant" of a directory's checked-
 `AGENTS.md` (the tool does not gitignore it for you). This contrasts with Claude's
 `CLAUDE.local.md`, an *additive* private tier rather than a replacement — we adopt
 Codex's replacement semantics.
-Rules-dir globbing (`.locode/rules/*.md`) is deferred (see Open Questions).
-**`@import` is out of scope** — we do not adopt Claude's `@path` include mechanism
-(`claude-code: claudemd.ts:459-486,537`); its external-approval prompts and
-cycle-guard machinery are not worth it for our headless core. Instructions are
-single files assembled by the directory walk, nothing more.
+**`@import` and rules dirs are out of scope.** We do not adopt Claude's `@path`
+include mechanism (`claude-code: claudemd.ts:459-486,537`) — its external-approval
+prompts and cycle-guard machinery are not worth it for a headless core. We also do
+not adopt **rules directories** (`.claude/rules/*.md`, `.cursor/rules/*.mdc`,
+`.grok/rules/*.md`): a rules dir is a *multi-file, frontmatter-driven* variant of
+project instructions whose real feature is **glob/path-conditional activation** —
+a rule with `globs: *.rs` loads only when the model touches a matching file
+(`grok: cursor_rules_on_read.rs:326,378`; Claude's conditional rules via
+`getConditionalRulesForCwdLevelDirectory`). That conditional machinery (glob
+matching + on-read injection + frontmatter parsing) is disproportionate for this
+core, and always-on rules are already expressible in a single `AGENTS.md`.
+Instructions are therefore **single `AGENTS.md` files assembled by the directory
+walk, nothing more.**
 
 **Root detection (walk).** Ascend from cwd; **stop at the nearest ancestor that
 matches either rule, first match wins**:
@@ -280,12 +290,13 @@ reverse-lossy caveat recorded in the ADR-0013 amendment.
   reverse-lossy escape hatch for a deliberately-emitted non-beta `Developer`
   message; do **not** turn a non-beta `Developer` into an error. Reminders are
   `User` regardless (Decision §3), so this fallback is out of the reminder path.
+- **`AGENTS.md` only — no `CLAUDE.md`, no vendor dirs.** The shared loader reads a
+  single canonical name and does not special-case `.claude`/`.cursor`/`.grok`
+  directories; cross-vendor ingestion is not a goal. (Decision §2, *Files*.)
+- **Rules directories → out of scope**, alongside `@import`. Their real value is
+  glob-conditional activation, whose machinery is disproportionate for this core;
+  always-on rules already fit in a single `AGENTS.md`. (Decision §2, *Files*.)
 
 ## Open Questions
 
-1. **`CLAUDE.md` alias scope** — recognize `CLAUDE.md` everywhere `AGENTS.md` is
-   scanned, or only at the repo root? And do we scan any `.claude`/`.cursor`
-   compatibility dirs, or keep the shared loader to `AGENTS.md`(+`CLAUDE.md`) only?
-2. **Rules dirs** — whether/when to add flat rules-dir globbing
-   (`.locode/rules/*.md`) to the shared loader (deferred, not rejected; `@import`
-   is rejected).
+None outstanding — the review closed every question above.
