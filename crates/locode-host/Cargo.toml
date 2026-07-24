@@ -17,6 +17,7 @@ thiserror = { workspace = true }
 ignore = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+regex = { workspace = true }
 tokio = { workspace = true, features = ["process", "io-util", "fs", "time", "rt", "macros", "sync"] }
 tokio-util = { workspace = true }
 

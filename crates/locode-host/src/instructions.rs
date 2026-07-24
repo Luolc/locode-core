@@ -58,9 +58,12 @@ pub struct InstructionsConfig {
     pub byte_budget: usize,
     /// Directory markers whose presence marks a project root (default `[".git"]`).
     pub root_markers: Vec<String>,
-    /// **Dormant seam** (ADR-0023 §2 / implementation note): a regex on a directory path
-    /// that, when it matches, stops the ascent. Not matched in v1 — real activation waits
-    /// for `settings.json` (would add the `regex` dependency). `TODO(settings)`.
+    /// ADR-0023 root-detection rule 2 (activated by ADR-0024 §1.4 / Task 31 S2):
+    /// a regex matched against each ancestor's **absolute path** during the ascent —
+    /// a match makes that directory the project root, exactly like a marker hit.
+    /// The escape hatch for VCS-less trees (monorepo segments, `/workspace/<p>`).
+    /// An invalid pattern degrades to no-pattern (the settings loader already
+    /// warned about it).
     pub root_stop_pattern: Option<String>,
     /// **Seam** (ADR-0023 implementation note): extra roots to also discover from. Honored
     /// by the walk, but no `--add-dir` CLI flag ships until the tool-jail-widening task.
@@ -118,8 +121,13 @@ fn load_impl(cwd: &Path, cfg: &InstructionsConfig, global: Option<&Path>) -> Pro
     }
 
     // Primary chain: root→cwd, deepest last (wins). Gitignore matcher rooted at the
-    // discovered project root (only when it is a real git root).
-    let root = find_root_from_markers(cwd, &cfg.root_markers);
+    // discovered project root (only when it is a real git root). The stop-pattern
+    // compiles here (invalid ⇒ None — the settings loader already warned).
+    let stop_pattern = cfg
+        .root_stop_pattern
+        .as_deref()
+        .and_then(|p| regex::Regex::new(p).ok());
+    let root = find_root_from_markers(cwd, &cfg.root_markers, stop_pattern.as_ref());
     let ignore = build_gitignore(&root);
     for dir in dirs_root_to_leaf(cwd, &root) {
         push_dir_entry(&dir, &mut entries, &mut seen, ignore.as_ref());
@@ -127,7 +135,7 @@ fn load_impl(cwd: &Path, cfg: &InstructionsConfig, global: Option<&Path>) -> Pro
 
     // Extra roots (seam): each discovered the same way, appended after the primary chain.
     for extra in &cfg.extra_roots {
-        let extra_root = find_root_from_markers(extra, &cfg.root_markers);
+        let extra_root = find_root_from_markers(extra, &cfg.root_markers, stop_pattern.as_ref());
         for dir in dirs_root_to_leaf(extra, &extra_root) {
             push_dir_entry(&dir, &mut entries, &mut seen, None);
         }
@@ -166,18 +174,23 @@ fn global_path_from(
         .map(|dir| dir.join(AGENTS_FILE))
 }
 
-/// Ascend from `start`; the nearest ancestor containing any `markers` entry is the root.
-/// No marker up to the filesystem root ⇒ cwd-only (returns `start`). The filesystem root
-/// is only a backstop, never itself the project root.
+/// Ascend from `start`; the nearest ancestor containing any `markers` entry **or whose
+/// absolute path matches `stop_pattern`** is the root (ADR-0023 rules 1+2). No hit up
+/// to the filesystem root ⇒ cwd-only (returns `start`). The filesystem root is only a
+/// backstop, never itself the project root.
 ///
-/// `root_stop_pattern` (a regex on the path) is a dormant seam and is **not** consulted
-/// here — see [`InstructionsConfig::root_stop_pattern`]. `TODO(settings)`.
-/// Shared with the settings loader (`pub(crate)` as `find_root_from_markers`), which
-/// locates `<project-root>/.locode/` the same way.
-pub(crate) fn find_root_from_markers(start: &Path, markers: &[String]) -> PathBuf {
+/// Shared with the settings loader (which passes `stop_pattern = None` — the settings
+/// files' own location is marker-detected only, avoiding a settings→pattern cycle).
+pub(crate) fn find_root_from_markers(
+    start: &Path,
+    markers: &[String],
+    stop_pattern: Option<&regex::Regex>,
+) -> PathBuf {
     let mut dir = Some(start);
     while let Some(d) = dir {
-        if markers.iter().any(|m| d.join(m).exists()) {
+        if markers.iter().any(|m| d.join(m).exists())
+            || stop_pattern.is_some_and(|re| re.is_match(&d.to_string_lossy()))
+        {
             return d.to_path_buf();
         }
         dir = d.parent();
@@ -426,20 +439,39 @@ mod tests {
     }
 
     #[test]
-    fn root_stop_pattern_is_a_dormant_noop() {
-        // Providing a pattern must not change behavior in v1 (guards the dormant seam).
+    fn root_stop_pattern_stops_the_ascent() {
+        // ADR-0023 rule 2 (active since Task 31 S2): a path-matching ancestor IS
+        // the root, so files above it are not read.
+        let (_g, root) = tmp();
+        fs::create_dir(root.join(".git")).unwrap();
+        write(&root.join(AGENTS_FILE), "top rules");
+        let x = root.join("x");
+        write(&x.join(AGENTS_FILE), "x rules");
+        let sub = x.join("y");
+        fs::create_dir_all(&sub).unwrap();
+
+        // Without the pattern: the .git root wins — both files load.
+        let got = load_project_instructions(&sub, &cfg_no_global());
+        assert_eq!(got.entries.len(), 2);
+
+        // With the pattern matching `.../x`: x is the root — top is not read.
+        let mut cfg = cfg_no_global();
+        cfg.root_stop_pattern = Some("/x$".to_string());
+        let got = load_project_instructions(&sub, &cfg);
+        assert_eq!(got.entries.len(), 1);
+        assert_eq!(got.entries[0].source_path, x.join(AGENTS_FILE));
+        assert_eq!(got.entries[0].content, "x rules");
+    }
+
+    #[test]
+    fn invalid_root_stop_pattern_degrades_to_no_pattern() {
         let (_g, root) = tmp();
         fs::create_dir(root.join(".git")).unwrap();
         write(&root.join(AGENTS_FILE), "rules");
-        let sub = root.join("x/y");
-        write(&sub.join(AGENTS_FILE), "leaf");
-
         let mut cfg = cfg_no_global();
-        cfg.root_stop_pattern = Some(".*/x$".to_string()); // would "stop at x" once wired
-        let got = load_project_instructions(&sub, &cfg);
-        // Still the full .git-root chain (pattern ignored): root + leaf.
-        assert_eq!(got.entries.len(), 2);
-        assert_eq!(got.entries[0].source_path, root.join(AGENTS_FILE));
+        cfg.root_stop_pattern = Some("[invalid".to_string());
+        let got = load_project_instructions(&root, &cfg);
+        assert_eq!(got.entries.len(), 1, "marker detection still works");
     }
 
     #[test]
