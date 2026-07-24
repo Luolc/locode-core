@@ -114,6 +114,26 @@ locode-exec` edge — is deferred; it is a mechanical move with no user-visible
 change, scheduled when the headless/TUI split is next touched. Until then the
 `locode-exec` *crate* remains, only its binary target is no longer released.
 
+## Amendment (2026-07-23): the collapse is rejected; `locode-exec` stays a standalone library
+
+User decision (2026-07-23), superseding the "remaining retire step" above:
+**`locode-exec` is *not* collapsed into `locode-tui`.** It stays a standalone
+library crate, so a headless-only consumer can depend on `locode-exec` (or the
+`locode-core` facade) **without** pulling in the TUI — collapsing the headless
+logic into `locode-tui` would force exactly that unwanted dependency. Done in this
+change:
+
+- **The `locode-exec` binary target is removed** (`src/main.rs` deleted). The crate
+  is now library-only; `run_headless` + `main_with` remain as the headless library
+  entry (downstream custom-provider headless binaries call `main_with(registry)`).
+- The `locode-tui → locode-exec` **library** edge is **kept** (the deferred
+  collapse/edge-drop is cancelled, not just postponed).
+- The CLI end-to-end tests moved from `locode-exec/tests/cli.rs` onto the shipped
+  `locode` binary at `locode-app/tests/cli.rs` (same `run_headless`, now under `-p`).
+
+Net crate roles: `locode-app` owns the shipped `locode` binary; `locode-exec` is the
+headless-runner library; `locode-tui` is the TUI library. No user-visible change.
+
 ## Amendment (2026-07-22): rendering decision superseded by ADR-0022
 
 The **Rendering** decision (§Decision.2) — fixed-height `Viewport::Inline` +

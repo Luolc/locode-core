@@ -64,9 +64,10 @@ and resolve the plan's open-questions section first.
   config-file persistence (XDG). *(Shared AGENTS.md loading promoted to Task 30, above.)*
 
 ### Tech debt
-- [ ] **Collapse the `locode-exec` crate** — migrate the headless logic
-  (`run.rs`/`output.rs`/`signal.rs`) into `locode-tui` or a shared lib and drop the
-  `locode-tui → locode-exec` edge. Mechanical, no user-visible change (Task 28 follow-up).
+- ~~Collapse the `locode-exec` crate into `locode-tui`~~ — **rejected (user, 2026-07-23):**
+  `locode-exec` stays a **standalone library** so headless-only consumers can depend on it (or
+  `locode-core`) **without** pulling in the TUI. Its **binary target was removed** 2026-07-23
+  (library only); the `locode-tui → locode-exec` *library* edge stays (ADR-0019 amendment).
 
 ---
 
@@ -115,7 +116,8 @@ One line per task. Design detail is the matching file under [`plans/`](plans/) (
   (ADR-0019 architecture; ADR-0020 code highlighting; ADR-0022 vendored terminal / dynamic
   composer; shaded prompt band; box-drawing tables; two-row corner footer).
 - [x] **Task 28** — unified `locode` binary: `-p` headless mode; the standalone `locode-exec`
-  *binary* retired 2026-07-22 (releases ship only `locode`; crate remains a headless library).
+  *binary* retired 2026-07-22 (releases ship only `locode`) and its trivial binary **target
+  removed** 2026-07-23; the `locode-exec` crate remains a standalone headless library.
 - [x] **Task 29** — live token streaming (ADR-0021): `Provider::stream` + `Event::MessageDelta`,
   Anthropic + Responses SSE (byte-identical assembly), TUI live cell with incremental markdown,
   headless `--stream`, whole-message trace preserved. Complete 2026-07-22.

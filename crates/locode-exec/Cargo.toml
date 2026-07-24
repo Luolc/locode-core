@@ -22,7 +22,6 @@ chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
-[dev-dependencies]
-assert_cmd = { workspace = true }
-predicates = { workspace = true }
-tempfile = { workspace = true }
+# No dev-dependencies: `locode-exec` is a library only (its binary was removed
+# 2026-07-23, ADR-0019 amendment). The headless CLI is exercised end-to-end against
+# the shipped `locode` binary in `locode-app/tests/cli.rs`.

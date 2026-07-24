@@ -33,7 +33,7 @@ and — since the 2026-07-18 rename below — the facade crate as well.
 | `locode-host` | fs/shell/path-jail/truncation/rg-resolution (injectable side-effect seam) |
 | `locode-engine` | sample→dispatch→append loop + `Session` driving API |
 | `locode-core` (was `locode`) | thin facade re-exporting the public surface |
-| `locode-exec` | headless runner library (`run_headless`); standalone binary retired 2026-07-22 |
+| `locode-exec` | headless runner **library** (`run_headless` + `main_with`); binary target removed 2026-07-23 — kept standalone (not collapsed into `locode-tui`) so headless-only consumers avoid the TUI dep (ADR-0019 amendment) |
 | `locode-tui` | TUI components + interactive app + `-p` headless dispatch (ADR-0019; added 2026-07-21) |
 | `locode-app` | flag-free product binary — the shipped `locode` (ADR-0019; added 2026-07-21) |
 

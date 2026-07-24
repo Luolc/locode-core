@@ -11,7 +11,7 @@
 
 These are the assumptions this spec is built on. Correct any that are wrong before implementation begins.
 
-1. **The core is a library, not an application.** Its deliverable is a set of `locode-*` library crates. The full agent binary (`locode` = `locode-app` → `locode-tui`) is built **in this repo** layered on the core (ADR-0001/0019 amendments): the interactive TUI by default and a headless one-shot under `-p`/`--print` (Task 28). The standalone `locode-exec` binary has been **retired** (2026-07-22): `locode -p` is the shipped headless path, and `locode-exec` remains a headless-runner *library* (`run_headless`) feeding it. The core crates themselves stay headless.
+1. **The core is a library, not an application.** Its deliverable is a set of `locode-*` library crates. The full agent binary (`locode` = `locode-app` → `locode-tui`) is built **in this repo** layered on the core (ADR-0001/0019 amendments): the interactive TUI by default and a headless one-shot under `-p`/`--print` (Task 28). The standalone `locode-exec` binary has been **removed** (retired as a shipped binary 2026-07-22; its trivial binary target deleted 2026-07-23): `locode -p` is the shipped headless path, and `locode-exec` remains a headless-runner **library** (`run_headless` + `main_with`) feeding it — kept **standalone** (deliberately *not* collapsed into `locode-tui`, ADR-0019 amendment) so headless-only consumers can depend on it without pulling in the TUI. The core crates themselves stay headless.
 2. **Primary target model is Claude** (Anthropic Messages wire first; `cache_control` breakpoint caching from day one). The **second wire shipped is OpenAI Responses** (`openai-responses`; stateless, freeform tools, encrypted-reasoning replay); an OpenAI Chat Completions wire remains deferred.
 3. **v0 is the `grok` harness pack** — a faithful port of Grok Build's real tools (ADR-0012). Other packs (`codex`/`claude`/`opencode`) and our own `locode` pack are the next milestone — real per-harness implementations, not re-skins.
 4. **Single-user, trusted-workspace threat model for v0.** A `workspace_root` path jail (**default**, on the first-class FS tools) + shell timeout/output caps is the security posture. The jail is a **configurable host `PathPolicy`** (`Jailed`, default / `Unrestricted`), skippable via `--dangerously-skip-permissions` (alias `--yolo`) for the harnesses' full-access behavior — the shell caps stay on regardless (ADR-0008 amendment). The shell tool is *not* path-jailed. OS sandboxing (Seatbelt/Landlock/seccomp) is a deferred extension behind the one dispatch door, not a v0 requirement.
@@ -23,7 +23,7 @@ These are the assumptions this spec is built on. Correct any that are wrong befo
 
 Build the **headless engine of a coding agent**: a production-grade, robust Rust core library that owns the classic *sample → dispatch → append → re-sample* loop, exposes a typed tool registry (shell + filesystem + search) whose JSON schemas are derived from the arg types, organized into a selectable **harness pack** (a faithful per-harness toolset), talks to a model through a **provider trait** with pluggable wire implementations, and returns a single structured result — with **no TUI and no interactive permission prompts**.
 
-**Users:** (1) the future `locode-app` (TUI + features) as a library consumer driving the engine programmatically; (2) researchers running headless A/B comparisons of harness packs and provider wires; (3) `locode-exec` as a thin reference consumer; (4) downstream consumers who want **just the tools** — the pack's tool implementations are a reusable library that can be dropped into *their own* harness loop, without using our engine (the `locode-core` facade re-exports the tool surface for this).
+**Users:** (1) the future `locode-app` (TUI + features) as a library consumer driving the engine programmatically; (2) researchers running headless A/B comparisons of harness packs and provider wires; (3) headless-only consumers who depend on `locode-exec` (the `run_headless`/`main_with` library entry) or `locode-core` **without** the TUI; (4) downstream consumers who want **just the tools** — the pack's tool implementations are a reusable library that can be dropped into *their own* harness loop, without using our engine (the `locode-core` facade re-exports the tool surface for this).
 
 **Success looks like:** a caller can drive one agent session to completion against Claude, under the `grok` harness pack, with the engine emitting exactly one machine-readable JSON report — and every architectural extension point (more harness packs, more wires, apply_patch, sandbox, MCP, streaming, compaction) is a seam, not a rewrite.
 
@@ -80,7 +80,7 @@ crates/
 ├── locode-host/         → fs/shell/path-jail/truncation/rg-resolution (injectable side-effect seam)
 ├── locode-engine/       → the sample→dispatch→append loop + Session driving API
 ├── locode-core/         → thin facade re-exporting the public surface (the bare name `locode` is taken on crates.io)
-├── locode-exec/         → headless runner library (`run_headless`, Codex-exec-style stdout discipline); standalone binary retired 2026-07-22
+├── locode-exec/         → headless runner **library** (`run_headless` + `main_with`, Codex-exec-style stdout discipline); binary target removed 2026-07-23 (library only; not collapsed into `locode-tui`)
 ├── locode-tui/          → TUI components + interactive app + `-p` headless dispatch (ADR-0019)
 └── locode-app/          → flag-free product binary — the shipped `locode`
 ```
@@ -150,8 +150,8 @@ Carried from the design doc §12, minus what we've now decided (wire = Anthropic
 3. **Schema-constrained task answers** (`--json-schema`) — native `response_format` first with a `StructuredOutput`-tool fallback; **envelope-only for v0 (deferred, confirmed).** Also open: verifying whether Anthropic and OpenAI accept the *same* derived JSON Schema (we assume yes → a single shared normalization helper, not per-wire); needs a verification pass before the wire relies on it.
 4. **Session durability** — when do ephemeral runs need JSONL transcript persistence?
 5. ~~**facade surface**~~ — **Resolved:** `locode-core` re-exports the driving API — including custom-provider
-   injection via `ProviderRegistry` (ADR-0015; `locode-exec` is a library + trivial binary
-   so downstream binaries register their own wires) — (`Session`, `EngineConfig`, report/event types, provider + pack selection) **and the full tool surface** (`Tool`, `Registry`, `dispatch`, `ToolCtx`, `ToolOutput`, `ToolSpec`, and the pack's concrete tools). A **first-class goal**: downstream consumers can use our tools inside *their own* harness loop without our engine (see Users #4). Widen further as `locode-app` needs.
+   injection via `ProviderRegistry` (ADR-0015; `locode-exec` is a **library** — downstream
+   binaries call `main_with(registry)` to register their own wires) — (`Session`, `EngineConfig`, report/event types, provider + pack selection) **and the full tool surface** (`Tool`, `Registry`, `dispatch`, `ToolCtx`, `ToolOutput`, `ToolSpec`, and the pack's concrete tools). A **first-class goal**: downstream consumers can use our tools inside *their own* harness loop without our engine (see Users #4). Widen further as `locode-app` needs.
 
 ## Decisions of record
 
