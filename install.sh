@@ -4,7 +4,7 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/luolc/locode-core/main/install.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/luolc/locode-core/main/install.sh | bash -s 0.1.7
+#   curl -fsSL https://raw.githubusercontent.com/luolc/locode-core/main/install.sh | bash -s 0.1.9
 #
 # Installs the `locode` agent: run `locode` for the interactive TUI, or
 # `locode -p "task"` for a headless one-shot.
