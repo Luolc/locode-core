@@ -330,3 +330,11 @@ surfaced three scope/sequencing facts. None change the decisions above; they rec
 
 The global `~/.locode/AGENTS.md` file (§2) **is** in v1 — home resolves dependency-free
 via `HOME`, and the direct-read rule above covers the out-of-repo read.
+
+> **Amendment (2026-07-24): the global file honors `$LOCODE_HOME`.** The home-dotfolder
+> study ([`../research/harness-study-home-dotfolders.md`](../research/harness-study-home-dotfolders.md))
+> standardizes `$LOCODE_HOME` as the `~/.locode` override (every studied harness has the
+> analog: `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `GROK_HOME`). The global-instruction resolver
+> now reads `$LOCODE_HOME/AGENTS.md` when the variable is set (non-empty), falling back to
+> `$HOME/.locode/AGENTS.md` — still dependency-free. Future `~/.locode` consumers
+> (settings, traces, skills) must use the same variable.
