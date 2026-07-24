@@ -29,6 +29,9 @@ pub enum EngineMsg {
         model: String,
         /// Working directory, home-shortened (for the status display).
         cwd: String,
+        /// Shell that `run_terminal_cmd` uses (for the status display), resolved
+        /// with grok's `$SHELL` rule (see `detect_shell`).
+        shell: String,
     },
     /// Session assembly failed pre-run (bad schema, missing key, …).
     BuildFailed(String),
@@ -73,9 +76,15 @@ pub fn spawn(
 
     // Own cli + registry so `/new` can rebuild the session on demand.
     tokio::spawn(async move {
+        // Resolved once — `$SHELL` doesn't change over a session.
+        let shell = detect_shell();
         let mut session = match build_session(&cli, &registry, msg_tx.clone()) {
             Ok((session, model, cwd)) => {
-                let _ = msg_tx.send(EngineMsg::Ready { model, cwd });
+                let _ = msg_tx.send(EngineMsg::Ready {
+                    model,
+                    cwd,
+                    shell: shell.clone(),
+                });
                 session
             }
             Err(message) => {
@@ -98,7 +107,11 @@ pub fn spawn(
                     Ok((fresh, model, cwd)) => {
                         session = fresh;
                         let _ = msg_tx.send(EngineMsg::SessionReset);
-                        let _ = msg_tx.send(EngineMsg::Ready { model, cwd });
+                        let _ = msg_tx.send(EngineMsg::Ready {
+                            model,
+                            cwd,
+                            shell: shell.clone(),
+                        });
                     }
                     Err(message) => {
                         let _ = msg_tx.send(EngineMsg::BuildFailed(message));
@@ -194,6 +207,24 @@ fn home_relative(path: &std::path::Path) -> String {
         Ok(rest) => format!("~/{}", rest.display()),
         Err(_) => path.display().to_string(),
     }
+}
+
+/// The shell `run_terminal_cmd` runs commands through, for the status display.
+/// Mirrors the host's resolution exactly (grok's `ShellSpec { detect_program:
+/// true }` in `locode-host::shell::shell_program_for`): the `$SHELL` basename
+/// when it is `bash` or `zsh`, else the host default `bash`. This is a display
+/// label — commands still run non-interactively (`<shell> -c`), so it reflects
+/// the shell binary, not that `~/.zshrc` is sourced (it isn't; see the shell docs).
+fn detect_shell() -> String {
+    std::env::var("SHELL")
+        .ok()
+        .and_then(|s| {
+            std::path::Path::new(&s)
+                .file_name()
+                .map(|f| f.to_string_lossy().into_owned())
+        })
+        .filter(|base| base == "bash" || base == "zsh")
+        .unwrap_or_else(|| "bash".to_string())
 }
 
 /// A unique-enough session id (mirrors locode-exec; no uuid dep).

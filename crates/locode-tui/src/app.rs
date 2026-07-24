@@ -134,6 +134,8 @@ pub struct App {
     pub model: Option<String>,
     /// Working directory, home-shortened (status display); set at engine ready.
     pub cwd: Option<String>,
+    /// Shell `run_terminal_cmd` uses (status display); set at engine ready.
+    pub shell: Option<String>,
     /// Cumulative input+output tokens across this session's runs (status usage).
     pub session_tokens: u64,
     /// Session assembly failed — submits are disabled.
@@ -186,6 +188,7 @@ impl App {
             history_saved: None,
             model: None,
             cwd: None,
+            shell: None,
             session_tokens: 0,
             engine_failed: false,
             spinner_frame: 0,
@@ -264,9 +267,10 @@ impl App {
 
     fn on_engine(&mut self, msg: EngineMsg, now: Instant) -> Vec<Cmd> {
         match msg {
-            EngineMsg::Ready { model, cwd } => {
+            EngineMsg::Ready { model, cwd, shell } => {
                 self.model = Some(model);
                 self.cwd = Some(cwd);
+                self.shell = Some(shell);
                 vec![]
             }
             EngineMsg::BuildFailed(message) => {
@@ -769,6 +773,7 @@ mod tests {
             Msg::Engine(Box::new(EngineMsg::Ready {
                 model: "mock-1".into(),
                 cwd: "~/proj".into(),
+                shell: "zsh".into(),
             })),
             Instant::now(),
         );

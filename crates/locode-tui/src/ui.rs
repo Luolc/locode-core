@@ -252,8 +252,15 @@ fn footer_lines(app: &App, width: u16) -> Vec<Line<'static>> {
             .as_ref()
             .map(|cwd| Span::styled(cwd.clone(), bold(Color::LightBlue)))
     };
-    // Row 1 right: clock icon + local time, dim (same gray as the old separators).
-    let time = Span::styled(format!("{CLOCK_ICON} {}", footer_clock(&Local::now())), dim);
+    // Row 1 right: `<shell> · <clock icon> <local time>`, dim (same gray as the
+    // old separators). The shell (what `run_terminal_cmd` uses) sits left of the
+    // time, a `·` between; dropped until the engine reports it.
+    let clock = format!("{CLOCK_ICON} {}", footer_clock(&Local::now()));
+    let right1 = match app.shell.as_deref() {
+        Some(shell) if !shell.is_empty() => format!("{shell} · {clock}"),
+        _ => clock,
+    };
+    let time = Span::styled(right1, dim);
 
     // Row 2 left: model (gray, bold).
     let left2 = app
@@ -372,13 +379,18 @@ mod tests {
         let mut app = App::new();
         app.cwd = Some("~/proj".into());
         app.model = Some("opus".into());
+        app.shell = Some("zsh".into());
         app.session_tokens = 3100;
         let rows = footer_lines(&app, 80);
         assert_eq!(rows.len(), 2, "footer is a 2-row status bar");
         let (r0, r1) = (rows[0].to_string(), rows[1].to_string());
-        // Row 1: cwd left, clock icon + time right.
+        // Row 1: cwd left; `<shell> · <clock> <time>` right.
         assert!(r0.starts_with("    ~/proj"), "cwd top-left: {r0:?}");
         assert!(r0.contains(CLOCK_ICON), "clock icon present: {r0:?}");
+        assert!(
+            r0.contains(&format!("zsh · {CLOCK_ICON}")),
+            "shell sits left of the time, `·` between: {r0:?}"
+        );
         assert!(
             r0.trim_end().ends_with(|c: char| c.is_ascii_digit()),
             "time ends the row: {r0:?}"

@@ -1,10 +1,9 @@
-# locode-core
+# Lo Code
 
-The headless Rust core of **locode**, a custom coding agent: the
-sample→dispatch→append loop, a typed tool registry, faithful per-harness tool
+A Rust-based custom coding agent: the
+sample → dispatch → append loop, a typed tool registry, faithful per-harness tool
 packs, and a provider/wire abstraction — shipped as a set of library crates
-plus the `locode` binary (run it for the interactive TUI, or `locode -p "task"`
-for a headless one-shot).
+plus the `locode` binary (run `locode -p "say hi"` for a headless rollout, or `locode` without `-p` for an experimental interactive TUI).
 
 ## Why
 
