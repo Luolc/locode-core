@@ -154,6 +154,7 @@ mod tests {
             is_git_repo: false,
             model: None,
             os_version: None,
+            timezone: None,
             strip_identity: false,
         }
     }

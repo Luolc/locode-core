@@ -54,20 +54,22 @@ The immediate queue, ahead of the remaining packs:
 Planning is a research task (AGENTS.md): re-read the harness source before starting each,
 and resolve the plan's open-questions section first.
 
-- [ ] **Task 19 — codex pack** (`--harness codex`, **in flight, overnight-autonomous**):
+- [x] **Task 19 — codex pack** (`--harness codex`, **complete** 2026-07-24):
   faithful port of codex's stock duo **`shell_command` + freeform `apply_patch`** + the
-  **gpt-5.6-sol** base prompt; **openai-responses-only**; `update_plan` and unified-exec
-  **not** ported (decisions locked). Entry point + resolved decisions + slice plan:
+  full **gpt-5.6-sol** base prompt + `<environment_context>` preamble; **openai-responses-only**;
+  `update_plan` and unified-exec **not** ported (decisions locked). Entry point + resolved
+  decisions + slice plan:
   [`../docs/codex-pack-dev-process.md`](../docs/codex-pack-dev-process.md); design detail
   [`plans/task-19-codex-pack.md`](plans/task-19-codex-pack.md) (reconciled; source re-pinned
-  to codex `f201c30c`, 2026-07-24). Scope L, ~3 slices.
+  to codex `f201c30c`, 2026-07-24). Scope L, 3 slices — all shipped.
   - [x] **Slice 1** — pack scaffold + `shell_command` + minimal prompt + `--harness codex`
     ([`plans/task-19-slice-1-scaffold-shell.md`](plans/task-19-slice-1-scaffold-shell.md)).
   - [x] **Slice 2** — freeform `apply_patch` (V4A parser + 4-tier fuzzy apply +
     `Host::remove_file`/`create_dir`) + always-appended apply_patch instructions +
     openai-responses-only wire enforcement
     ([`plans/task-19-slice-2-apply-patch.md`](plans/task-19-slice-2-apply-patch.md)).
-  - [ ] **Slice 3** — full gpt-5.6-sol prompt + `strip_identity` + `<environment_context>` preamble.
+  - [x] **Slice 3** — full gpt-5.6-sol prompt + `strip_identity` + `<environment_context>` preamble
+    ([`plans/task-19-slice-3-prompt.md`](plans/task-19-slice-3-prompt.md)).
 - [ ] **Task 15 — remaining packs: `opencode` (P1) + our own `locode` (P1)**. `opencode`
   is a faithful port (plan drafted: [`plans/task-15-opencode-pack.md`](plans/task-15-opencode-pack.md));
   `locode` is our best-of pack (grok-build-style naming; ADR-0011's rg-glob is scoped here).

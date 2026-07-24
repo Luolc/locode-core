@@ -227,6 +227,7 @@ mod tests {
             is_git_repo: false,
             model: Some("claude-opus-4-8".into()),
             os_version: Some("Darwin 24.6.0".into()),
+            timezone: None,
             strip_identity: false,
         };
         // D10: [System(prompt+env), User(<system-reminder> currentDate)].

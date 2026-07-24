@@ -35,6 +35,10 @@ pub struct PackContext {
     /// The OS version string for the Claude pack's env `OS Version:` line
     /// (`uname -s -r`, computed by the exec/tui layer). `None` skips the line.
     pub os_version: Option<String>,
+    /// The IANA timezone name for the codex pack's `<environment_context>`
+    /// `<timezone>` line (e.g. `America/Los_Angeles`), resolved best-effort by the
+    /// exec/tui layer. `None` omits the line (codex's field is optional).
+    pub timezone: Option<String>,
     /// Strip identity-revealing sentences from the rendered prompt (e.g. grok's
     /// "You are Grok released by xAI." and the `<user_guide>` block naming the
     /// Grok Build TUI). **Default `false` = faithful reproduction** (user

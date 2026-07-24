@@ -3,15 +3,15 @@
 //! extreme**: no read/grep/glob/write/edit tools — the shell is the read path and all
 //! editing goes through `apply_patch`.
 //!
-//! Current state (Slice 2): the pack scaffold + `shell_command` + freeform
-//! `apply_patch` + a minimal prompt (identity opener) + the always-appended
-//! `apply_patch` instructions block + the openai-responses-only wire requirement.
-//! The full gpt-5.6-sol prompt + `<environment_context>` preamble (Slice 3) land
-//! next — see `docs/codex-pack-dev-process.md`.
+//! The pack (complete): `shell_command` + freeform `apply_patch`, the full
+//! byte-exact gpt-5.6-sol `base_instructions` with the always-appended `apply_patch`
+//! instructions block, the `<environment_context>` User preamble item, and the
+//! openai-responses-only wire requirement — see `docs/codex-pack-dev-process.md`.
 //!
 //! Fidelity boundary (ADR-0023): the pack reproduces tools + prompt + static preamble
 //! only. `update_plan`, unified exec (PTY/background), the code-mode wrapper, subagents,
-//! skills, MCP, and compaction stay on the shared engine / are deferred.
+//! skills, MCP, compaction, and codex's per-turn `<environment_context>` world-state
+//! re-injection/diffing stay on the shared engine / are deferred.
 
 mod apply_patch;
 mod prompt;
@@ -61,16 +61,26 @@ impl Pack for CodexPack {
     }
 
     fn preamble(&self, ctx: &PackContext) -> Vec<Message> {
-        // A single System message = the base prompt + the always-appended apply_patch
-        // instructions (D4/D7), joined with `\n` (codex's own append form). Slice 3
-        // adds the `<environment_context>` User item and swaps in the full prompt.
-        // Codex sends the base prompt as `instructions` on the Responses wire; our
-        // System hoists there (Task 18).
-        let text = format!("{}\n{}", prompt::render(ctx), APPLY_PATCH_INSTRUCTIONS);
-        vec![Message {
-            role: Role::System,
-            content: vec![ContentBlock::Text { text }],
-        }]
+        // [System(base prompt + apply_patch instructions), User(<environment_context>)]
+        // (D7). The System is the full gpt-5.6-sol `base_instructions` with the
+        // always-appended apply_patch block (D4), `\n`-joined — codex's own append
+        // form; it hoists to `instructions` on the Responses wire (Task 18). The User
+        // item is codex's first-turn `<environment_context>` snapshot (cwd/shell/date/
+        // tz). Codex's per-turn world-state re-injection/diffing is loop-adjacent
+        // machinery (ADR-0023) and stays on the shared engine.
+        let system = format!("{}\n{}", prompt::render(ctx), APPLY_PATCH_INSTRUCTIONS);
+        vec![
+            Message {
+                role: Role::System,
+                content: vec![ContentBlock::Text { text: system }],
+            },
+            Message {
+                role: Role::User,
+                content: vec![ContentBlock::Text {
+                    text: prompt::environment_context(ctx),
+                }],
+            },
+        ]
     }
 }
 
@@ -235,7 +245,7 @@ mod tests {
     }
 
     #[test]
-    fn preamble_appends_apply_patch_instructions() {
+    fn preamble_is_system_prompt_then_user_environment_context() {
         let dir = tempfile::tempdir().unwrap();
         let pc = PackContext {
             cwd: dir.path().to_path_buf(),
@@ -246,21 +256,32 @@ mod tests {
             is_git_repo: false,
             model: Some("gpt-5.6-sol".into()),
             os_version: None,
+            timezone: Some("America/Los_Angeles".into()),
             strip_identity: false,
         };
+        // D7: [System(full prompt + apply_patch instructions), User(<environment_context>)].
         let msgs = CodexPack.preamble(&pc);
-        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].role, Role::System);
-        // A single System message carrying BOTH the identity render AND the
-        // always-appended apply_patch instructions block (D4).
-        let ContentBlock::Text { text } = &msgs[0].content[0] else {
+        assert_eq!(msgs[1].role, Role::User);
+        let ContentBlock::Text { text: system } = &msgs[0].content[0] else {
             panic!("expected text");
         };
-        assert!(text.starts_with("You are Codex"), "{text}");
-        assert!(text.contains("## `apply_patch`"), "instructions appended");
+        assert!(system.starts_with("You are Codex"), "{system}");
+        assert!(system.contains("# Personality"), "full prompt present");
+        assert!(system.contains("## `apply_patch`"), "instructions appended");
         assert!(
-            text.contains("*** Begin Patch"),
+            system.contains("*** Begin Patch"),
             "instructions body present"
+        );
+        let ContentBlock::Text { text: env } = &msgs[1].content[0] else {
+            panic!("expected text");
+        };
+        assert!(env.starts_with("<environment_context>"), "{env}");
+        assert!(env.contains("<shell>zsh</shell>"), "{env}");
+        assert!(
+            env.contains("<timezone>America/Los_Angeles</timezone>"),
+            "{env}"
         );
     }
 

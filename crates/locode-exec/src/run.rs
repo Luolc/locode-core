@@ -88,6 +88,7 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
         is_git_repo: detect_git_repo(&cwd),
         model: Some(model.clone()),
         os_version: os_version(),
+        timezone: timezone(),
         strip_identity: cli.strip_identity,
     };
     let preamble = pack.preamble(&pack_ctx);
@@ -204,6 +205,31 @@ fn os_version() -> Option<String> {
         }
         let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
         (!s.is_empty()).then_some(s)
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
+/// Best-effort IANA timezone name for the codex pack's `<environment_context>`
+/// (`America/Los_Angeles`), dependency-free: `$TZ` if set, else the `/etc/localtime`
+/// symlink target after `zoneinfo/`. `None` when neither resolves (the pack then
+/// omits the `<timezone>` line — codex's field is optional).
+fn timezone() -> Option<String> {
+    if let Ok(tz) = std::env::var("TZ") {
+        let tz = tz.trim();
+        if !tz.is_empty() {
+            return Some(tz.to_string());
+        }
+    }
+    #[cfg(unix)]
+    {
+        let target = std::fs::read_link("/etc/localtime").ok()?;
+        let s = target.to_string_lossy();
+        s.split_once("zoneinfo/")
+            .map(|(_, name)| name.to_string())
+            .filter(|name| !name.is_empty())
     }
     #[cfg(not(unix))]
     {
