@@ -40,6 +40,14 @@ pub struct Cli {
     #[arg(long)]
     pub settings: Option<String>,
 
+    /// Continue the newest session started in this cwd (ADR-0024 §2.5).
+    #[arg(short = 'c', long = "continue", conflicts_with = "resume")]
+    pub continue_session: bool,
+
+    /// Resume the session with this id (this cwd's sessions first, then anywhere).
+    #[arg(short = 'r', long = "resume", value_name = "SESSION_ID")]
+    pub resume: Option<String>,
+
     /// Working directory (defaults to the current directory); canonicalized
     /// once and shared by the jail, engine, and pack.
     #[arg(long)]
@@ -89,6 +97,8 @@ impl Cli {
             harness: self.harness,
             api_schema: self.api_schema.clone(),
             settings: self.settings.clone(),
+            continue_session: self.continue_session,
+            resume: self.resume.clone(),
             max_turns: self.max_turns,
             output_format: self.output_format,
             dangerously_skip_permissions: self.dangerously_skip_permissions,

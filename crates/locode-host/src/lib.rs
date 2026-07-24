@@ -31,7 +31,10 @@ pub use shell::{
     ExecError, ExecOutput, ExecRequest, FrontBackCapture, FrontBackSpec, SPILL_RETAIN_MAX,
     ShellSpec,
 };
-pub use trace::{GitMeta, SessionMeta, TRACE_SCHEMA_VERSION, TraceExtras, TraceWriter};
+pub use trace::{
+    GitMeta, RolloutContents, SessionMeta, TRACE_SCHEMA_VERSION, TraceExtras, TraceWriter,
+    find_latest_rollout, find_rollout_by_id, read_rollout,
+};
 pub use walk::{WalkEntry, WalkOptions};
 
 use std::path::{Path, PathBuf};

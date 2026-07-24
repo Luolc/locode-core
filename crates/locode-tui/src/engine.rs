@@ -79,87 +79,97 @@ pub fn spawn(
     tokio::spawn(async move {
         // Resolved once — `$SHELL` doesn't change over a session.
         let shell = detect_shell();
-        // The pack owns user-prompt shaping; resolve it once for the run loop
-        // (flag, else the settings default — ADR-0024 §1.4).
-        let pack: &'static dyn Pack = match resolve_pack(&cli) {
-            Ok(pack) => pack,
-            Err(e) => {
-                let _ = msg_tx.send(EngineMsg::BuildFailed(e));
-                return;
-            }
-        };
-        let mut session = match build_session(&cli, &registry, msg_tx.clone()) {
-            Ok((session, model, cwd)) => {
-                let _ = msg_tx.send(EngineMsg::Ready {
-                    model,
-                    cwd,
-                    shell: shell.clone(),
-                });
-                session
-            }
+        // Build first, THEN resolve the pack from the built identity — a
+        // resumed session's recorded harness wins over flags/settings
+        // (ADR-0024 §2.5), so shaping must follow the build.
+        let mut built = match build_session(&cli, &registry, msg_tx.clone(), true) {
+            Ok(built) => built,
             Err(message) => {
                 let _ = msg_tx.send(EngineMsg::BuildFailed(message));
                 return;
             }
         };
+        let mut pack: &'static dyn Pack = match locode_core::resolve(&built.harness) {
+            Ok(pack) => pack,
+            Err(e) => {
+                let _ = msg_tx.send(EngineMsg::BuildFailed(e.to_string()));
+                return;
+            }
+        };
+        let _ = msg_tx.send(EngineMsg::Ready {
+            model: built.model.clone(),
+            cwd: built.cwd_display.clone(),
+            shell: shell.clone(),
+        });
+        // A resumed session replays its recovered transcript into the UI.
+        for message in built.replay.drain(..) {
+            let _ = msg_tx.send(EngineMsg::Event(Box::new(locode_core::Event::Message {
+                message,
+            })));
+        }
         while let Some(command) = cmd_rx.recv().await {
             match command {
                 UiCommand::Submit(text) => {
                     // Clone the handle BEFORE run() (ADR-0018 mandate — run
                     // takes &mut self, so nothing is callable mid-run).
-                    let cancel = session.cancel_handle();
+                    let cancel = built.session.cancel_handle();
                     let _ = msg_tx.send(EngineMsg::RunStarted { cancel });
                     // Pack-faithful prompt shaping, as locode-exec does.
-                    let report = session.run_text(pack.shape_user_prompt(&text)).await;
+                    let report = built.session.run_text(pack.shape_user_prompt(&text)).await;
                     let _ = msg_tx.send(EngineMsg::RunFinished(Box::new(report)));
                 }
-                UiCommand::NewSession => match build_session(&cli, &registry, msg_tx.clone()) {
-                    Ok((fresh, model, cwd)) => {
-                        session = fresh;
-                        let _ = msg_tx.send(EngineMsg::SessionReset);
-                        let _ = msg_tx.send(EngineMsg::Ready {
-                            model,
-                            cwd,
-                            shell: shell.clone(),
-                        });
+                // `/new` always starts FRESH — the resume intent does not stick.
+                UiCommand::NewSession => {
+                    match build_session(&cli, &registry, msg_tx.clone(), false) {
+                        Ok(fresh) => {
+                            built = fresh;
+                            pack = match locode_core::resolve(&built.harness) {
+                                Ok(pack) => pack,
+                                Err(e) => {
+                                    let _ = msg_tx.send(EngineMsg::BuildFailed(e.to_string()));
+                                    return;
+                                }
+                            };
+                            let _ = msg_tx.send(EngineMsg::SessionReset);
+                            let _ = msg_tx.send(EngineMsg::Ready {
+                                model: built.model.clone(),
+                                cwd: built.cwd_display.clone(),
+                                shell: shell.clone(),
+                            });
+                        }
+                        Err(message) => {
+                            let _ = msg_tx.send(EngineMsg::BuildFailed(message));
+                        }
                     }
-                    Err(message) => {
-                        let _ = msg_tx.send(EngineMsg::BuildFailed(message));
-                    }
-                },
+                }
             }
         }
     });
     (cmd_tx, msg_rx)
 }
 
-/// Resolve the effective pack: the `--harness` flag, else the settings
-/// `harness` default (ADR-0024 §1.4), else `grok`. Settings need a cwd; this
-/// pre-session resolution mirrors `build_session`'s (same flags, same layers).
-fn resolve_pack(cli: &Cli) -> Result<&'static dyn Pack, String> {
-    let harness_name = if let Some(harness) = cli.harness {
-        harness.as_str().to_string()
-    } else {
-        let cwd = match &cli.cwd {
-            Some(dir) => dir.clone(),
-            None => std::env::current_dir().map_err(|e| e.to_string())?,
-        };
-        locode_core::load_settings(&cwd, cli.settings.as_deref())
-            .settings
-            .harness
-            .unwrap_or_else(|| "grok".to_string())
-    };
-    locode_core::resolve(&harness_name).map_err(|e| e.to_string())
-}
-
 /// Assemble the session exactly as `locode-exec` does (canonical cwd shared
 /// by jail/engine/pack; --yolo lifts the jail). Duplication flagged in the
 /// slice plan; a facade helper is a future core proposal.
+/// One built session plus its resolved identity and (for resume) the recovered
+/// transcript to replay into the UI.
+struct BuiltSession {
+    session: Session,
+    model: String,
+    cwd_display: String,
+    /// The effective harness (a resumed session's recorded pack wins).
+    harness: String,
+    /// Recovered messages to render (empty for a fresh session).
+    replay: Vec<locode_core::Message>,
+}
+
+#[allow(clippy::too_many_lines)] // linear assembly, mirrored from locode-exec
 fn build_session(
     cli: &Cli,
     registry: &ProviderRegistry,
     events: tokio::sync::mpsc::UnboundedSender<EngineMsg>,
-) -> Result<(Session, String, String), String> {
+    allow_resume: bool,
+) -> Result<BuiltSession, String> {
     let cwd = match &cli.cwd {
         Some(dir) => dir.clone(),
         None => std::env::current_dir().map_err(|e| e.to_string())?,
@@ -177,9 +187,46 @@ fn build_session(
     // has no stderr surface, so layer warnings are dropped here; the `-p`
     // headless path prints them (locode-exec).
     let settings = locode_core::load_settings(&cwd, cli.settings.as_deref()).settings;
-    let harness_name = match cli.harness {
-        Some(harness) => harness.as_str().to_string(),
-        None => settings
+
+    // Resume target (`-c`/`-r`, ADR-0024 §2.5): the rollout header wins the
+    // identity; an explicit conflicting flag errors (no silent pack/wire swap).
+    let resumed = if allow_resume && (cli.continue_session || cli.resume.is_some()) {
+        let home = locode_core::locode_home()?;
+        let root = home.join("sessions");
+        let path = if let Some(id) = &cli.resume {
+            locode_core::find_rollout_by_id(&root, &cwd, id)
+                .ok_or_else(|| format!("--resume: no session `{id}` found"))?
+        } else {
+            locode_core::find_latest_rollout(&root, &cwd)
+                .ok_or_else(|| format!("--continue: no session found for {}", cwd.display()))?
+        };
+        let contents = locode_core::read_rollout(&path)?;
+        if let Some(flag) = cli.harness
+            && flag.as_str() != contents.meta.harness
+        {
+            return Err(format!(
+                "--harness {} conflicts with the resumed session's harness `{}`",
+                flag.as_str(),
+                contents.meta.harness
+            ));
+        }
+        if let Some(flag) = &cli.api_schema
+            && flag != &contents.meta.api_schema
+        {
+            return Err(format!(
+                "--api-schema {flag} conflicts with the resumed session's wire `{}`",
+                contents.meta.api_schema
+            ));
+        }
+        Some((path, contents))
+    } else {
+        None
+    };
+
+    let harness_name = match (&resumed, cli.harness) {
+        (Some((_, contents)), _) => contents.meta.harness.clone(),
+        (None, Some(harness)) => harness.as_str().to_string(),
+        (None, None) => settings
             .harness
             .clone()
             .unwrap_or_else(|| "grok".to_string()),
@@ -188,18 +235,28 @@ fn build_session(
     let registry_tools = pack.build_registry(&host);
 
     // Provider first so the pack env block can name the model (D9).
-    let session_id = new_session_id();
-    let api_schema = cli
-        .api_schema
-        .clone()
-        .or_else(|| settings.api_schema.clone())
-        .unwrap_or_else(|| "anthropic".to_string());
+    let session_id = match &resumed {
+        Some((_, contents)) => contents.meta.session_id.clone(),
+        None => new_session_id(),
+    };
+    let api_schema = match &resumed {
+        Some((_, contents)) => contents.meta.api_schema.clone(),
+        None => cli
+            .api_schema
+            .clone()
+            .or_else(|| settings.api_schema.clone())
+            .unwrap_or_else(|| "anthropic".to_string()),
+    };
+    let model_override = match &resumed {
+        Some((_, contents)) => Some(contents.meta.model.clone()),
+        None => settings.model.clone(),
+    };
     let built = registry
         .build(
             &api_schema,
             &ProviderInit {
                 session_id: session_id.clone(),
-                model: settings.model.clone(),
+                model: model_override,
             },
         )
         .map_err(|e| e.to_string())?;
@@ -217,7 +274,12 @@ fn build_session(
         timezone: detect_timezone(),
         strip_identity: cli.strip_identity,
     };
-    let preamble = pack.preamble(&pack_ctx);
+    // A resumed session's preamble IS the recovered history (the pack preamble
+    // is inside it — it was traced); Init then carries the full transcript.
+    let preamble = match &resumed {
+        Some((_, contents)) => contents.history.clone(),
+        None => pack.preamble(&pack_ctx),
+    };
 
     let config = EngineConfig {
         session_id,
@@ -250,15 +312,19 @@ fn build_session(
     // Session trace (ADR-0024 §2): decoration on the sink, same as the headless
     // path. Interactive mode has no stderr surface; a trace failure silently
     // disables the writer (the headless path warns).
-    let mut trace = locode_core::locode_home().ok().map(|home| {
-        locode_core::TraceWriter::new(
-            home.join("sessions"),
-            locode_core::TraceExtras {
-                cli_version: env!("CARGO_PKG_VERSION").to_string(),
-                git: git_meta(&cwd),
-                ..Default::default()
-            },
-        )
+    let mut trace = locode_core::locode_home().ok().and_then(|home| {
+        let root = home.join("sessions");
+        match &resumed {
+            Some((path, _)) => locode_core::TraceWriter::resume(path.clone(), root).ok(),
+            None => Some(locode_core::TraceWriter::new(
+                root,
+                locode_core::TraceExtras {
+                    cli_version: env!("CARGO_PKG_VERSION").to_string(),
+                    git: git_meta(&cwd),
+                    ..Default::default()
+                },
+            )),
+        }
     });
     let sink: Box<dyn EventSink> = Box::new(FnSink(move |event| {
         if let Some(trace) = trace.as_mut() {
@@ -268,7 +334,16 @@ fn build_session(
     }));
     let session =
         Session::new(provider, registry_tools, preamble, config, sink).with_approver(approver);
-    Ok((session, model, cwd_display))
+    let replay = resumed
+        .map(|(_, contents)| contents.history)
+        .unwrap_or_default();
+    Ok(BuiltSession {
+        session,
+        model,
+        cwd_display,
+        harness: harness_name,
+        replay,
+    })
 }
 
 /// Best-effort git provenance for the trace header (ADR-0024 §2.3) — mirrors

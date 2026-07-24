@@ -44,8 +44,8 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
     // ---- 2. Workspace root: canonicalize FIRST, then hand the SAME canonical
     //         path to the host (jail root), the engine (cwd), and the pack
     //         (prompt context) — they must agree (STATUS concern #7). ----
-    let cwd = match cli.cwd {
-        Some(dir) => dir,
+    let cwd = match &cli.cwd {
+        Some(dir) => dir.clone(),
         None => std::env::current_dir()?,
     };
     let cwd = std::fs::canonicalize(&cwd)
@@ -66,30 +66,24 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
     }
     let settings = settings_load.settings;
 
+    // ---- 2c. Resume target (`-c`/`-r`, ADR-0024 §2.5): recover the transcript
+    //          and the run identity (pack/wire/model/id) from the rollout header;
+    //          an explicit conflicting flag errors rather than silently swapping
+    //          a session's pack or wire mid-transcript. ----
+    let identity = resolve_identity(&cli, &cwd, &settings)?;
+
     // ---- 3. Provider: registry-resolved (ADR-0015); unknown names and factory
     //         failures (missing env, …) fail BEFORE driving the loop. Built first
     //         so the pack env block can name the model (D9). ----
-    let harness_name = match cli.harness {
-        Some(harness) => harness.as_str().to_string(),
-        None => settings
-            .harness
-            .clone()
-            .unwrap_or_else(|| "grok".to_string()),
-    };
-    let pack = locode_core::resolve(&harness_name)?;
+    let pack = locode_core::resolve(&identity.harness)?;
     let registry = pack.build_registry(&host);
-    let session_id = new_session_id();
-    let api_schema = cli
-        .api_schema
-        .clone()
-        .or_else(|| settings.api_schema.clone())
-        .unwrap_or_else(|| "anthropic".to_string());
+    let session_id = identity.session_id.clone();
     let built = providers
         .build(
-            &api_schema,
+            &identity.api_schema,
             &ProviderInit {
                 session_id: session_id.clone(),
-                model: settings.model.clone(),
+                model: identity.model_override.clone(),
             },
         )
         .map_err(|e| PreRunError(e.to_string()))?;
@@ -113,7 +107,13 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
         timezone: timezone(),
         strip_identity: cli.strip_identity,
     };
-    let preamble = pack.preamble(&pack_ctx);
+    // A resumed session's preamble IS the recovered history (the pack preamble
+    // is already inside it — it was traced); Init then carries the full
+    // transcript, keeping the stream self-sufficient with zero engine changes.
+    let preamble = match &identity.resumed {
+        Some(resumed) => resumed.history.clone(),
+        None => pack.preamble(&pack_ctx),
+    };
 
     // Pack-specific user-prompt shaping (grok wraps in <user_query>; claude sends
     // it verbatim). The pack owns the shape — the exec layer stays harness-agnostic.
@@ -148,15 +148,22 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
     //          `<locode home>/sessions/<encoded-cwd>/`. Tracing is decoration on
     //          the event sink — zero engine changes — and a failure disables the
     //          writer with a warning, never the run. No home ⇒ no tracing.
-    let mut trace = locode_core::locode_home().ok().map(|home| {
-        locode_core::TraceWriter::new(
-            home.join("sessions"),
-            locode_core::TraceExtras {
-                cli_version: env!("CARGO_PKG_VERSION").to_string(),
-                git: git_meta(&config.cwd),
-                ..Default::default()
-            },
-        )
+    let mut trace = locode_core::locode_home().ok().and_then(|home| {
+        let root = home.join("sessions");
+        match &identity.resumed {
+            // Reopen the same rollout for appending (id and file continue).
+            Some(resumed) => locode_core::TraceWriter::resume(resumed.path.clone(), root)
+                .map_err(|e| output::warning_line(&format!("trace: {e}; tracing disabled")))
+                .ok(),
+            None => Some(locode_core::TraceWriter::new(
+                root,
+                locode_core::TraceExtras {
+                    cli_version: env!("CARGO_PKG_VERSION").to_string(),
+                    git: git_meta(&config.cwd),
+                    ..Default::default()
+                },
+            )),
+        }
     });
 
     let sink = make_sink(cli.output_format, trace.take());
@@ -173,6 +180,101 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
         OutputFormat::StreamJson => {} // the result event already streamed
     }
     Ok(output::exit_code(report.status))
+}
+
+/// A recovered session (`-c`/`-r`): its rollout path + replayable history.
+struct ResumedSession {
+    path: std::path::PathBuf,
+    history: Vec<locode_core::Message>,
+}
+
+/// The run identity: pack/wire/model/session-id, from flags, settings, and (for
+/// `-c`/`-r`) the rollout header — which wins over settings but loses to an
+/// explicit flag only by *erroring* (no silent pack/wire swap mid-transcript).
+struct RunIdentity {
+    harness: String,
+    api_schema: String,
+    model_override: Option<String>,
+    session_id: String,
+    resumed: Option<ResumedSession>,
+}
+
+fn resolve_identity(
+    cli: &Cli,
+    cwd: &std::path::Path,
+    settings: &locode_core::Settings,
+) -> Result<RunIdentity, PreRunError> {
+    // Locate + read the rollout when resuming.
+    let recovered = if cli.continue_session || cli.resume.is_some() {
+        let home = locode_core::locode_home().map_err(PreRunError)?;
+        let root = home.join("sessions");
+        let path = if let Some(id) = &cli.resume {
+            locode_core::find_rollout_by_id(&root, cwd, id)
+                .ok_or_else(|| PreRunError(format!("--resume: no session `{id}` found")))?
+        } else {
+            locode_core::find_latest_rollout(&root, cwd).ok_or_else(|| {
+                PreRunError(format!(
+                    "--continue: no session found for {}",
+                    cwd.display()
+                ))
+            })?
+        };
+        let contents = locode_core::read_rollout(&path).map_err(PreRunError)?;
+        Some((path, contents))
+    } else {
+        None
+    };
+
+    if let Some((path, contents)) = recovered {
+        let meta = contents.meta;
+        // Explicit flags may confirm the recorded identity, never change it.
+        if let Some(flag) = cli.harness
+            && flag.as_str() != meta.harness
+        {
+            return Err(PreRunError(format!(
+                "--harness {} conflicts with the resumed session's harness `{}`",
+                flag.as_str(),
+                meta.harness
+            )));
+        }
+        if let Some(flag) = &cli.api_schema
+            && flag != &meta.api_schema
+        {
+            return Err(PreRunError(format!(
+                "--api-schema {flag} conflicts with the resumed session's wire `{}` \
+                 (a session never crosses wires)",
+                meta.api_schema
+            )));
+        }
+        return Ok(RunIdentity {
+            harness: meta.harness.clone(),
+            api_schema: meta.api_schema.clone(),
+            model_override: Some(meta.model.clone()),
+            session_id: meta.session_id.clone(),
+            resumed: Some(ResumedSession {
+                path,
+                history: contents.history,
+            }),
+        });
+    }
+
+    Ok(RunIdentity {
+        harness: match cli.harness {
+            Some(harness) => harness.as_str().to_string(),
+            None => settings
+                .harness
+                .clone()
+                .unwrap_or_else(|| "grok".to_string()),
+        },
+        api_schema: cli
+            .api_schema
+            .clone()
+            .or_else(|| settings.api_schema.clone())
+            .unwrap_or_else(|| "anthropic".to_string()),
+        model_override: settings.model.clone(),
+        session_id: new_session_id(),
+        resumed: None,
+    })
 }
 
 /// The event sink for `output_format`, decorated with the session-trace writer
