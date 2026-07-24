@@ -144,3 +144,39 @@ nobody models); `text_only` = capture-only, never replayed. Each wire's build
 replays only its own format(s) and drops foreign formats (a session never
 crosses wires). Rationale: one reasoning shape in every trace/report for eval
 tooling, with semantics explicit instead of inferred from field shapes.
+
+## Amendment (2026-07-23): `Developer` is native-mapped only; injected framing is `User` (see [ADR-0023](ADR-0023-fidelity-boundary-and-agents-md-loading.md))
+
+The original decision let `Developer` carry "environment reminders, mid-conversation
+nudges" and gave it a **portable fallback** rendering: a `role:"user"` message
+wrapped in `<system-reminder>` (default on the Anthropic wire, table row 74;
+`crates/locode-provider/src/anthropic/build.rs:133-146`). Designing `AGENTS.md`
+injection exposed that this fallback is **not reverse-lossless**: forward
+(`Developer` → user `<system-reminder>`) is fine, but given a `role:"user"` payload
+message nothing reliably recovers whether it *was* a `Developer` — vs. genuine user
+text or a plain reminder. Reconstructing the role needs hand-maintained
+tag/format detection that differs per pack and breaks the instant a user's own text
+contains the sentinel. `Developer` earns its place precisely by mapping **1:1 and
+losslessly** onto a native provider role (OpenAI `role:"developer"`; Anthropic beta
+mid-conversation `role:"system"`), and the fallback quietly breaks that property.
+
+Therefore, narrowing the role:
+
+- **`Developer` is reserved for content that has a genuine native role to ride** —
+  the beta system message, or OpenAI `developer` — where `Developer ⇄ payload`
+  round-trips bijectively. It is **no longer** the vehicle for reminders or
+  injected framing.
+- **Injected framing — project instructions (`AGENTS.md`), reminders, nudges — is
+  authored as `User`** content blocks carrying `<system-reminder>…</system-reminder>`
+  from the start. A value whose only faithful rendering on a wire is the
+  user-`<system-reminder>` fallback must be `User`, so there is no role to recover
+  and the conversation ⇄ payload conversion is losslessly bidirectional by
+  construction.
+- `DeveloperRendering::SystemReminder` stays in the Anthropic wire for a caller who
+  deliberately emits a `Developer` message without the beta, but it carries this
+  **reverse-lossy caveat** and is not used for reminders. Whether to retire it (make
+  a non-beta `Developer` an error) is ADR-0023 Open Question 6.
+
+The role table (line 38) and the Anthropic mapping (line 74, "*or* fallback …") are
+read subject to this amendment: the fallback is a deliberate, caveated escape
+hatch, not the home for reminders.
