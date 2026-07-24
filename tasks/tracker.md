@@ -42,7 +42,10 @@ and resolve the plan's open-questions section first.
   [`plans/task-19-codex-pack.md`](plans/task-19-codex-pack.md). Scope L.
 - [ ] **Task 20 — claude pack** (`--harness claude`): Bash/Read/Edit/Write/Glob/Grep with
   verbatim schemas + the read-before-edit / modified-since-read freshness gate + static
-  prompt. No wire dependency. Plan: [`plans/task-20-claude-pack.md`](plans/task-20-claude-pack.md). Scope L.
+  prompt. No wire dependency. **Autonomous workstream** — entry point + resolved decisions +
+  slice plan: [`../docs/claude-pack-dev-process.md`](../docs/claude-pack-dev-process.md);
+  design detail: [`plans/task-20-claude-pack.md`](plans/task-20-claude-pack.md). Scope L,
+  ~7 slices.
 - [ ] **Task 15 — remaining packs: `opencode` + our own `locode`** (after 19/20). `opencode`
   is a faithful port; `locode` is our best-of pack (grok-build-style naming; ADR-0011's
   rg-glob is scoped here). Plan from source when scheduled. Scope L (split per pack).
