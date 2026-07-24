@@ -270,7 +270,11 @@ fn footer_lines(app: &App, width: u16) -> Vec<Line<'static>> {
     // Row 2 right: session tokens (red "Cayenne", bold) — always shown so the
     // corner stays populated (a 0-token fresh session still shows `0 tok`).
     let tokens = Span::styled(
-        format!("{} tokens", fmt_tokens(app.session_tokens)),
+        format!(
+            "{}{} tokens",
+            if app.context_estimated { "~" } else { "" },
+            fmt_tokens(app.context_tokens)
+        ),
         bold(Color::Red),
     );
 
@@ -380,7 +384,7 @@ mod tests {
         app.cwd = Some("~/proj".into());
         app.model = Some("opus".into());
         app.shell = Some("zsh".into());
-        app.session_tokens = 3100;
+        app.context_tokens = 3100;
         let rows = footer_lines(&app, 80);
         assert_eq!(rows.len(), 2, "footer is a 2-row status bar");
         let (r0, r1) = (rows[0].to_string(), rows[1].to_string());
@@ -449,7 +453,7 @@ mod tests {
         let mut app = App::new();
         app.cwd = Some("~/proj".into());
         app.model = Some("opus".into());
-        app.session_tokens = 3100;
+        app.context_tokens = 3100;
         let rows = footer_lines(&app, 80);
         // Corner colors (user scheme, 2026-07-22): cwd bright blue, model gray,
         // tokens red ("Cayenne"), all bold; the time is dim, not bold.

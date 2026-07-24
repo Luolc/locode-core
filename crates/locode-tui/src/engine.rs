@@ -21,6 +21,18 @@ pub enum UiCommand {
     NewSession,
 }
 
+/// The context occupancy recovered for a resumed session: **exact** when the
+/// rollout carries `usage` records (the last run's input + cache-read + output),
+/// else a byte-derived estimate (`serialized bytes / 4`, codex's heuristic) shown
+/// as `~N` until the first real usage report replaces it.
+#[derive(Debug, Clone, Copy)]
+pub struct RecoveredContext {
+    /// The recovered/estimated token count.
+    pub tokens: u64,
+    /// Whether it is an estimate (`~` in the footer) rather than reported usage.
+    pub estimated: bool,
+}
+
 /// Messages from the engine task to the UI.
 #[derive(Debug)]
 pub enum EngineMsg {
@@ -33,6 +45,9 @@ pub enum EngineMsg {
         /// Shell that `run_terminal_cmd` uses (for the status display), resolved
         /// with grok's `$SHELL` rule (see `detect_shell`).
         shell: String,
+        /// For a **resumed** session: the recovered context occupancy.
+        /// `None` = fresh session (footer resets to 0).
+        context: Option<RecoveredContext>,
     },
     /// Session assembly failed pre-run (bad schema, missing key, …).
     BuildFailed(String),
@@ -104,6 +119,7 @@ pub fn spawn(
             model: built.model.clone(),
             cwd: built.cwd_display.clone(),
             shell: shell.clone(),
+            context: built.context,
         });
         // A resumed session replays its recovered transcript into the UI.
         // Assistant messages + tool results ride the normal event path (tool
@@ -142,6 +158,7 @@ pub fn spawn(
                                 model: built.model.clone(),
                                 cwd: built.cwd_display.clone(),
                                 shell: shell.clone(),
+                                context: None,
                             });
                         }
                         Err(message) => {
@@ -158,6 +175,28 @@ pub fn spawn(
 /// Assemble the session exactly as `locode-exec` does (canonical cwd shared
 /// by jail/engine/pack; --yolo lifts the jail). Duplication flagged in the
 /// slice plan; a facade helper is a future core proposal.
+/// The recovered context for a resumed rollout: exact from the last `usage`
+/// record when present (input + cache-read + output — what the next turn starts
+/// from), else a byte-derived estimate (`serialized bytes / 4` — codex's
+/// `APPROX_BYTES_PER_TOKEN`).
+fn recovered_context(contents: &locode_core::RolloutContents) -> RecoveredContext {
+    if let Some(usage) = &contents.last_usage {
+        return RecoveredContext {
+            tokens: usage.input_tokens + usage.cache_read_tokens.unwrap_or(0) + usage.output_tokens,
+            estimated: false,
+        };
+    }
+    let bytes: usize = contents
+        .history
+        .iter()
+        .map(|m| serde_json::to_string(m).map_or(0, |s| s.len()))
+        .sum();
+    RecoveredContext {
+        tokens: (bytes / 4) as u64,
+        estimated: true,
+    }
+}
+
 /// Send one recovered message to the UI the way it would have rendered live.
 fn replay_message(
     msg_tx: &tokio::sync::mpsc::UnboundedSender<EngineMsg>,
@@ -220,6 +259,8 @@ struct BuiltSession {
     harness: String,
     /// Recovered messages to render (empty for a fresh session).
     replay: Vec<locode_core::Message>,
+    /// Recovered context occupancy (`None` for a fresh session).
+    context: Option<RecoveredContext>,
 }
 
 #[allow(clippy::too_many_lines)] // linear assembly, mirrored from locode-exec
@@ -393,6 +434,9 @@ fn build_session(
     }));
     let session =
         Session::new(provider, registry_tools, preamble, config, sink).with_approver(approver);
+    let context = resumed
+        .as_ref()
+        .map(|(_, contents)| recovered_context(contents));
     let replay = resumed
         .map(|(_, contents)| contents.history)
         .unwrap_or_default();
@@ -402,6 +446,7 @@ fn build_session(
         cwd_display,
         harness: harness_name,
         replay,
+        context,
     })
 }
 

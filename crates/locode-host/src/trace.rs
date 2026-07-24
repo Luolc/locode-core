@@ -167,6 +167,15 @@ impl TraceWriter {
                 self.on_init(session_id, harness, api_schema, model, cwd, preamble)
             }
             Event::Message { message } => self.append_message(message),
+            // Per-run usage (additive record type, §2.4): lets resume
+            // reconstruct the exact context occupancy instead of estimating.
+            Event::Result { report } => {
+                if self.file.is_some() {
+                    self.append_record("usage", &report.usage)
+                } else {
+                    Ok(())
+                }
+            }
             _ => Ok(()),
         };
         if let Err(e) = result {
@@ -270,6 +279,10 @@ pub struct RolloutContents {
     /// The conversation, in append order (preamble included) — `compacted`
     /// records already folded in.
     pub history: Vec<Message>,
+    /// The **last** run's provider-reported usage, when the rollout carries
+    /// `usage` records (written since 2026-07-24) — the exact basis for the
+    /// resumed context occupancy. `None` on older rollouts (callers estimate).
+    pub last_usage: Option<locode_protocol::Usage>,
 }
 
 /// Read a rollout **tolerantly** (ADR-0024 §2.4 rules 1-2): unknown record
@@ -296,6 +309,7 @@ pub fn read_rollout(path: &Path) -> Result<RolloutContents, String> {
         .map_err(|e| format!("{}: session_meta invalid: {e}", path.display()))?;
 
     let mut history: Vec<Message> = Vec::new();
+    let mut last_usage: Option<locode_protocol::Usage> = None;
     for line in lines {
         // Torn tail / foreign garbage: skip, never fail (§2.4).
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
@@ -316,11 +330,22 @@ pub fn read_rollout(path: &Path) -> Result<RolloutContents, String> {
                     history = messages;
                 }
             }
+            Some("usage") => {
+                if let Ok(usage) =
+                    serde_json::from_value::<locode_protocol::Usage>(value["payload"].clone())
+                {
+                    last_usage = Some(usage);
+                }
+            }
             // Unknown record types (future features) are invisible to this reader.
             _ => {}
         }
     }
-    Ok(RolloutContents { meta, history })
+    Ok(RolloutContents {
+        meta,
+        history,
+        last_usage,
+    })
 }
 
 /// The newest resumable rollout for `cwd` (`--continue`): list the one encoded
@@ -748,6 +773,60 @@ mod tests {
         let by_id = find_rollout_by_id(&sessions, &cwd_b, "sess-sub").unwrap();
         assert!(by_id.to_string_lossy().contains("sess-sub"));
         assert!(find_rollout_by_id(&sessions, &cwd_b, "sess-nope").is_none());
+    }
+
+    #[test]
+    fn usage_records_round_trip_for_exact_resume() {
+        use locode_protocol::{Report, Status, Usage};
+        let root = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let cwd = std::fs::canonicalize(cwd.path()).unwrap();
+        let mut writer = TraceWriter::new(root.path().join("sessions"), TraceExtras::default());
+        writer.on_event(&init_event("sess-u", &cwd));
+        writer.on_event(&message_event(Role::User, "hi"));
+        // Two runs: the LAST usage wins.
+        let report = |input: u64, output: u64| Report {
+            schema_version: 1,
+            status: Status::Completed,
+            harness: "grok".into(),
+            api_schema: "mock".into(),
+            final_message: None,
+            structured_output: None,
+            turns: 1,
+            tool_calls: vec![],
+            usage: Usage {
+                input_tokens: input,
+                output_tokens: output,
+                cache_read_tokens: Some(7),
+                ..Default::default()
+            },
+            session_id: "sess-u".into(),
+            stop_reason: None,
+            error: None,
+        };
+        writer.on_event(&locode_protocol::Event::Result {
+            report: report(100, 10),
+        });
+        writer.on_event(&locode_protocol::Event::Result {
+            report: report(200, 20),
+        });
+        assert!(writer.take_error().is_none());
+
+        let contents = read_rollout(writer.path().unwrap()).unwrap();
+        let usage = contents.last_usage.expect("usage recovered");
+        assert_eq!(usage.input_tokens, 200, "the last run's usage");
+        assert_eq!(usage.output_tokens, 20);
+        assert_eq!(usage.cache_read_tokens, Some(7));
+        // And an old-style rollout (no usage records) still reads fine.
+        let bare = root.path().join("bare.jsonl");
+        let meta_line = std::fs::read_to_string(writer.path().unwrap())
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap()
+            .to_string();
+        std::fs::write(&bare, meta_line + "\n").unwrap();
+        assert!(read_rollout(&bare).unwrap().last_usage.is_none());
     }
 
     #[test]
