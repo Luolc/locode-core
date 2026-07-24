@@ -41,6 +41,16 @@ pub struct Cli {
     #[arg(long)]
     pub settings: Option<String>,
 
+    /// Continue the newest session started in this cwd (ADR-0024 §2.5): the
+    /// recovered transcript seeds the run and the same rollout keeps appending.
+    #[arg(short = 'c', long = "continue", conflicts_with = "resume")]
+    pub continue_session: bool,
+
+    /// Resume the session with this id — found in this cwd's sessions first,
+    /// then anywhere (ADR-0024 §2.5).
+    #[arg(short = 'r', long = "resume", value_name = "SESSION_ID")]
+    pub resume: Option<String>,
+
     /// Hard ceiling on sample→dispatch turns. **Unlimited when omitted**
     /// (ADR-0005 amendment — no studied harness caps turns by default).
     #[arg(long)]

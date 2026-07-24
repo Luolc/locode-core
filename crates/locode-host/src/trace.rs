@@ -110,6 +110,8 @@ pub struct TraceWriter {
     path: Option<PathBuf>,
     /// The first IO error — the writer is disabled once set.
     error: Option<String>,
+    /// Resumed writers ignore `Init` (the header/history are already on disk).
+    resumed: bool,
 }
 
 impl TraceWriter {
@@ -123,7 +125,27 @@ impl TraceWriter {
             file: None,
             path: None,
             error: None,
+            resumed: false,
         }
+    }
+
+    /// Reopen an existing rollout for appending (`--continue`/`--resume`,
+    /// ADR-0024 §2.5): the torn tail is healed, and the session's `Init`
+    /// re-emission is **ignored** — the header and history are already on disk;
+    /// only newly appended messages land (codex's reopen-for-append).
+    ///
+    /// # Errors
+    /// When the file cannot be opened for appending.
+    pub fn resume(path: PathBuf, sessions_root: PathBuf) -> Result<Self, String> {
+        let file = open_append_private(&path)?;
+        Ok(Self {
+            sessions_root,
+            extras: TraceExtras::default(),
+            file: Some(file),
+            path: Some(path),
+            error: None,
+            resumed: true,
+        })
     }
 
     /// Feed one engine event. Never fails — on the first IO error the writer
@@ -141,7 +163,9 @@ impl TraceWriter {
                 cwd,
                 preamble,
                 ..
-            } => self.on_init(session_id, harness, api_schema, model, cwd, preamble),
+            } if !self.resumed => {
+                self.on_init(session_id, harness, api_schema, model, cwd, preamble)
+            }
             Event::Message { message } => self.append_message(message),
             _ => Ok(()),
         };
@@ -236,6 +260,130 @@ impl TraceWriter {
             .and_then(|()| file.flush())
             .map_err(|e| format!("append trace record: {e}"))
     }
+}
+
+/// A parsed rollout: the header plus the replayable message history.
+#[derive(Debug)]
+pub struct RolloutContents {
+    /// The line-1 header.
+    pub meta: SessionMeta,
+    /// The conversation, in append order (preamble included) — `compacted`
+    /// records already folded in.
+    pub history: Vec<Message>,
+}
+
+/// Read a rollout **tolerantly** (ADR-0024 §2.4 rules 1-2): unknown record
+/// types and unknown payload fields are skipped/ignored; an unparsable line
+/// (the torn tail) is skipped; a `compacted` record replaces all prior
+/// messages with its `replacement_history`.
+///
+/// # Errors
+/// Only when the file is unreadable or line 1 is not a valid `session_meta`
+/// (without a header the file identifies nothing).
+pub fn read_rollout(path: &Path) -> Result<RolloutContents, String> {
+    let text =
+        std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let mut lines = text.lines();
+    let first = lines
+        .next()
+        .ok_or_else(|| format!("{}: empty rollout", path.display()))?;
+    let first: serde_json::Value = serde_json::from_str(first)
+        .map_err(|e| format!("{}: line 1 unparsable: {e}", path.display()))?;
+    if first.get("type").and_then(serde_json::Value::as_str) != Some("session_meta") {
+        return Err(format!("{}: line 1 is not session_meta", path.display()));
+    }
+    let meta: SessionMeta = serde_json::from_value(first["payload"].clone())
+        .map_err(|e| format!("{}: session_meta invalid: {e}", path.display()))?;
+
+    let mut history: Vec<Message> = Vec::new();
+    for line in lines {
+        // Torn tail / foreign garbage: skip, never fail (§2.4).
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        match value.get("type").and_then(serde_json::Value::as_str) {
+            Some("message") => {
+                if let Ok(message) = serde_json::from_value::<Message>(value["payload"].clone()) {
+                    history.push(message);
+                }
+            }
+            Some("compacted") => {
+                // Fold: the replacement history stands in for everything prior.
+                if let Some(replacement) = value["payload"].get("replacement_history")
+                    && let Ok(messages) =
+                        serde_json::from_value::<Vec<Message>>(replacement.clone())
+                {
+                    history = messages;
+                }
+            }
+            // Unknown record types (future features) are invisible to this reader.
+            _ => {}
+        }
+    }
+    Ok(RolloutContents { meta, history })
+}
+
+/// The newest resumable rollout for `cwd` (`--continue`): list the one encoded
+/// directory, take rollouts newest-first by filename (the timestamp prefix
+/// sorts chronologically), and return the first whose header parses with
+/// `kind == "main"` — unknown kinds are not listed (§2.4 rule 3), but remain
+/// reachable by id.
+#[must_use]
+pub fn find_latest_rollout(sessions_root: &Path, cwd: &Path) -> Option<PathBuf> {
+    let dir = sessions_root.join(encode_cwd_dirname(cwd));
+    let mut names: Vec<String> = rollout_names(&dir);
+    names.sort_unstable_by(|a, b| b.cmp(a)); // newest first
+    names
+        .into_iter()
+        .map(|n| dir.join(n))
+        .find(|path| read_rollout(path).is_ok_and(|c| c.meta.kind == "main"))
+}
+
+/// Locate a rollout by session id (`--resume <id>`): the cwd's directory first,
+/// then every other session directory (Claude's scoped-then-global resolver).
+/// Any `kind` is resumable by id.
+#[must_use]
+pub fn find_rollout_by_id(sessions_root: &Path, cwd: &Path, id: &str) -> Option<PathBuf> {
+    let suffix = format!("-{id}.jsonl");
+    let scoped = sessions_root.join(encode_cwd_dirname(cwd));
+    if let Some(hit) = dir_hit(&scoped, &suffix) {
+        return Some(hit);
+    }
+    let entries = std::fs::read_dir(sessions_root).ok()?;
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        if dir == scoped || !dir.is_dir() {
+            continue;
+        }
+        if let Some(hit) = dir_hit(&dir, &suffix) {
+            return Some(hit);
+        }
+    }
+    None
+}
+
+/// The rollout filenames directly inside `dir`.
+fn rollout_names(dir: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| {
+            n.starts_with("rollout-")
+                && std::path::Path::new(n)
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"))
+        })
+        .collect()
+}
+
+fn dir_hit(dir: &Path, suffix: &str) -> Option<PathBuf> {
+    rollout_names(dir)
+        .into_iter()
+        .find(|n| n.ends_with(suffix))
+        .map(|n| dir.join(n))
 }
 
 /// Open (or create) a rollout for appending, `0600`, healing a torn tail: if the
@@ -479,6 +627,127 @@ mod tests {
         assert!(writer.take_error().is_some());
         // Further events are no-ops.
         writer.on_event(&message_event(Role::User, "x"));
+    }
+
+    #[test]
+    fn read_rollout_replays_and_tolerates() {
+        let root = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let cwd = std::fs::canonicalize(cwd.path()).unwrap();
+        let mut writer = TraceWriter::new(root.path().join("sessions"), TraceExtras::default());
+        writer.on_event(&init_event("sess-r", &cwd));
+        writer.on_event(&message_event(Role::User, "hi"));
+        writer.on_event(&message_event(Role::Assistant, "yo"));
+        let path = writer.path().unwrap().to_path_buf();
+
+        // Sprinkle §2.4 hazards: an unknown record type, a torn tail.
+        {
+            let mut file = open_append_private(&path).unwrap();
+            file.write_all(
+                b"{\"timestamp\":\"x\",\"type\":\"future_thing\",\"payload\":{\"n\":1}}\n",
+            )
+            .unwrap();
+            file.write_all(b"{\"torn").unwrap();
+        }
+        let contents = read_rollout(&path).unwrap();
+        assert_eq!(contents.meta.session_id, "sess-r");
+        // preamble(1) + user + assistant; the unknown type and torn line vanish.
+        assert_eq!(contents.history.len(), 3);
+        assert_eq!(contents.history[0].role, Role::System);
+        assert_eq!(contents.history[2].role, Role::Assistant);
+    }
+
+    #[test]
+    fn read_rollout_folds_compacted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rollout-t-sess-c.jsonl");
+        let meta = serde_json::json!({"timestamp":"t","type":"session_meta","payload":{
+            "schema_version":1,"session_id":"sess-c","kind":"main","cwd":"/x",
+            "cli_version":"0","harness":"grok","api_schema":"mock","model":"m"}});
+        let msg = |role: &str, text: &str| {
+            serde_json::json!({"timestamp":"t","type":"message","payload":
+                {"role":role,"content":[{"type":"text","text":text}]}})
+        };
+        let compacted = serde_json::json!({"timestamp":"t","type":"compacted","payload":{
+            "summary":"s","replacement_history":[
+                {"role":"user","content":[{"type":"text","text":"summary of the past"}]}]}});
+        let lines = [
+            meta.to_string(),
+            msg("user", "old-1").to_string(),
+            msg("assistant", "old-2").to_string(),
+            compacted.to_string(),
+            msg("user", "after").to_string(),
+        ];
+        std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+        let contents = read_rollout(&path).unwrap();
+        // Compaction replaced the two old messages; the post-compaction one follows.
+        assert_eq!(contents.history.len(), 2);
+        assert_eq!(contents.history[1].role, Role::User);
+    }
+
+    #[test]
+    fn resumed_writer_appends_without_a_new_header() {
+        let root = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let cwd = std::fs::canonicalize(cwd.path()).unwrap();
+        let mut writer = TraceWriter::new(root.path().join("sessions"), TraceExtras::default());
+        writer.on_event(&init_event("sess-a", &cwd));
+        writer.on_event(&message_event(Role::User, "first run"));
+        let path = writer.path().unwrap().to_path_buf();
+        let before = read_lines(&path).len();
+        drop(writer);
+
+        let mut resumed = TraceWriter::resume(path.clone(), root.path().join("sessions")).unwrap();
+        resumed.on_event(&init_event("sess-a", &cwd)); // re-Init: ignored
+        resumed.on_event(&message_event(Role::User, "second run"));
+        assert!(resumed.take_error().is_none());
+        let lines = read_lines(&path);
+        assert_eq!(lines.len(), before + 1, "exactly one new message line");
+        assert_eq!(
+            lines.iter().filter(|l| l["type"] == "session_meta").count(),
+            1,
+            "one header, ever"
+        );
+    }
+
+    #[test]
+    fn find_latest_scopes_by_cwd_and_kind() {
+        let root = tempfile::tempdir().unwrap();
+        let sessions = root.path().join("sessions");
+        let cwd_a = tempfile::tempdir().unwrap();
+        let cwd_a = std::fs::canonicalize(cwd_a.path()).unwrap();
+        let cwd_b = tempfile::tempdir().unwrap();
+        let cwd_b = std::fs::canonicalize(cwd_b.path()).unwrap();
+
+        // Older main session in A; then a subagent session in A; a session in B.
+        let mut w1 = TraceWriter::new(sessions.clone(), TraceExtras::default());
+        w1.on_event(&init_event("sess-old", &cwd_a));
+        let mut w2 = TraceWriter::new(
+            sessions.clone(),
+            TraceExtras {
+                kind: Some("subagent".to_string()),
+                ..Default::default()
+            },
+        );
+        w2.on_event(&init_event("sess-sub", &cwd_a));
+        let mut w3 = TraceWriter::new(sessions.clone(), TraceExtras::default());
+        w3.on_event(&init_event("sess-b", &cwd_b));
+
+        // Continue in A: the subagent is skipped; the old main session wins.
+        let latest = find_latest_rollout(&sessions, &cwd_a).unwrap();
+        assert!(latest.to_string_lossy().contains("sess-old"), "{latest:?}");
+        // Continue in B is scoped to B.
+        let latest_b = find_latest_rollout(&sessions, &cwd_b).unwrap();
+        assert!(latest_b.to_string_lossy().contains("sess-b"));
+        // A cwd with no sessions has nothing to continue.
+        let empty = tempfile::tempdir().unwrap();
+        assert!(find_latest_rollout(&sessions, empty.path()).is_none());
+
+        // Resume by id: found from the "wrong" cwd via the global scan — and a
+        // subagent IS resumable by id.
+        let by_id = find_rollout_by_id(&sessions, &cwd_b, "sess-sub").unwrap();
+        assert!(by_id.to_string_lossy().contains("sess-sub"));
+        assert!(find_rollout_by_id(&sessions, &cwd_b, "sess-nope").is_none());
     }
 
     #[test]

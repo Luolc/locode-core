@@ -53,8 +53,9 @@ pub use locode_packs::{GrokPack, Pack, PackContext, UnknownHarness, available, g
 // ---- host: the side-effect seam ----
 pub use locode_host::{
     ExecLimits, GitMeta, Host, HostConfig, InstructionEntry, InstructionsConfig, PathPolicy,
-    ProjectInstructions, Settings, SettingsLoad, SkillsExtraEntry, TraceExtras, TraceWriter,
-    decode_cwd_dirname, encode_cwd_dirname, load_project_instructions, load_settings, locode_home,
+    ProjectInstructions, RolloutContents, Settings, SettingsLoad, SkillsExtraEntry, TraceExtras,
+    TraceWriter, decode_cwd_dirname, encode_cwd_dirname, find_latest_rollout, find_rollout_by_id,
+    load_project_instructions, load_settings, locode_home, read_rollout,
 };
 
 // ---- tools: the full tool surface (SPEC Users #4) ----
