@@ -1,7 +1,7 @@
 # ADR-0024: `~/.locode` — settings layering and the resumable session trace
 
 ## Status
-Proposed (draft for user review — flips to Accepted on merge)
+Accepted (user review 2026-07-24)
 
 ## Date
 2026-07-24
