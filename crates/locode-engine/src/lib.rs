@@ -9,6 +9,7 @@
 
 mod approve;
 mod config;
+mod instructions;
 mod run;
 mod session;
 mod sink;
@@ -120,6 +121,14 @@ mod tests {
             max_turns: None,
             resample_retries: 2,
             resample_backoff: Duration::ZERO, // no real sleeps in tests
+            // Project-instruction loading off by default in the loop tests: cwd is the
+            // crate dir, so a live loader would inject this repo's own AGENTS.md and
+            // perturb the exact event/message assertions. The injection path has its own
+            // dedicated tests below (`project_instructions_*`).
+            instructions: locode_host::InstructionsConfig {
+                enabled: false,
+                ..Default::default()
+            },
             ..EngineConfig::default()
         }
     }
@@ -1031,6 +1040,113 @@ mod tests {
             roles,
             vec![Role::User, Role::Assistant, Role::User, Role::Assistant]
         );
+    }
+
+    // ---- project-instruction injection (ADR-0023, Task 30) ----
+
+    /// A capturing session over a custom config (for the injection path).
+    fn capturing_with_cfg(
+        script: Vec<Result<Completion, ProviderError>>,
+        cfg: EngineConfig,
+    ) -> (Session, Arc<Mutex<Vec<Vec<Message>>>>) {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let provider = Arc::new(CapturingProvider {
+            inner: MockProvider::with_results(script),
+            requests: Arc::clone(&requests),
+        });
+        let session = Session::new(provider, Registry::new(), vec![], cfg, Box::new(NullSink));
+        (session, requests)
+    }
+
+    /// A config with project instructions **enabled**, rooted at `cwd`, global file off
+    /// (never read the real `~/.locode` in tests).
+    fn instr_config(cwd: std::path::PathBuf) -> EngineConfig {
+        EngineConfig {
+            cwd,
+            instructions: locode_host::InstructionsConfig {
+                global_file: false,
+                ..Default::default()
+            },
+            ..config()
+        }
+    }
+
+    /// The injected `<system-reminder>` text within a request's messages, if present.
+    fn reminder_text(msgs: &[Message]) -> Option<String> {
+        msgs.iter()
+            .find_map(|m| match (m.role, m.content.as_slice()) {
+                (Role::User, [ContentBlock::Text { text }])
+                    if text.starts_with("<system-reminder>") =>
+                {
+                    Some(text.clone())
+                }
+                _ => None,
+            })
+    }
+
+    fn reminder_count(msgs: &[Message]) -> usize {
+        msgs.iter()
+            .filter(|m| {
+                matches!(
+                    (m.role, m.content.as_slice()),
+                    (Role::User, [ContentBlock::Text { text }]) if text.starts_with("<system-reminder>")
+                )
+            })
+            .count()
+    }
+
+    #[tokio::test]
+    async fn project_instructions_injected_once_before_prompt() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        std::fs::write(root.join("AGENTS.md"), "be terse").unwrap();
+
+        let (mut s, requests) = capturing_with_cfg(
+            vec![Ok(text_turn("ok1")), Ok(text_turn("ok2"))],
+            instr_config(root),
+        );
+        s.run_text("q1").await;
+        s.run_text("q2").await;
+
+        let reqs = requests.lock().unwrap();
+        // Run 1: injected, with the file content, positioned before the user prompt.
+        let run1 = &reqs[0];
+        let rem = reminder_text(run1).expect("instructions injected on run 1");
+        assert!(rem.contains("## From:"), "labeled: {rem}");
+        assert!(rem.contains("be terse"), "content present: {rem}");
+        let rem_idx = run1
+            .iter()
+            .position(|m| reminder_text(std::slice::from_ref(m)).is_some());
+        let q1_idx = run1.iter().position(|m| user_text(m) == Some("q1"));
+        assert!(rem_idx < q1_idx, "reminder comes before the prompt");
+
+        // Run 2: NOT re-injected — still exactly the one from run 1 (once per session).
+        assert_eq!(reminder_count(&reqs[1]), 1, "not re-injected on run 2");
+    }
+
+    #[tokio::test]
+    async fn project_instructions_absent_when_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        std::fs::write(root.join("AGENTS.md"), "be terse").unwrap();
+        let mut cfg = instr_config(root);
+        cfg.instructions.enabled = false;
+
+        let (mut s, requests) = capturing_with_cfg(vec![Ok(text_turn("ok"))], cfg);
+        s.run_text("q").await;
+        assert!(reminder_text(&requests.lock().unwrap()[0]).is_none());
+    }
+
+    #[tokio::test]
+    async fn project_instructions_absent_when_no_agents_md() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        // Empty tempdir — no `.git`, no `AGENTS.md` → nothing discovered.
+        let (mut s, requests) = capturing_with_cfg(vec![Ok(text_turn("ok"))], instr_config(root));
+        s.run_text("q").await;
+        assert!(reminder_text(&requests.lock().unwrap()[0]).is_none());
     }
 
     #[tokio::test]

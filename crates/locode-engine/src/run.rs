@@ -19,6 +19,24 @@ enum SampleError {
 }
 
 impl Session {
+    /// Load + inject the shared project-instruction `<system-reminder>` (ADR-0023) as a
+    /// `User` message. Shared machinery, identical for every pack. A no-op when disabled or
+    /// when nothing is discovered.
+    fn inject_project_instructions(&mut self) {
+        if !self.config.instructions.enabled {
+            return;
+        }
+        let discovered =
+            locode_host::load_project_instructions(&self.config.cwd, &self.config.instructions);
+        if let Some(msg) = crate::instructions::render_instructions(
+            &discovered,
+            self.config.instructions.byte_budget,
+        ) {
+            self.history.push(msg.clone());
+            self.sink.emit(Event::Message { message: msg });
+        }
+    }
+
     /// The driver behind [`Session::run`]. Infallible — all terminal conditions land
     /// in the returned [`Report`].
     pub(crate) async fn drive(&mut self, user_content: Vec<ContentBlock>) -> Report {
@@ -43,6 +61,9 @@ impl Session {
                 preamble: self.preamble.clone(),
                 tools,
             });
+            // Project instructions (ADR-0023): inject once per session — after the pack
+            // preamble, before the first user turn — as a `User` <system-reminder>.
+            self.inject_project_instructions();
         }
         self.turns_run += 1;
 
