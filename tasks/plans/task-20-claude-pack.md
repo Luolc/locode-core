@@ -396,6 +396,17 @@ error codes; `FileEditTool.ts`):
   empty-`old_string` creation; the packs genuinely differ here and that is the
   point).
 
+> **Correction (Slice 3, 2026-07-24 — this bullet was wrong).** Claude Code's
+> `Edit` **does create files**: an empty `old_string` on a nonexistent path is
+> valid and creates it (`FileEditTool.ts:216-220`; `call()` mkdirs parents,
+> `:427`). The faithful port therefore reproduces creation-via-empty-`old_string`
+> (empty `old_string` on an existing non-empty file → errorCode 3 "Cannot create
+> new file - file already exists."; on an existing empty file → replace). Our host
+> deliberately does not mkdir parents (ADR-0008 footgun avoidance; grok is
+> consistent), so creation currently needs an existing parent dir — a documented
+> gap shared with Write (§4.4); the mkdir seam is a batched open question. The full
+> ported check order is in [`task-20-slice-3-edit.md`](task-20-slice-3-edit.md).
+
 ### 4.4 `Write`
 
 - Overwrites/creates at absolute `file_path`; parent dirs created (Claude Code

@@ -60,6 +60,40 @@ impl ClaudeSessionState {
             .insert(path, record);
     }
 
+    /// Record a successful `Edit`/`Write` of `path` at `modified` (CC's
+    /// `readFileState.set` with `offset=undefined`, `FileEditTool.ts:520`,
+    /// `FileWriteTool`): the file now counts as "read" for the gate, and its
+    /// post-write mtime invalidates nothing (a follow-up edit is fresh). The
+    /// `offset=None` marks it Edit/Write-origin so `Read`'s dedup never matches it.
+    pub(crate) fn record_write(&self, path: PathBuf, modified: Option<SystemTime>) {
+        let record = ReadRecord {
+            mtime_ms: modified.and_then(to_millis),
+            offset: None,
+            limit: None,
+        };
+        self.entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(path, record);
+    }
+
+    /// CC's read-before-edit / staleness gate (`FileEditTool.ts:275-310`):
+    /// `None` = never read (errorCode 6 — "read it first"); `Some(false)` = read
+    /// but modified since (errorCode 7 — mtime advanced past the recorded read);
+    /// `Some(true)` = fresh (safe to edit). An unknown mtime on either side can't
+    /// prove staleness, so it reads as fresh (never a false "modified" block).
+    pub(crate) fn check_fresh(&self, path: &Path, current: Option<SystemTime>) -> Option<bool> {
+        let entries = self
+            .entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let record = entries.get(path)?;
+        match (record.mtime_ms, current.and_then(to_millis)) {
+            (Some(stored), Some(now)) => Some(now <= stored),
+            _ => Some(true),
+        }
+    }
+
     /// CC's dedup test (`FileReadTool.ts:547-558`): `true` iff `path` was already
     /// read from a `Read` (offset set) over the *same* `offset`/`limit` window and
     /// its mtime is unchanged since — the caller then returns `FILE_UNCHANGED_STUB`
@@ -112,6 +146,33 @@ mod tests {
         assert!(!state.is_unchanged_read(&p, None, Some(1), None));
         // Never read → no match.
         assert!(!state.is_unchanged_read(Path::new("/other"), Some(t(1000)), Some(1), None));
+    }
+
+    #[test]
+    fn check_fresh_gate_transitions() {
+        let state = ClaudeSessionState::default();
+        let p = PathBuf::from("/f.txt");
+        // Never read → None (errorCode 6).
+        assert_eq!(state.check_fresh(&p, Some(t(1000))), None);
+        // Read at 1000, unchanged → fresh.
+        state.record_read(p.clone(), Some(t(1000)), Some(1), None);
+        assert_eq!(state.check_fresh(&p, Some(t(1000))), Some(true));
+        // Modified since (mtime advanced) → stale (errorCode 7).
+        assert_eq!(state.check_fresh(&p, Some(t(2000))), Some(false));
+        // An Edit records post-write mtime → fresh again for sequential edits.
+        state.record_write(p.clone(), Some(t(2000)));
+        assert_eq!(state.check_fresh(&p, Some(t(2000))), Some(true));
+        // A write-origin entry counts as "read" (not None).
+        assert_ne!(state.check_fresh(&p, Some(t(2000))), None);
+    }
+
+    #[test]
+    fn write_origin_entry_never_dedup_matches_a_read() {
+        let state = ClaudeSessionState::default();
+        let p = PathBuf::from("/f.txt");
+        // offset=None (Edit/Write) must not satisfy Read's dedup.
+        state.record_write(p.clone(), Some(t(1000)));
+        assert!(!state.is_unchanged_read(&p, Some(t(1000)), Some(1), None));
     }
 
     #[test]

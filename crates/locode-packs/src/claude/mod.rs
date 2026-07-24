@@ -3,16 +3,17 @@
 //! highest-value A/B counterpart to the grok pack: same engine, same wire,
 //! genuinely different tool surface.
 //!
-//! Slice 1 (this file's current state): the pack scaffold + `Bash` + a minimal
-//! system prompt (identity + intro). Read/Edit/Write (+ the `ClaudeSessionState`
-//! read-before-edit gate), Glob, Grep, and the full byte-exact prompt land in
-//! later slices — see `docs/claude-pack-dev-process.md`.
+//! Current state (through Slice 3): `Bash`, `Read`, and `Edit` (with the
+//! `ClaudeSessionState` read-before-edit + staleness gate) + a minimal system
+//! prompt (identity + intro). `Write`, `Glob`, `Grep`, and the full byte-exact
+//! prompt land in later slices — see `docs/claude-pack-dev-process.md`.
 //!
 //! Fidelity boundary (ADR-0023): the pack reproduces tools + prompt + static
 //! preamble only. Loop-adjacent machinery (project-instruction loading, reminder
 //! re-injection, compaction, subagents) stays on the shared engine.
 
 mod bash;
+mod edit;
 pub mod prompt;
 mod read;
 mod state;
@@ -25,11 +26,12 @@ use locode_tools::Registry;
 
 use crate::pack::{Pack, PackContext};
 use bash::ClaudeBash;
+use edit::ClaudeEdit;
 use read::ClaudeRead;
 use state::ClaudeSessionState;
 
-/// The Claude Code harness pack (a zero-sized `&'static` singleton for Slice 1;
-/// gains a per-run `ClaudeSessionState` when Read/Edit/Write land).
+/// The Claude Code harness pack (a zero-sized `&'static` singleton; the per-run
+/// `ClaudeSessionState` lives in the tools that share it, constructed in `register`).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ClaudePack;
 
@@ -47,6 +49,10 @@ impl Pack for ClaudePack {
         registry.register(
             "Read",
             ClaudeRead::new(Arc::clone(host), Arc::clone(&state)),
+        );
+        registry.register(
+            "Edit",
+            ClaudeEdit::new(Arc::clone(host), Arc::clone(&state)),
         );
     }
 
@@ -117,12 +123,13 @@ mod tests {
         let (_dir, registry, _root) = setup();
         let mut names: Vec<&str> = registry.names().collect();
         names.sort_unstable();
-        assert_eq!(names, vec!["Bash", "Read"]);
+        assert_eq!(names, vec!["Bash", "Edit", "Read"]);
         assert_eq!(
             registry.kind_of("Bash"),
             Some(locode_tools::ToolKind::Shell)
         );
         assert_eq!(registry.kind_of("Read"), Some(locode_tools::ToolKind::Read));
+        assert_eq!(registry.kind_of("Edit"), Some(locode_tools::ToolKind::Edit));
     }
 
     #[test]
@@ -407,6 +414,208 @@ mod tests {
             .map(|v| v.as_str().unwrap())
             .collect();
         assert_eq!(required, vec!["file_path"]);
+    }
+
+    // ---- Edit: the read-before-edit + staleness gate is the star ----
+
+    async fn read_then(registry: &Registry, root: &Path, file: &str) {
+        let _ = registry
+            .dispatch("Read", json!({ "file_path": file }), &ctx(root))
+            .await;
+    }
+
+    #[tokio::test]
+    async fn edit_requires_prior_read() {
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("f.txt"), "alpha beta").unwrap();
+        // No Read first → the gate rejects (errorCode 6).
+        let out = registry
+            .dispatch(
+                "Edit",
+                json!({ "file_path": "f.txt", "old_string": "beta", "new_string": "BETA" }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(!out.record.ok);
+        assert_eq!(
+            result_text(&out.tool_result),
+            "File has not been read yet. Read it first before writing to it."
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_after_read_succeeds_and_sequential_edit_is_fresh() {
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("f.txt"), "one two three").unwrap();
+        read_then(&registry, &root, "f.txt").await;
+        let out = registry
+            .dispatch(
+                "Edit",
+                json!({ "file_path": "f.txt", "old_string": "two", "new_string": "TWO" }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(out.record.ok, "{}", result_text(&out.tool_result));
+        assert_eq!(
+            result_text(&out.tool_result),
+            "The file f.txt has been updated successfully."
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("f.txt")).unwrap(),
+            "one TWO three"
+        );
+        // A second edit without re-reading is still fresh (Edit recorded post-edit mtime).
+        let out2 = registry
+            .dispatch(
+                "Edit",
+                json!({ "file_path": "f.txt", "old_string": "one", "new_string": "ONE" }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(out2.record.ok, "{}", result_text(&out2.tool_result));
+    }
+
+    #[tokio::test]
+    async fn edit_stale_after_external_modification_is_rejected() {
+        let (_dir, registry, root) = setup();
+        let p = root.join("f.txt");
+        std::fs::write(&p, "hello world").unwrap();
+        read_then(&registry, &root, "f.txt").await;
+        // External modification bumps mtime past the recorded read.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&p, "hello there").unwrap();
+        let out = registry
+            .dispatch(
+                "Edit",
+                json!({ "file_path": "f.txt", "old_string": "hello", "new_string": "HI" }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(!out.record.ok);
+        assert!(
+            result_text(&out.tool_result).starts_with("File has been modified since read"),
+            "{}",
+            result_text(&out.tool_result)
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_no_op_not_found_and_multi_match() {
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("f.txt"), "a a a").unwrap();
+        read_then(&registry, &root, "f.txt").await;
+        // old == new (errorCode 1) — checked before the gate.
+        let noop = registry
+            .dispatch(
+                "Edit",
+                json!({ "file_path": "f.txt", "old_string": "a", "new_string": "a" }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(!noop.record.ok);
+        assert!(result_text(&noop.tool_result).contains("exactly the same"));
+        // not found (errorCode 8).
+        let nf = registry
+            .dispatch(
+                "Edit",
+                json!({ "file_path": "f.txt", "old_string": "zzz", "new_string": "q" }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(!nf.record.ok);
+        assert!(result_text(&nf.tool_result).starts_with("String to replace not found in file."));
+        // multi-match without replace_all (errorCode 9).
+        let mm = registry
+            .dispatch(
+                "Edit",
+                json!({ "file_path": "f.txt", "old_string": "a", "new_string": "b" }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(!mm.record.ok);
+        assert!(result_text(&mm.tool_result).starts_with("Found 3 matches"));
+        // replace_all succeeds.
+        let all = registry
+            .dispatch(
+                "Edit",
+                json!({ "file_path": "f.txt", "old_string": "a", "new_string": "b", "replace_all": true }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(all.record.ok);
+        assert_eq!(
+            result_text(&all.tool_result),
+            "The file f.txt has been updated. All occurrences were successfully replaced."
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("f.txt")).unwrap(),
+            "b b b"
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_creates_file_with_empty_old_string() {
+        // CC's Edit creates a new file when old_string is empty (plan §4.3 corrected).
+        let (_dir, registry, root) = setup();
+        let out = registry
+            .dispatch(
+                "Edit",
+                json!({ "file_path": "new.txt", "old_string": "", "new_string": "fresh content" }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(out.record.ok, "{}", result_text(&out.tool_result));
+        assert_eq!(out.record.output["created"], json!(true));
+        assert_eq!(
+            std::fs::read_to_string(root.join("new.txt")).unwrap(),
+            "fresh content"
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_empty_old_string_on_existing_nonempty_is_rejected() {
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("f.txt"), "existing").unwrap();
+        let out = registry
+            .dispatch(
+                "Edit",
+                json!({ "file_path": "f.txt", "old_string": "", "new_string": "x" }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(!out.record.ok);
+        assert_eq!(
+            result_text(&out.tool_result),
+            "Cannot create new file - file already exists."
+        );
+    }
+
+    #[test]
+    fn edit_schema_is_faithful() {
+        let (_dir, registry, _root) = setup();
+        let specs = registry.specs();
+        let edit = specs.iter().find(|s| s.name == "Edit").expect("Edit spec");
+        let params = match &edit.input {
+            locode_protocol::ToolInputFormat::JsonSchema { parameters } => parameters,
+            locode_protocol::ToolInputFormat::Freeform { .. } => panic!("Edit is JSON-schema"),
+        };
+        assert_eq!(params["additionalProperties"], json!(false));
+        let props = params["properties"].as_object().unwrap();
+        assert_eq!(
+            props["new_string"]["description"],
+            json!("The text to replace it with (must be different from old_string)")
+        );
+        for key in ["file_path", "old_string", "new_string", "replace_all"] {
+            assert!(props.contains_key(key), "missing schema field {key}");
+        }
+        let mut required: Vec<&str> = params["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        required.sort_unstable();
+        assert_eq!(required, vec!["file_path", "new_string", "old_string"]);
     }
 
     #[test]
