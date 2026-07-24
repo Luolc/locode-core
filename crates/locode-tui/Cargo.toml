@@ -15,8 +15,10 @@ workspace = true
 
 [dependencies]
 locode-core = { workspace = true }
-# The headless one-shot engine, reused by `locode -p` (Task 28). To be
-# retired with locode-exec; this logic then migrates here (ADR-0019 amendment).
+# The headless one-shot engine, reused by `locode -p` (Task 28). `locode-exec`
+# stays a standalone library (NOT collapsed into this crate) so headless-only
+# consumers can depend on it without pulling in the TUI (ADR-0019 amendment
+# 2026-07-23).
 locode-exec = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }

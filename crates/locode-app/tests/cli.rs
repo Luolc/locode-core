@@ -1,14 +1,19 @@
-//! End-to-end CLI tests (Task 14 acceptance, plan §6): drive the built binary
-//! with the mock provider — keyless, CI-safe — and assert the stdout contract,
-//! stream reconstruction, stderr discipline, and exit codes.
+//! End-to-end CLI tests for the shipped `locode` binary's `-p` headless mode.
+//!
+//! Migrated here from `locode-exec/tests/cli.rs` when the standalone `locode-exec`
+//! binary was removed (2026-07-23, ADR-0019 amendment): `locode -p` is the one
+//! shipped headless path and calls the same `locode_exec::run_headless`, so these
+//! guarantees now live on the real product binary. Keyless (mock wire), CI-safe.
+
+// Test code; unwrap/expect are the intended failure signal.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use assert_cmd::Command;
 use locode_core::{Event, Report, Status, reconstruct_conversation};
 use predicates::prelude::*;
 
-fn exec() -> Command {
-    let mut cmd =
-        Command::cargo_bin("locode-exec").unwrap_or_else(|e| panic!("binary builds: {e}"));
+fn locode() -> Command {
+    let mut cmd = Command::cargo_bin("locode").unwrap_or_else(|e| panic!("binary builds: {e}"));
     // Hermetic: never inherit a real key/base-url/schema from the dev env.
     cmd.env_remove("LOCODE_API_KEY")
         .env_remove("LOCODE_BASE_URL")
@@ -26,8 +31,8 @@ fn tempdir() -> tempfile::TempDir {
 #[test]
 fn mock_json_is_exactly_one_parseable_report() {
     let dir = tempdir();
-    let assert = exec()
-        .args(["say hi", "--api-schema", "mock", "--cwd"])
+    let assert = locode()
+        .args(["-p", "say hi", "--api-schema", "mock", "--cwd"])
         .arg(dir.path())
         .assert()
         .success();
@@ -45,8 +50,9 @@ fn mock_json_is_exactly_one_parseable_report() {
 #[test]
 fn text_mode_prints_final_message_only() {
     let dir = tempdir();
-    exec()
+    locode()
         .args([
+            "-p",
             "say hi",
             "--api-schema",
             "mock",
@@ -63,8 +69,9 @@ fn text_mode_prints_final_message_only() {
 #[test]
 fn stream_json_is_valid_jsonl_and_reconstructs() {
     let dir = tempdir();
-    let assert = exec()
+    let assert = locode()
         .args([
+            "-p",
             "say hi",
             "--api-schema",
             "mock",
@@ -107,6 +114,17 @@ fn stream_json_is_valid_jsonl_and_reconstructs() {
 }
 
 #[test]
+fn unknown_schema_fails_before_running() {
+    let dir = tempdir();
+    locode()
+        .args(["-p", "say hi", "--api-schema", "bogus", "--cwd"])
+        .arg(dir.path())
+        .assert()
+        .failure()
+        .stdout("");
+}
+
+#[test]
 fn project_instructions_injected_from_agents_md() {
     // A repo with an AGENTS.md at the root: the loader (default on) discovers it and the
     // engine injects it as a User <system-reminder> in the trace (ADR-0023, Task 30).
@@ -114,8 +132,9 @@ fn project_instructions_injected_from_agents_md() {
     std::fs::create_dir(dir.path().join(".git")).expect("mkdir .git");
     std::fs::write(dir.path().join("AGENTS.md"), "Always be brief.").expect("write AGENTS.md");
 
-    let assert = exec()
+    let assert = locode()
         .args([
+            "-p",
             "say hi",
             "--api-schema",
             "mock",
@@ -148,8 +167,9 @@ fn project_instructions_nested_repo_root_to_cwd_order() {
     std::fs::create_dir_all(&sub).expect("mkdir subdir");
     std::fs::write(sub.join("AGENTS.md"), "LEAF-RULE").expect("leaf AGENTS.md");
 
-    let assert = exec()
+    let assert = locode()
         .args([
+            "-p",
             "say hi",
             "--api-schema",
             "mock",
@@ -179,8 +199,9 @@ fn no_project_instructions_flag_suppresses_injection() {
     std::fs::create_dir(dir.path().join(".git")).expect("mkdir .git");
     std::fs::write(dir.path().join("AGENTS.md"), "Always be brief.").expect("write AGENTS.md");
 
-    let assert = exec()
+    let assert = locode()
         .args([
+            "-p",
             "say hi",
             "--api-schema",
             "mock",
@@ -203,8 +224,8 @@ fn no_project_instructions_flag_suppresses_injection() {
 #[test]
 fn logs_go_to_stderr_never_stdout() {
     let dir = tempdir();
-    let assert = exec()
-        .args(["say hi", "--api-schema", "mock", "--cwd"])
+    let assert = locode()
+        .args(["-p", "say hi", "--api-schema", "mock", "--cwd"])
         .arg(dir.path())
         .env("RUST_LOG", "debug")
         .assert()
@@ -217,8 +238,8 @@ fn logs_go_to_stderr_never_stdout() {
 #[test]
 fn anthropic_without_key_fails_before_running() {
     let dir = tempdir();
-    exec()
-        .args(["say hi", "--cwd"]) // default --api-schema anthropic
+    locode()
+        .args(["-p", "say hi", "--cwd"]) // default --api-schema anthropic
         .arg(dir.path())
         .assert()
         .code(1)
@@ -228,8 +249,8 @@ fn anthropic_without_key_fails_before_running() {
 
 #[test]
 fn unknown_harness_is_a_clean_usage_error() {
-    exec()
-        .args(["say hi", "--harness", "bogus"])
+    locode()
+        .args(["-p", "say hi", "--harness", "bogus"])
         .assert()
         .code(2)
         .stdout("")
@@ -239,8 +260,8 @@ fn unknown_harness_is_a_clean_usage_error() {
 #[test]
 fn empty_prompt_is_an_error() {
     let dir = tempdir();
-    exec()
-        .args(["--api-schema", "mock", "--cwd"])
+    locode()
+        .args(["-p", "--api-schema", "mock", "--cwd"])
         .arg(dir.path())
         .write_stdin("")
         .assert()
@@ -251,8 +272,9 @@ fn empty_prompt_is_an_error() {
 #[test]
 fn prompt_reads_from_stdin_when_dash() {
     let dir = tempdir();
-    exec()
+    locode()
         .args([
+            "-p",
             "-",
             "--api-schema",
             "mock",
@@ -270,8 +292,9 @@ fn prompt_reads_from_stdin_when_dash() {
 #[test]
 fn mock_script_env_overrides_the_default_turn() {
     let dir = tempdir();
-    exec()
+    locode()
         .args([
+            "-p",
             "say hi",
             "--api-schema",
             "mock",
@@ -289,8 +312,8 @@ fn mock_script_env_overrides_the_default_turn() {
 #[test]
 fn malformed_mock_script_fails_pre_run() {
     let dir = tempdir();
-    exec()
-        .args(["say hi", "--api-schema", "mock", "--cwd"])
+    locode()
+        .args(["-p", "say hi", "--api-schema", "mock", "--cwd"])
         .arg(dir.path())
         .env("LOCODE_MOCK_SCRIPT", "not json")
         .assert()
@@ -302,8 +325,9 @@ fn malformed_mock_script_fails_pre_run() {
 #[test]
 fn strip_identity_removes_grok_from_the_stream() {
     let dir = tempdir();
-    let assert = exec()
+    let assert = locode()
         .args([
+            "-p",
             "say hi",
             "--api-schema",
             "mock",
@@ -325,10 +349,10 @@ fn strip_identity_removes_grok_from_the_stream() {
 
 // ==================== SIGTERM (ADR-0018 / Task 21 → Task 24) ====================
 //
-// These drive the real binary with an env-scripted mock: the model "asks" for
-// `run_terminal_cmd {command: "sleep 30"}`, which holds the run open until the
-// test SIGTERMs the process — exercising signal → cancel handle → cooperative
-// tool cancel → synthetic pairing → cancelled report, end to end.
+// These drive the real `locode` binary with an env-scripted mock: the model "asks"
+// for `run_terminal_cmd {command: "sleep 30"}`, which holds the run open until the
+// test SIGTERMs the process — exercising signal → cancel handle → cooperative tool
+// cancel → synthetic pairing → cancelled report, end to end.
 #[cfg(unix)]
 mod sigterm {
     use super::*;
@@ -345,9 +369,9 @@ mod sigterm {
         {"text": "never reached"}
     ]"#;
 
-    fn spawn_exec(dir: &tempfile::TempDir, extra_args: &[&str], script: Option<&str>) -> Child {
-        let mut cmd = StdCommand::new(assert_cmd::cargo::cargo_bin("locode-exec"));
-        cmd.args(["--api-schema", "mock", "--cwd"])
+    fn spawn_locode(dir: &tempfile::TempDir, extra_args: &[&str], script: Option<&str>) -> Child {
+        let mut cmd = StdCommand::new(assert_cmd::cargo::cargo_bin("locode"));
+        cmd.args(["-p", "--api-schema", "mock", "--cwd"])
             .arg(dir.path())
             .args(extra_args)
             .env_remove("LOCODE_API_KEY")
@@ -362,8 +386,7 @@ mod sigterm {
         if let Some(script) = script {
             cmd.env("LOCODE_MOCK_SCRIPT", script);
         }
-        cmd.spawn()
-            .unwrap_or_else(|e| panic!("spawn locode-exec: {e}"))
+        cmd.spawn().unwrap_or_else(|e| panic!("spawn locode: {e}"))
     }
 
     fn sigterm(child: &Child) {
@@ -383,7 +406,7 @@ mod sigterm {
             }
             assert!(
                 start.elapsed() < cap,
-                "locode-exec did not exit within {cap:?} after SIGTERM"
+                "locode did not exit within {cap:?} after SIGTERM"
             );
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -392,7 +415,7 @@ mod sigterm {
     #[test]
     fn sigterm_mid_run_stream_json_ends_in_a_cancelled_result() {
         let dir = tempdir();
-        let mut child = spawn_exec(
+        let mut child = spawn_locode(
             &dir,
             &["say hi", "--output-format", "stream-json"],
             Some(SLOW_SCRIPT),
@@ -469,7 +492,7 @@ mod sigterm {
     #[test]
     fn sigterm_mid_run_json_still_emits_one_report() {
         let dir = tempdir();
-        let mut child = spawn_exec(&dir, &["say hi"], Some(SLOW_SCRIPT));
+        let mut child = spawn_locode(&dir, &["say hi"], Some(SLOW_SCRIPT));
 
         // json mode is silent until the end — no stream to key off; the 30s
         // sleep leaves a wide window for a fixed grace period.
@@ -494,7 +517,7 @@ mod sigterm {
         let dir = tempdir();
         // No positional prompt + stdin held open: the binary blocks pre-run
         // reading the prompt from stdin.
-        let mut child = spawn_exec(&dir, &[], None);
+        let mut child = spawn_locode(&dir, &[], None);
         std::thread::sleep(Duration::from_millis(500));
         sigterm(&child);
         let status = wait_capped(&mut child, Duration::from_secs(20));

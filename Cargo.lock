@@ -1206,14 +1206,11 @@ dependencies = [
 name = "locode-exec"
 version = "0.1.8"
 dependencies = [
- "assert_cmd",
  "chrono",
  "clap",
  "locode-core",
- "predicates",
  "serde",
  "serde_json",
- "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
