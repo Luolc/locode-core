@@ -8,12 +8,16 @@
 //! `ToolError::Respond`.
 
 mod fs;
+mod instructions;
 mod path;
 mod rg;
 mod shell;
 mod walk;
 
 pub use fs::{DirEntry, FileRead, FileStat, FsError};
+pub use instructions::{
+    InstructionEntry, InstructionsConfig, ProjectInstructions, load_project_instructions,
+};
 pub use path::PathError;
 pub use rg::rg_program;
 pub use shell::{
