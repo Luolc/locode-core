@@ -139,7 +139,7 @@ pub fn load_settings_from(
     }
 
     // ---- 3. project + 4. project-local layers (denylisted) ----
-    let root = find_root_from_markers(cwd, &[".git".to_string()]);
+    let root = find_root_from_markers(cwd, &[".git".to_string()], None);
     for name in ["settings.json", "settings.local.json"] {
         let path = root.join(".locode").join(name);
         if let Some(mut value) = read_layer(&path, &mut warnings) {
@@ -184,6 +184,14 @@ pub fn load_settings_from(
         warnings.push(format!("settings: merged settings did not decode: {e}"));
         RawSettings::default()
     });
+    if let Some(pattern) = &raw.instructions.root_stop_pattern
+        && let Err(e) = regex::Regex::new(pattern)
+    {
+        warnings.push(format!(
+            "settings: instructions.root_stop_pattern is not a valid regex ({e}); \
+             root detection will ignore it"
+        ));
+    }
     let skills_extra = validate_skills_extra(
         &raw.skills.extra,
         home_for_tilde,
@@ -611,6 +619,23 @@ mod tests {
         );
         let got = load_settings_from(None, &cwd, None, None);
         assert_eq!(got.settings.model.as_deref(), Some("here"));
+    }
+
+    #[test]
+    fn invalid_root_stop_pattern_warns_but_survives() {
+        let f = fixture();
+        write(
+            &f.user_dir.join("settings.json"),
+            &json!({"instructions": {"root_stop_pattern": "[bad"}, "model": "m"}),
+        );
+        let got = load(&f, None);
+        assert_eq!(got.settings.model.as_deref(), Some("m"));
+        assert_eq!(got.settings.root_stop_pattern.as_deref(), Some("[bad"));
+        assert!(
+            got.warnings.iter().any(|w| w.contains("root_stop_pattern")),
+            "{:?}",
+            got.warnings
+        );
     }
 
     #[test]
