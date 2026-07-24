@@ -218,14 +218,14 @@ authoritative, no DB for v0.** Rationale:
   5 `session_*` migrations in one month to settle its model).
 
 Concretely:
-- **Path:** `~/.locode/sessions/YYYY/MM/DD/rollout-<ts>-<sessionId>.jsonl` (Codex's date-bucketed
+- **Path:** `~/.locode/sessions/YYYY/MM/DD/rollout-<timestamp>-<sessionId>.jsonl` (Codex's date-bucketed
   scheme; colons→dashes). Prefer this over Claude's `projects/<sanitized-cwd>/` because the cwd
   sanitization is **lossy/non-invertible** and forces a hash-fallback resolver.
-- **Line 1 = SessionMeta header:** `{session_id, parent_id?, ts, cwd, git:{root,branch,head,remote},
+- **Line 1 = SessionMeta header:** `{session_id, parent_id?, timestamp, cwd, git:{root,branch,head,remote},
   cli_version, model, provider, harness, base_instructions?}` — grok's `summary.json` field set shows
   what a resume picker needs; codex's SessionMeta shows the header form. Carry `harness`/`agent_name`
   so resume rehydrates the right pack independent of the model catalog.
-- **Each other line:** `{ts, type, payload}` internally-tagged union, `type ∈ session_meta |
+- **Each other line:** `{timestamp, type, payload}` internally-tagged union, `type ∈ session_meta |
   user_message | assistant_message | tool_use | tool_result | turn_context | compacted`. Keep the
   variant set small; include `turn_context` (per-turn cwd/model) and `compacted` (summary +
   replacement history) so resume survives compaction — both proven load-bearing in Codex.
@@ -237,7 +237,7 @@ Concretely:
 - **Listing index:** for v0, scan headers (line 1 only) — cheap enough for a personal history. If a
   fast picker over thousands of sessions is later needed, add a **rebuildable** SQLite index à la Codex
   (never authoritative), *not* opencode's event-sourced DB.
-- **Separate `history.jsonl`** for cross-session composer recall (`{session_id, ts, text}`, `0600`,
+- **Separate `history.jsonl`** for cross-session composer recall (`{session_id, timestamp, text}`, `0600`,
   append+flock) — do **not** conflate it with the transcript (both Codex and Claude keep them apart).
 
 ---
@@ -260,10 +260,15 @@ under a lock:
   separate `mcp-auth.json`; **also** stores `access_token`/`refresh_token` in the SQLite
   `account`/`credential` tables — secrets in *two* places, a wart to avoid.
 
-**→ `~/.locode`:** one `0600` `auth.json` (or reuse env like `LOCODE_API_KEY`/provider-specific keys,
-which the ProviderRegistry already reads), **separate from `settings.json`**, never in the trace. Keep
-machine-managed state (auth, trust decisions, usage) apart from hand-edited settings — Claude's
-two-artifact split is the clearest statement of this.
+**→ `~/.locode`: no `auth.json` — env-only (user decision, 2026-07-24).** The machine-managed
+auth file exists *because OAuth refresh tokens rotate* (the app must rewrite it); a static API key
+doesn't rotate, so grok's API-key path is the model: keys come from env (`ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, `XAI_API_KEY`, …), read once at process start by the ProviderRegistry factories —
+no file, no sync loop. Boundary: an `auth.json` (0600, separate from `settings.json`, never in the
+trace) becomes necessary only if an OAuth/token-refresh flow ever lands; a convenience
+`locode auth set` one-shot write can be added then. The general lesson stands: keep machine-managed
+state (auth, trust, usage) apart from hand-edited settings — Claude's two-artifact split is the
+clearest statement of this.
 
 ---
 
@@ -306,8 +311,10 @@ day one. Defer the `allow_implicit_invocation`-in-sidecar (Codex) and the remote
 
 - **AGENTS.md from home:** Codex loads `$CODEX_HOME/AGENTS.override.md` then `$CODEX_HOME/AGENTS.md`
   as global user instructions; Grok scans a neutral filename list (`AGENTS.md`, `CLAUDE.md`, …) cwd→root
-  and re-injects on compaction. We already load repo `AGENTS.md` (ADR-0023); a home-level
-  `~/.locode/AGENTS.md` (+ `.override.md`) is the natural global analog.
+  and re-injects on compaction. **We already ship this** (ADR-0023 v1, correction 2026-07-24 — an
+  earlier draft of this doc wrongly listed it as deferred): `locode-host/src/instructions.rs` loads
+  `~/.locode/AGENTS.md` (+ same-dir `AGENTS.override.md`) as the lowest-precedence layer, honoring
+  `$LOCODE_HOME` (ADR-0023 amendment 2026-07-24).
 - **Workspace trust:** Codex `[projects."<abs>"]` table; Grok `trusted_folders.toml`; Claude
   `hasTrustDialogAccepted` per project — a first-run "trust this workspace?" gate, persisted.
 - **MCP:** always config-declared (a `[mcp_servers]` TOML table / `mcp` JSON key), plus project-scoped
@@ -326,14 +333,18 @@ day one. Defer the `allow_implicit_invocation`-in-sidecar (Codex) and the remote
 ```
 ~/.locode/                              # $LOCODE_HOME override; memoized; auto-created
 ├── settings.json                       # user config (JSON); < project .locode/settings.json < .local < --settings
-├── auth.json                           # 0600, secrets only, separate from settings; or env keys
-├── AGENTS.md (+ AGENTS.override.md)     # home-level global instructions (defer)
+├── AGENTS.md (+ AGENTS.override.md)     # home-level global instructions — SHIPPED (ADR-0023)
 ├── sessions/
-│   ├── YYYY/MM/DD/rollout-<ts>-<sessionId>.jsonl   # authoritative trace; line1=SessionMeta, then {ts,type,payload}
-│   └── history.jsonl                    # cross-session composer recall {session_id,ts,text} (0600)
+│   ├── YYYY/MM/DD/rollout-<timestamp>-<sessionId>.jsonl  # authoritative trace; line1=SessionMeta,
+│   │                                                     # then {timestamp,type,payload} records
+│   └── history.jsonl                    # cross-session INPUT history {session_id,timestamp,text} (0600)
+│                                        # — the composer's up-arrow/reverse-search recall (shell-history
+│                                        # analog), NOT the transcript; needed only once the TUI does recall
 ├── skills/<name>/SKILL.md               # user skills; + <repo>/.locode/skills/ (project)
 └── (defer) trusted_folders / models_cache / version / logs / a rebuildable sessions index
 ```
+
+No `auth.json`: env-only until an OAuth/refresh flow exists (§4, user decision 2026-07-24).
 
 **The three load-bearing decisions:**
 1. **Config = layered JSON** (user<project<local<flag) with **array-union merge** for permissions and a
@@ -346,10 +357,13 @@ day one. Defer the `allow_implicit_invocation`-in-sidecar (Codex) and the remote
    loader, two-switch invocation gate, **shared-engine** (ADR-0023) not per-pack; optional Claude compat
    root.
 
+**Resolved with the user (2026-07-24):**
+- **No `auth.json`** — env-only until OAuth/token-refresh ever lands (§4).
+- **Home-level `AGENTS.md`** — already shipped (ADR-0023); `$LOCODE_HOME` honored by amendment.
+
 **Open questions to confirm with the user:**
 - JSON vs TOML for `settings.json` (recommend JSON — one serializer; deviates from the Rust harnesses).
 - Single `~/.locode/` vs an XDG split (recommend single dir for v0 simplicity).
-- Home-level `AGENTS.md` now or deferred (recommend defer; repo `AGENTS.md` already loads).
 - Whether to read `~/.claude/skills` as a compat root (recommend yes — cheap day-one skill reuse).
 
 ---

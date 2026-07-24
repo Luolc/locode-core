@@ -144,13 +144,24 @@ fn global_dir_of(global_file: &Path) -> PathBuf {
         .map_or_else(|| global_file.to_path_buf(), Path::to_path_buf)
 }
 
-/// `~/.locode/AGENTS.md`, or `None` when `HOME` is unset/empty (dependency-free — the
-/// shipped targets are macOS/Linux).
+/// The global instruction file: `$LOCODE_HOME/AGENTS.md` when the override is set
+/// (ADR-0023 amendment 2026-07-24 — every studied harness has the analog env override),
+/// else `~/.locode/AGENTS.md`; `None` when neither variable resolves. Dependency-free —
+/// the shipped targets are macOS/Linux.
 fn global_instruction_path() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    if home.is_empty() {
-        return None;
+    global_path_from(std::env::var_os("LOCODE_HOME"), std::env::var_os("HOME"))
+}
+
+/// The env-free core of [`global_instruction_path`] (tests inject the values — `HOME`/
+/// `LOCODE_HOME` are process-global and this crate forbids `unsafe` env mutation).
+fn global_path_from(
+    locode_home: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    if let Some(dir) = locode_home.filter(|d| !d.is_empty()) {
+        return Some(PathBuf::from(dir).join(AGENTS_FILE));
     }
+    let home = home.filter(|h| !h.is_empty())?;
     Some(PathBuf::from(home).join(".locode").join(AGENTS_FILE))
 }
 
@@ -468,7 +479,20 @@ mod tests {
         // Read-only: whatever HOME is, the global path is `<home>/.locode/AGENTS.md`.
         if let Some(p) = global_instruction_path() {
             assert!(p.ends_with("AGENTS.md"));
-            assert!(p.components().any(|c| c.as_os_str() == ".locode"));
         }
+    }
+
+    #[test]
+    fn global_path_prefers_locode_home_over_home() {
+        use std::ffi::OsString;
+        // LOCODE_HOME set → `<LOCODE_HOME>/AGENTS.md` (the dir IS the dotfolder).
+        let p = global_path_from(Some(OsString::from("/custom/dot")), None).unwrap();
+        assert_eq!(p, PathBuf::from("/custom/dot").join(AGENTS_FILE));
+        // Empty LOCODE_HOME is treated as unset → falls back to `$HOME/.locode`.
+        let p = global_path_from(Some(OsString::new()), Some(OsString::from("/home/u"))).unwrap();
+        assert_eq!(p, PathBuf::from("/home/u/.locode").join(AGENTS_FILE));
+        // Neither set → None.
+        assert!(global_path_from(None, None).is_none());
+        assert!(global_path_from(None, Some(OsString::new())).is_none());
     }
 }
