@@ -68,6 +68,17 @@ pub trait Pack: Send + Sync {
     /// the real content lands in Task 13.
     fn preamble(&self, ctx: &PackContext) -> Vec<Message>;
 
+    /// The provider wire schemas this pack's tools require, or `None` when the pack
+    /// is wire-agnostic (grok, claude). The codex pack pins `["openai-responses"]`
+    /// because its `apply_patch` is a freeform (custom-grammar) tool that only
+    /// round-trips on the OpenAI Responses wire (ADR-0012, D5). Checked pre-run
+    /// against the resolved provider: a real schema not in the set fails before the
+    /// loop with an actionable message. The `mock` wire (keyless CI) is a universal
+    /// escape hatch and is always allowed, independent of this list.
+    fn required_api_schemas(&self) -> Option<&'static [&'static str]> {
+        None
+    }
+
     /// Shape a raw user prompt the way this harness expects it. Some harnesses wrap
     /// the task in a tag their system prompt refers to (grok's `<user_query>`);
     /// Claude Code sends it verbatim. The default is verbatim; a pack overrides only
