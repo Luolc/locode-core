@@ -19,19 +19,42 @@ enum SampleError {
 }
 
 impl Session {
-    /// Load + inject the shared project-instruction `<system-reminder>` (ADR-0023) as a
-    /// `User` message. Shared machinery, identical for every pack. A no-op when disabled or
-    /// when nothing is discovered.
-    fn inject_project_instructions(&mut self) {
+    /// Refresh the shared project-instruction `<system-reminder>` (ADR-0023), rescanning
+    /// every turn. Injects a `User` message on first appearance, a replace-bannered one when
+    /// the files changed, or a removal notice when they vanished; a no-op when unchanged or
+    /// disabled. Never mutates prior history — the transcript stays immutable. Shared
+    /// machinery, identical for every pack.
+    fn refresh_project_instructions(&mut self) {
         if !self.config.instructions.enabled {
             return;
         }
         let discovered =
             locode_host::load_project_instructions(&self.config.cwd, &self.config.instructions);
-        if let Some(msg) = crate::instructions::render_instructions(
-            &discovered,
-            self.config.instructions.byte_budget,
-        ) {
+        let new_hash = crate::instructions::instructions_hash(&discovered);
+        if new_hash == self.last_instructions {
+            return; // unchanged (including both-empty) — don't re-inject
+        }
+
+        let message = match (self.last_instructions, new_hash) {
+            // First appearance (or re-appearance after removal): inject fresh, no banner.
+            (None, Some(_)) => crate::instructions::render_instructions(
+                &discovered,
+                self.config.instructions.byte_budget,
+                false,
+            ),
+            // Changed mid-session: re-inject with a replace banner.
+            (Some(_), Some(_)) => crate::instructions::render_instructions(
+                &discovered,
+                self.config.instructions.byte_budget,
+                true,
+            ),
+            // Vanished: emit the removal notice.
+            (Some(_), None) => Some(crate::instructions::removal_message()),
+            // Both empty is filtered by the equality check above.
+            (None, None) => None,
+        };
+        self.last_instructions = new_hash;
+        if let Some(msg) = message {
             self.history.push(msg.clone());
             self.sink.emit(Event::Message { message: msg });
         }
@@ -61,11 +84,12 @@ impl Session {
                 preamble: self.preamble.clone(),
                 tools,
             });
-            // Project instructions (ADR-0023): inject once per session — after the pack
-            // preamble, before the first user turn — as a `User` <system-reminder>.
-            self.inject_project_instructions();
         }
         self.turns_run += 1;
+
+        // Project instructions (ADR-0023): rescanned every turn — injected/refreshed after
+        // the pack preamble and before this turn's user message (a no-op when unchanged).
+        self.refresh_project_instructions();
 
         let user_msg = Message {
             role: Role::User,

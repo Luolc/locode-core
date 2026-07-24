@@ -1150,6 +1150,89 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn project_instructions_replace_banner_on_edit() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        let agents = root.join("AGENTS.md");
+        std::fs::write(&agents, "v1 rules").unwrap();
+
+        let (mut s, requests) = capturing_with_cfg(
+            vec![Ok(text_turn("ok1")), Ok(text_turn("ok2"))],
+            instr_config(root),
+        );
+        s.run_text("q1").await;
+        std::fs::write(&agents, "v2 rules").unwrap(); // edit between runs
+        s.run_text("q2").await;
+
+        let reqs = requests.lock().unwrap();
+        let run2 = &reqs[1];
+        let banner = run2
+            .iter()
+            .find_map(|m| match (m.role, m.content.as_slice()) {
+                (Role::User, [ContentBlock::Text { text }])
+                    if text.contains("replace all previously provided") =>
+                {
+                    Some(text.clone())
+                }
+                _ => None,
+            })
+            .expect("replace banner on edit");
+        assert!(banner.contains("v2 rules"), "new content: {banner}");
+        assert!(!banner.contains("v1 rules"), "not the old content");
+        // Both the original (v1) and the replacement (v2) reminders are in the transcript.
+        assert_eq!(reminder_count(run2), 2);
+    }
+
+    #[tokio::test]
+    async fn project_instructions_removal_banner_on_delete() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        let agents = root.join("AGENTS.md");
+        std::fs::write(&agents, "rules").unwrap();
+
+        let (mut s, requests) = capturing_with_cfg(
+            vec![Ok(text_turn("ok1")), Ok(text_turn("ok2"))],
+            instr_config(root),
+        );
+        s.run_text("q1").await;
+        std::fs::remove_file(&agents).unwrap(); // delete between runs
+        s.run_text("q2").await;
+
+        let reqs = requests.lock().unwrap();
+        assert!(
+            reqs[1].iter().any(|m| matches!(
+                (m.role, m.content.as_slice()),
+                (Role::User, [ContentBlock::Text { text }]) if text.contains("no longer apply")
+            )),
+            "removal notice on delete"
+        );
+    }
+
+    #[tokio::test]
+    async fn project_instructions_not_reinjected_when_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        std::fs::write(root.join("AGENTS.md"), "stable").unwrap();
+
+        let (mut s, requests) = capturing_with_cfg(
+            vec![
+                Ok(text_turn("ok1")),
+                Ok(text_turn("ok2")),
+                Ok(text_turn("ok3")),
+            ],
+            instr_config(root),
+        );
+        s.run_text("q1").await;
+        s.run_text("q2").await;
+        s.run_text("q3").await;
+        // Exactly one injection across three unchanged turns.
+        assert_eq!(reminder_count(&requests.lock().unwrap()[2]), 1);
+    }
+
+    #[tokio::test]
     async fn init_emitted_once_across_runs_with_one_result_each() {
         let (mut s, events) = session_with(
             vec![Ok(text_turn("one")), Ok(text_turn("two"))],
