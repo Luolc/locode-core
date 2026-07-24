@@ -14,6 +14,8 @@
 
 mod bash;
 pub mod prompt;
+mod read;
+mod state;
 
 use std::sync::Arc;
 
@@ -23,6 +25,8 @@ use locode_tools::Registry;
 
 use crate::pack::{Pack, PackContext};
 use bash::ClaudeBash;
+use read::ClaudeRead;
+use state::ClaudeSessionState;
 
 /// The Claude Code harness pack (a zero-sized `&'static` singleton for Slice 1;
 /// gains a per-run `ClaudeSessionState` when Read/Edit/Write land).
@@ -35,8 +39,15 @@ impl Pack for ClaudePack {
     }
 
     fn register(&self, host: &Arc<Host>, registry: &mut Registry) {
+        // Per-run freshness store (CC's per-session `readFileState`): Read records
+        // into it; Edit/Write (S3/S4) gate on it. Cloned into each tool that shares it.
+        let state = Arc::new(ClaudeSessionState::default());
         // Claude Code's exact UpperCamelCase wire names (contrast grok's snake_case).
         registry.register("Bash", ClaudeBash::new(Arc::clone(host)));
+        registry.register(
+            "Read",
+            ClaudeRead::new(Arc::clone(host), Arc::clone(&state)),
+        );
     }
 
     fn preamble(&self, ctx: &PackContext) -> Vec<Message> {
@@ -102,15 +113,16 @@ mod tests {
     }
 
     #[test]
-    fn pack_registers_exactly_bash_this_slice() {
+    fn pack_registers_expected_tools_this_slice() {
         let (_dir, registry, _root) = setup();
         let mut names: Vec<&str> = registry.names().collect();
         names.sort_unstable();
-        assert_eq!(names, vec!["Bash"]);
+        assert_eq!(names, vec!["Bash", "Read"]);
         assert_eq!(
             registry.kind_of("Bash"),
             Some(locode_tools::ToolKind::Shell)
         );
+        assert_eq!(registry.kind_of("Read"), Some(locode_tools::ToolKind::Read));
     }
 
     #[test]
@@ -268,6 +280,144 @@ mod tests {
         assert!(text.contains("LINE1\n"), "head retained: {}", &text[..40]);
         assert!(text.contains("LINE8000"), "tail retained");
         assert_eq!(out.record.output["truncated"], json!(true));
+    }
+
+    // ---- Read behavior ----
+
+    #[tokio::test]
+    async fn read_numbers_lines_cat_n_compact() {
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("f.txt"), "alpha\nbeta\ngamma\n").unwrap();
+        let out = registry
+            .dispatch("Read", json!({ "file_path": "f.txt" }), &ctx(&root))
+            .await;
+        assert!(out.record.ok);
+        // Compact cat -n: `N\tline`, 1-indexed; trailing newline adds no phantom.
+        assert_eq!(result_text(&out.tool_result), "1\talpha\n2\tbeta\n3\tgamma");
+        assert_eq!(out.record.output["lines"], json!(3));
+        assert_eq!(out.record.output["truncated"], json!(false));
+    }
+
+    #[tokio::test]
+    async fn read_offset_and_limit_window() {
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("f.txt"), "l1\nl2\nl3\nl4\nl5\n").unwrap();
+        let out = registry
+            .dispatch(
+                "Read",
+                json!({ "file_path": "f.txt", "offset": 2, "limit": 2 }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(out.record.ok);
+        // Absolute line numbers preserved (2,3); window is a subset → truncated.
+        assert_eq!(result_text(&out.tool_result), "2\tl2\n3\tl3");
+        assert_eq!(out.record.output["truncated"], json!(true));
+    }
+
+    #[tokio::test]
+    async fn read_empty_file_warns() {
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("e.txt"), "").unwrap();
+        let out = registry
+            .dispatch("Read", json!({ "file_path": "e.txt" }), &ctx(&root))
+            .await;
+        assert!(out.record.ok);
+        assert_eq!(
+            result_text(&out.tool_result),
+            "<system-reminder>Warning: the file exists but the contents are empty.</system-reminder>"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_offset_past_eof_warns() {
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("f.txt"), "a\nb\n").unwrap();
+        let out = registry
+            .dispatch(
+                "Read",
+                json!({ "file_path": "f.txt", "offset": 99 }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(out.record.ok);
+        assert_eq!(
+            result_text(&out.tool_result),
+            "<system-reminder>Warning: the file exists but is shorter than the provided offset (99). The file has 2 lines.</system-reminder>"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_missing_file_is_soft_error() {
+        let (_dir, registry, root) = setup();
+        let out = registry
+            .dispatch("Read", json!({ "file_path": "nope.txt" }), &ctx(&root))
+            .await;
+        assert!(!out.record.ok);
+        assert!(is_error(&out.tool_result));
+    }
+
+    #[tokio::test]
+    async fn read_dedup_unchanged_then_rereads_after_change() {
+        let (_dir, registry, root) = setup();
+        let p = root.join("f.txt");
+        std::fs::write(&p, "one\ntwo\n").unwrap();
+        // First read: full content.
+        let first = registry
+            .dispatch("Read", json!({ "file_path": "f.txt" }), &ctx(&root))
+            .await;
+        assert_eq!(result_text(&first.tool_result), "1\tone\n2\ttwo");
+        // Re-read unchanged → stub.
+        let second = registry
+            .dispatch("Read", json!({ "file_path": "f.txt" }), &ctx(&root))
+            .await;
+        assert!(second.record.ok);
+        assert!(result_text(&second.tool_result).starts_with("File unchanged since last read."));
+        // Change the file (bump mtime well past ms granularity) → full re-read.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&p, "one\ntwo\nthree\n").unwrap();
+        let third = registry
+            .dispatch("Read", json!({ "file_path": "f.txt" }), &ctx(&root))
+            .await;
+        assert_eq!(result_text(&third.tool_result), "1\tone\n2\ttwo\n3\tthree");
+    }
+
+    #[test]
+    fn read_schema_is_faithful() {
+        let (_dir, registry, _root) = setup();
+        let specs = registry.specs();
+        let read = specs.iter().find(|s| s.name == "Read").expect("Read spec");
+        let params = match &read.input {
+            locode_protocol::ToolInputFormat::JsonSchema { parameters } => parameters,
+            locode_protocol::ToolInputFormat::Freeform { .. } => panic!("Read is JSON-schema"),
+        };
+        assert_eq!(params["additionalProperties"], json!(false));
+        let props = params["properties"].as_object().unwrap();
+        assert_eq!(
+            props["file_path"]["description"],
+            json!("The absolute path to the file to read")
+        );
+        for key in ["file_path", "offset", "limit", "pages"] {
+            assert!(props.contains_key(key), "missing schema field {key}");
+        }
+        let required: Vec<&str> = params["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(required, vec!["file_path"]);
+    }
+
+    #[test]
+    fn read_offset_rejects_string_and_float() {
+        // Type-strict (repo policy): no lenient coercion.
+        for bad in [
+            json!({"file_path": "f", "offset": "3"}),
+            json!({"file_path": "f", "limit": 2.5}),
+        ] {
+            assert!(serde_json::from_value::<read::ReadArgs>(bad).is_err());
+        }
     }
 
     #[tokio::test]
