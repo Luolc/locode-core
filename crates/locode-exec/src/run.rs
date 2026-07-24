@@ -7,10 +7,10 @@ use std::sync::Arc;
 
 use locode_core::{
     CacheHint, EngineConfig, EventSink, FnSink, Host, HostConfig, InstructionsConfig, NullSink,
-    PackContext, PathPolicy, ProviderInit, ProviderRegistry, SamplingArgs, Session, grok,
+    PackContext, PathPolicy, ProviderInit, ProviderRegistry, SamplingArgs, Session,
 };
 
-use crate::cli::{Cli, Harness, OutputFormat};
+use crate::cli::{Cli, OutputFormat};
 use crate::output;
 
 /// A pre-run failure (config/setup — no report exists yet): stderr + exit 1.
@@ -70,11 +70,9 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
     };
     let preamble = pack.preamble(&pack_ctx);
 
-    // The grok system prompt directs the model to the <user_query> tag — wrap
-    // the prompt the way the harness expects (pack-specific shaping).
-    let user_prompt = match cli.harness {
-        Harness::Grok => grok::prompt::user_query(&prompt),
-    };
+    // Pack-specific user-prompt shaping (grok wraps in <user_query>; claude sends
+    // it verbatim). The pack owns the shape — the exec layer stays harness-agnostic.
+    let user_prompt = pack.shape_user_prompt(&prompt);
 
     // ---- 4. Provider: registry-resolved (ADR-0015); unknown names and
     //         factory failures (missing env, …) fail BEFORE driving the loop. ----

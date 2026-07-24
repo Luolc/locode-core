@@ -45,6 +45,11 @@ impl Pack for GrokPack {
         registry.register("list_dir", GrokListDir::new(Arc::clone(host)));
     }
 
+    fn shape_user_prompt(&self, text: &str) -> String {
+        // grok's system prompt directs the model to the <user_query> tag.
+        prompt::user_query(text)
+    }
+
     fn preamble(&self, ctx: &PackContext) -> Vec<Message> {
         // grok's real split (Task 13, ADR-0013): the rendered base prompt is the
         // System item; environment info (cwd/OS/shell/date) is NOT in grok's

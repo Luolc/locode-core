@@ -5,17 +5,21 @@
 //! `--harness <name>` to its pack. v0 wires the [`GrokPack`]; other packs are the next
 //! milestone (one `match`/`static` each).
 
+pub mod claude;
 pub mod grok;
 mod pack;
 
+pub use claude::ClaudePack;
 pub use grok::GrokPack;
 pub use pack::{Pack, PackContext};
 
 /// The process-wide grok singleton (zero-sized).
 static GROK: GrokPack = GrokPack;
+/// The process-wide claude singleton (zero-sized for Slice 1).
+static CLAUDE: ClaudePack = ClaudePack;
 
 /// Every wired harness, in a stable order (for `--help` and error messages).
-const PACKS: &[&(dyn Pack + 'static)] = &[&GROK];
+const PACKS: &[&(dyn Pack + 'static)] = &[&GROK, &CLAUDE];
 
 /// The registered `--harness` names, in stable order.
 #[must_use]
@@ -155,8 +159,13 @@ mod tests {
     }
 
     #[test]
-    fn available_lists_grok() {
-        assert_eq!(available(), vec!["grok"]);
+    fn available_lists_wired_packs() {
+        assert_eq!(available(), vec!["grok", "claude"]);
+    }
+
+    #[test]
+    fn resolve_claude_returns_claude_pack() {
+        assert_eq!(resolve("claude").unwrap().name(), "claude");
     }
 
     #[test]
