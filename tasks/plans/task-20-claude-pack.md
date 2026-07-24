@@ -18,6 +18,36 @@
 
 ---
 
+## Reconciliation (2026-07-24) — open questions resolved; read the working doc first
+
+This plan predates the AGENTS.md shared loader (Task 30 / ADR-0023) and the
+2026-07-24 claude-pack interview. The **process, resolved decisions, slice plan, and
+running gap log now live in [`../../docs/claude-pack-dev-process.md`](../../docs/claude-pack-dev-process.md)**
+— start there; this file is the per-tool/per-section design detail. §9's open
+questions are resolved:
+
+- **Q1 tool set** → six tools (`Bash, Read, Edit, Write, Glob, Grep`); TodoWrite/Task
+  excluded on fidelity-boundary grounds. ✅
+- **Q2 `PackContext` growth** → yes: add `is_git_repo: bool` + `model: Option<String>`
+  (cheap exec/tui plumbing; **no host handle in `preamble()`**). ✅
+- **Q3 CLAUDE.md loading** → **do NOT load in the pack.** Project instructions come
+  from the shared engine loader (ADR-0023), which reads **`AGENTS.md` only**. The
+  pack renders only `# currentDate` in its first-turn reminder. CLAUDE.md-not-read is
+  an accepted gap. (§4.8's `# claudeMd` omission is now permanent, not pending.)
+- **Q4 git-status tail** → **DEFERRED (brainstorm "Model C").** Claude-specific +
+  dynamic; revisit as a dedicated "session-start context organization" decision once
+  codex/opencode needs are visible. Not in v0.
+- **Q5 Bash `description` optional** → keep optional (faithful). ✅
+- **Q6 descriptions referencing dropped features** → **option (b):** verbatim, but
+  render CC's own conditional off-branch where the source omits a paragraph when a
+  feature is off; keep unconditional mentions verbatim and log each as a gap in the
+  provenance header. ✅
+- **Q7 identity** → **both variants** (headless `AGENT_SDK_PREFIX` / interactive
+  `DEFAULT_PREFIX`) + `strip_identity` compatible (pinned test). ✅
+
+Cite **ADR-0023** wherever this plan says "the fidelity boundary in AGENTS.md" (the
+boundary is now a decision of record). Everything else in this plan stands.
+
 ## 1. Purpose & scope
 
 Port Claude Code's headless-relevant toolset and static system prompt as
