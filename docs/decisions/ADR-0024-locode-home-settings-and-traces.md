@@ -95,7 +95,48 @@ trust switch. This is codex's `PROJECT_LOCAL_CONFIG_DENYLIST` (`loader/mod.rs:64
 load-bearing idea of settings layering, and it is a *reviewed list* — extending the
 denylist is a normal change, shrinking it needs an ADR amendment.
 
-### 1.4 Backward compatibility rules for settings
+### 1.4 Fields (v1)
+
+The starter set, chosen important-and-cheap (each is a durable default for an
+existing or imminent run parameter; a flag always wins):
+
+| Key | Type | Notes |
+|---|---|---|
+| `model` | string | Default model, overriding the provider factory's default. Settings is this knob's first home (no `--model` flag yet; if one lands, it wins). |
+| `api_schema` | string | Default wire (persists today's flag/env). **Project-denylisted** (§1.3). |
+| `harness` | string | Default pack (`--harness`'s durable default). |
+| `instructions.root_stop_pattern` | string (regex) | Activates ADR-0023's dormant root-detection seam: a directory whose absolute path matches is the project root (the escape hatch for VCS-less trees — monorepo segments, `/workspace/<project>`). Activation requires the `regex` dependency — an ask-first item, approved by accepting this ADR. |
+| `skills.extra` | list of paths | Manual skill entries beyond the standard roots (§3). Entry semantics below. |
+
+**`skills.extra` semantics** *(user decision)*:
+
+```json
+"skills": { "extra": ["~/dev/one-off-skill", "~/team/shared-skills"] }
+```
+
+- An entry whose directory **directly contains `SKILL.md`** is a **single skill**.
+- Otherwise it is a **skills folder** — each child directory containing `SKILL.md`
+  is a skill — and its path **must end in `skills`**; a folder entry that doesn't is
+  a config error (the guard against accidentally pointing discovery at some huge
+  unrelated tree). `~` is expanded.
+- The value is a plain list, but it sits under a `skills` **object** so future
+  siblings (`disabled`, `ignore` — grok ships exactly that trio,
+  `[skills] paths/ignore/disabled`) are additive; a bare `skills: [...]` would force
+  a breaking list→object reshape later (§1.5's own rules).
+
+**Deliberately CLI-only — not settings** *(user decision)*:
+`--no-project-instructions`, `--max-turns` — per-invocation switches the user will
+essentially never want as durable state; keeping them out of settings avoids a
+forgotten config permanently distorting runs. `--stream`, `--strip-identity`, and
+`--dangerously-skip-permissions` follow the same principle (the last is additionally
+a trust-class switch that must never be durable).
+
+**Reserved (shapes defined by their own features, later)**: `env` (session
+environment variables), `permissions` `{allow, deny, ask, default_mode}` (the
+array-union merge of §1.2 is designed for it; lands with the permission-rules work),
+`cleanup_period_days` (trace GC, once traces exist), `tui.*` (display preferences).
+
+### 1.5 Backward compatibility rules for settings
 
 - **Additive-only evolution**: new keys get defaults; existing keys are never
   repurposed.
@@ -279,7 +320,8 @@ touching v1's shapes**. Mechanisms, fixed now:
 ## 3. Skills (roots only — format/loader are the skills P0's ADR)
 
 Discovery roots mirror the settings layers 1:1: `~/.locode/skills/<name>/SKILL.md`
-(user) and `<repo>/.locode/skills/<name>/SKILL.md` (project). **No `~/.claude/skills`
+(user) and `<repo>/.locode/skills/<name>/SKILL.md` (project), plus the manual
+`skills.extra` entries from settings (§1.4 — single skills or `…skills` folders). **No `~/.claude/skills`
 compat root** *(user decision)* — grok reads Claude's tree for migration convenience,
 but importing skills written against another harness's tool names/conventions into an
 A/B-oriented agent muddies provenance; our own tree only. This ADR reserves the
