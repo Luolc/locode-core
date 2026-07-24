@@ -138,6 +138,21 @@ The filename keeps `rollout-<timestamp>-<session_id>` (colons → dashes): name-
 within a directory is reverse-chronological for free, and the id in the name lets
 `--resume <id>` scan without opening files. `session_id` is UUIDv7 (time-sortable).
 
+**The directory key is the session's *start* cwd, immutably.** A session belongs to
+the directory it was launched from; a (future) mid-session persistent `cd` appends a
+`turn_context` record but **never moves the file** — moving would race concurrent
+readers/`--resume` scans and break the dirname↔cwd bijection. All four studied
+harnesses key by start cwd (Claude `getOriginalCwd()`; codex's cwd filter reads the
+head `session_meta`; grok's by-id resolver scans *all* cwd dirs for exactly this
+reason). Consequence: after a mid-session `cd A→B`, `--continue` in **A** finds the
+session (and resumes with effective cwd = B via the latest `turn_context`);
+`--continue` in **B** does not — its semantics are "the newest session *started*
+here" — while `--resume <id>` still finds it anywhere via the scoped-then-global
+scan. (Today this is moot: the engine's cwd and path-jail root are fixed at start —
+a `cd` inside a shell call is per-invocation. If persistent `cd` ever makes the
+B-side miss a real pain, the extension contract admits additive fixes — a pointer
+file in B's dir or a `seen_cwds` header field — with no layout change.)
+
 ### 2.2 The file: one append-only JSONL rollout per session
 
 JSONL is authoritative — the trace maps 1:1 onto the engine's sample→dispatch→append
