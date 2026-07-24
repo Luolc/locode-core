@@ -24,7 +24,7 @@ pub struct Cli {
     pub cwd: Option<PathBuf>,
 
     /// Harness pack selecting the toolset + system prompt. Omitted ⇒ the
-    /// settings `harness` default (ADR-0024 §1.4), else `grok`.
+    /// settings `harness` default (ADR-0024 §1.4), else `claude`.
     #[arg(long, value_enum)]
     pub harness: Option<Harness>,
 
@@ -35,6 +35,12 @@ pub struct Cli {
     /// project layers may not set it), else `anthropic`.
     #[arg(long, env = "LOCODE_API_SCHEMA")]
     pub api_schema: Option<String>,
+
+    /// Model id override. Omitted ⇒ the settings `model` default, else the
+    /// wire's built-in default (ADR-0024 §1.4 — same precedence chain as every
+    /// other knob; there is deliberately no model env var).
+    #[arg(long)]
+    pub model: Option<String>,
 
     /// Extra settings layer: a path to a JSON file, or inline JSON (highest-
     /// precedence settings layer, ADR-0024 §1.2).

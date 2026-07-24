@@ -118,7 +118,7 @@ impl ProviderRegistry {
                     model,
                 })
             })
-            .register("mock", |_init| {
+            .register("mock", |init| {
                 let script = match std::env::var("LOCODE_MOCK_SCRIPT") {
                     Ok(json) => mock_script(&json)
                         .map_err(|e| ProviderBuildError(format!("LOCODE_MOCK_SCRIPT: {e}")))?,
@@ -132,7 +132,9 @@ impl ProviderRegistry {
                 };
                 Ok(BuiltProvider {
                     provider: Arc::new(MockProvider::new(script)),
-                    model: "mock-1".to_string(),
+                    // Honor the model override like the real wires do, so the
+                    // flag > settings > default chain is observable keylessly.
+                    model: init.model.clone().unwrap_or_else(|| "mock-1".to_string()),
                 })
             })
     }

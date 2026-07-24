@@ -801,7 +801,7 @@ mod stream_tests {
     }
 
     /// Opt-in live smoke test against the real Anthropic Messages wire via
-    /// OpenRouter. Requires `LOCODE_API_KEY` (+ `LOCODE_BASE_URL`/`LOCODE_MODEL`).
+    /// OpenRouter. Requires `LOCODE_API_KEY` (+ `LOCODE_BASE_URL`).
     /// Run with: `cargo test -p locode-provider -- --ignored live_smoke`.
     #[tokio::test]
     #[ignore = "hits the live API; needs LOCODE_API_KEY/BASE_URL"]

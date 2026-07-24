@@ -329,7 +329,7 @@ fn build_session(
         (None, None) => settings
             .harness
             .clone()
-            .unwrap_or_else(|| "grok".to_string()),
+            .unwrap_or_else(|| "claude".to_string()),
     };
     let pack = locode_core::resolve(&harness_name).map_err(|e| e.to_string())?;
     let registry_tools = pack.build_registry(&host);
@@ -347,10 +347,9 @@ fn build_session(
             .or_else(|| settings.api_schema.clone())
             .unwrap_or_else(|| "anthropic".to_string()),
     };
-    let model_override = match &resumed {
-        Some((_, contents)) => Some(contents.meta.model.clone()),
-        None => settings.model.clone(),
-    };
+    // The model is deliberately NOT recovered from the header (user decision
+    // 2026-07-24): flag > settings > the wire's default, resumed or not.
+    let model_override = cli.model.clone().or_else(|| settings.model.clone());
     let built = registry
         .build(
             &api_schema,

@@ -186,7 +186,12 @@ async fn tool_round_trip(provider: &OpenAiResponsesProvider, summary: &mut Strin
 #[tokio::test]
 #[ignore = "live network + spend; run manually with the direnv env"]
 async fn live_openai_tool_and_reasoning_round_trip() {
-    let provider = OpenAiResponsesProvider::from_env().unwrap_or_else(|e| panic!("env: {e}"));
+    let mut provider = OpenAiResponsesProvider::from_env().unwrap_or_else(|e| panic!("env: {e}"));
+    // from_env no longer reads LOCODE_MODEL (models are --model/settings
+    // territory); the live smoke keeps its env knob test-locally.
+    if let Ok(model) = std::env::var("LOCODE_MODEL") {
+        provider.config_mut().model = model;
+    }
     let mut summary = String::new();
     let _ = writeln!(
         summary,
@@ -201,7 +206,12 @@ async fn live_openai_tool_and_reasoning_round_trip() {
 #[tokio::test]
 #[ignore = "live network + spend; run manually with the direnv env"]
 async fn live_openai_custom_tool_grammar() {
-    let provider = OpenAiResponsesProvider::from_env().unwrap_or_else(|e| panic!("env: {e}"));
+    let mut provider = OpenAiResponsesProvider::from_env().unwrap_or_else(|e| panic!("env: {e}"));
+    // from_env no longer reads LOCODE_MODEL (models are --model/settings
+    // territory); the live smoke keeps its env knob test-locally.
+    if let Ok(model) = std::env::var("LOCODE_MODEL") {
+        provider.config_mut().model = model;
+    }
     let request = ConversationRequest {
         messages: vec![Message {
             role: Role::User,

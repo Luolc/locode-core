@@ -9,7 +9,7 @@
 
 use crate::provider::ProviderError;
 
-/// The default model when neither config nor `LOCODE_MODEL` names one (plan §9.1).
+/// The default model when config names none (plan §9.1; overridden via `--model`/settings).
 pub const DEFAULT_MODEL: &str = "claude-sonnet-5";
 
 /// The default first-party endpoint.
@@ -178,7 +178,7 @@ impl ModelConfig {
     }
 
     /// Resolve the common case from the environment: `LOCODE_API_KEY` (required),
-    /// `LOCODE_BASE_URL` (default [`DEFAULT_BASE_URL`]), `LOCODE_MODEL`
+    /// `LOCODE_BASE_URL` (default [`DEFAULT_BASE_URL`]); the model defaults
     /// (default [`DEFAULT_MODEL`]).
     ///
     /// # Errors
@@ -190,8 +190,10 @@ impl ModelConfig {
             .ok_or_else(|| ProviderError::Auth("LOCODE_API_KEY is not set".to_string()))?;
         let base_url =
             std::env::var("LOCODE_BASE_URL").unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
-        let model = std::env::var("LOCODE_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
-        Ok(Self::new(model, base_url, key))
+        // Model selection is settings/flag territory (ADR-0024 §1.4) — the
+        // LOCODE_MODEL env override was removed 2026-07-24 so the model's
+        // precedence chain matches every other knob (flag > settings > default).
+        Ok(Self::new(DEFAULT_MODEL.to_string(), base_url, key))
     }
 
     /// Whether the interleaved-thinking beta is active (waives the thinking

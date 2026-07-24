@@ -127,8 +127,9 @@ impl OpenAiModelConfig {
     }
 
     /// Resolve from the environment: `LOCODE_API_KEY` (required),
-    /// `LOCODE_BASE_URL` (default native), `LOCODE_MODEL` (default
-    /// [`DEFAULT_OPENAI_MODEL`], namespaced `openai/…` on OpenRouter).
+    /// `LOCODE_BASE_URL` (default native). The model defaults to
+    /// [`DEFAULT_OPENAI_MODEL`] (namespaced `openai/…` on OpenRouter) — select
+    /// it via `--model`/settings (ADR-0024 §1.4), not env.
     ///
     /// # Errors
     /// [`ProviderError::Auth`] when `LOCODE_API_KEY` is unset or empty.
@@ -139,15 +140,14 @@ impl OpenAiModelConfig {
             .ok_or_else(|| ProviderError::Auth("LOCODE_API_KEY is not set".to_string()))?;
         let base_url = std::env::var("LOCODE_BASE_URL")
             .unwrap_or_else(|_| DEFAULT_OPENAI_BASE_URL.to_string());
-        let model = std::env::var("LOCODE_MODEL").unwrap_or_else(|_| {
-            // Keep the default pair coherent per backend: OpenRouter slugs are
-            // vendor-namespaced.
-            if OpenAiBackend::detect(&base_url) == OpenAiBackend::OpenRouter {
-                format!("openai/{DEFAULT_OPENAI_MODEL}")
-            } else {
-                DEFAULT_OPENAI_MODEL.to_string()
-            }
-        });
+        // Model selection is settings/flag territory (ADR-0024 §1.4; the
+        // LOCODE_MODEL env override was removed 2026-07-24). Keep the default
+        // pair coherent per backend: OpenRouter slugs are vendor-namespaced.
+        let model = if OpenAiBackend::detect(&base_url) == OpenAiBackend::OpenRouter {
+            format!("openai/{DEFAULT_OPENAI_MODEL}")
+        } else {
+            DEFAULT_OPENAI_MODEL.to_string()
+        };
         Ok(Self::new(model, base_url, key))
     }
 

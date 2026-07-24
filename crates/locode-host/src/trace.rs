@@ -457,7 +457,7 @@ fn heal_torn_tail(path: &Path, file: &mut std::fs::File) -> Result<(), String> {
 
 /// `mkdir -p` with `0700` on every newly created component (best-effort mode —
 /// pre-existing dirs are left alone).
-fn create_dir_private(dir: &Path) -> Result<(), String> {
+pub(crate) fn create_dir_private(dir: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;

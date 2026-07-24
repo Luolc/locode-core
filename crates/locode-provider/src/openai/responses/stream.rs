@@ -332,7 +332,13 @@ mod tests {
         use crate::provider::Provider;
         use crate::request::{CacheHint, ConversationRequest, SamplingArgs};
         use locode_protocol::{Message, Role};
-        let provider = super::super::OpenAiResponsesProvider::from_env().expect("from_env");
+        let mut provider = super::super::OpenAiResponsesProvider::from_env().expect("from_env");
+        // `from_env` no longer reads LOCODE_MODEL (models are --model/settings
+        // territory, ADR-0024 §1.4); this opt-in live smoke keeps the env knob
+        // test-locally so the documented invocation still works.
+        if let Ok(model) = std::env::var("LOCODE_MODEL") {
+            provider.config_mut().model = model;
+        }
         let request = ConversationRequest {
             messages: vec![Message {
                 role: Role::User,
