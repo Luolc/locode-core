@@ -300,3 +300,33 @@ reverse-lossy caveat recorded in the ADR-0013 amendment.
 ## Open Questions
 
 None outstanding — the review closed every question above.
+
+## Implementation note (2026-07-23): what planning revealed (Task 30)
+
+Mapping the code before implementing (plan:
+[`tasks/plans/task-30-agents-md-project-instructions.md`](../../tasks/plans/task-30-agents-md-project-instructions.md))
+surfaced three scope/sequencing facts. None change the decisions above; they record
+*how* and *in what order* the loader lands.
+
+- **The loader reads directly within `locode-host`, bypassing the tool path-jail.**
+  The jail is rooted at **cwd** (`EngineConfig.cwd == workspace_root`), but discovery
+  legitimately spans **cwd → git root**, i.e. ancestors *above* the jail root — the
+  jailed `read_file` would reject every ancestor. Since the loader lives in
+  `locode-host` (the trusted OS seam) and ADR-0008's jail governs **tools**, the
+  loader reads the discovered `AGENTS.md` files directly, bounded to those names along
+  the bounded walk. This is what makes §2's "route reads through the host seam" work
+  without widening the jail.
+- **`--add-dir` / `extra_roots` is deferred to a later task; a config seam only.** Its
+  instruction-loading half is feasible now, but its other half — widening the tool
+  path-jail so *tools* may reach the extra dirs — is an ADR-0008 security-posture
+  change (`Host` holds a single `workspace_root`), and `--add-dir`'s final home is
+  `settings.json` (CLI-overrides-settings), still unreviewed. So the loader honors an
+  `extra_roots` config field, but no `--add-dir` CLI flag ships until that task.
+- **`root_stop_pattern` is a dormant seam pending `settings.json`.** The
+  `InstructionsConfig` field is plumbed, but matching is a `TODO(settings)` (it needs
+  the `regex` crate, not a current dependency); v1 root detection is `.git` markers +
+  the cwd-only fallback. §2's `root_stop_pattern` decision stands; only its activation
+  waits.
+
+The global `~/.locode/AGENTS.md` file (§2) **is** in v1 — home resolves dependency-free
+via `HOME`, and the direct-read rule above covers the out-of-repo read.

@@ -63,3 +63,8 @@ tracker.
 | [task-27-slice-9-code-highlighting.md](task-27-slice-9-code-highlighting.md) | TUI slice 9 — code highlighting (ADR-0020) |
 | [task-28-unified-p-headless.md](task-28-unified-p-headless.md) | unified `locode` binary — `-p` headless mode |
 | [task-29-live-streaming.md](task-29-live-streaming.md) | live token streaming (ADR-0021) |
+
+### Shared context machinery
+| Plan | Task |
+|---|---|
+| [task-30-agents-md-project-instructions.md](task-30-agents-md-project-instructions.md) | Task 30 — shared `AGENTS.md` project-instruction loading (ADR-0023) |
