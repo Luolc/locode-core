@@ -3,10 +3,10 @@
 //! highest-value A/B counterpart to the grok pack: same engine, same wire,
 //! genuinely different tool surface.
 //!
-//! Current state (through Slice 3): `Bash`, `Read`, and `Edit` (with the
-//! `ClaudeSessionState` read-before-edit + staleness gate) + a minimal system
-//! prompt (identity + intro). `Write`, `Glob`, `Grep`, and the full byte-exact
-//! prompt land in later slices — see `docs/claude-pack-dev-process.md`.
+//! Current state (through Slice 4): `Bash`, `Read`, `Edit`, and `Write` (the
+//! last three sharing the `ClaudeSessionState` read-before-write + staleness
+//! gate) + a minimal system prompt (identity + intro). `Glob`, `Grep`, and the
+//! full byte-exact prompt land in later slices — see `docs/claude-pack-dev-process.md`.
 //!
 //! Fidelity boundary (ADR-0023): the pack reproduces tools + prompt + static
 //! preamble only. Loop-adjacent machinery (project-instruction loading, reminder
@@ -17,6 +17,7 @@ mod edit;
 pub mod prompt;
 mod read;
 mod state;
+mod write;
 
 use std::sync::Arc;
 
@@ -29,6 +30,7 @@ use bash::ClaudeBash;
 use edit::ClaudeEdit;
 use read::ClaudeRead;
 use state::ClaudeSessionState;
+use write::ClaudeWrite;
 
 /// The Claude Code harness pack (a zero-sized `&'static` singleton; the per-run
 /// `ClaudeSessionState` lives in the tools that share it, constructed in `register`).
@@ -53,6 +55,10 @@ impl Pack for ClaudePack {
         registry.register(
             "Edit",
             ClaudeEdit::new(Arc::clone(host), Arc::clone(&state)),
+        );
+        registry.register(
+            "Write",
+            ClaudeWrite::new(Arc::clone(host), Arc::clone(&state)),
         );
     }
 
@@ -123,13 +129,17 @@ mod tests {
         let (_dir, registry, _root) = setup();
         let mut names: Vec<&str> = registry.names().collect();
         names.sort_unstable();
-        assert_eq!(names, vec!["Bash", "Edit", "Read"]);
+        assert_eq!(names, vec!["Bash", "Edit", "Read", "Write"]);
         assert_eq!(
             registry.kind_of("Bash"),
             Some(locode_tools::ToolKind::Shell)
         );
         assert_eq!(registry.kind_of("Read"), Some(locode_tools::ToolKind::Read));
         assert_eq!(registry.kind_of("Edit"), Some(locode_tools::ToolKind::Edit));
+        assert_eq!(
+            registry.kind_of("Write"),
+            Some(locode_tools::ToolKind::Write)
+        );
     }
 
     #[test]
@@ -588,6 +598,123 @@ mod tests {
             result_text(&out.tool_result),
             "Cannot create new file - file already exists."
         );
+    }
+
+    // ---- Write: new writes freely; existing must be read first ----
+
+    #[tokio::test]
+    async fn write_new_file_creates_freely() {
+        let (_dir, registry, root) = setup();
+        let out = registry
+            .dispatch(
+                "Write",
+                json!({ "file_path": "new.txt", "content": "hello\nworld\n" }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(out.record.ok, "{}", result_text(&out.tool_result));
+        assert_eq!(
+            result_text(&out.tool_result),
+            "File created successfully at: new.txt"
+        );
+        assert_eq!(out.record.output["created"], json!(true));
+        assert_eq!(
+            std::fs::read_to_string(root.join("new.txt")).unwrap(),
+            "hello\nworld\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_existing_unread_is_rejected() {
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("f.txt"), "old").unwrap();
+        let out = registry
+            .dispatch(
+                "Write",
+                json!({ "file_path": "f.txt", "content": "new" }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(!out.record.ok);
+        assert_eq!(
+            result_text(&out.tool_result),
+            "File has not been read yet. Read it first before writing to it."
+        );
+    }
+
+    #[tokio::test]
+    async fn write_existing_after_read_overwrites() {
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("f.txt"), "old content").unwrap();
+        read_then(&registry, &root, "f.txt").await;
+        let out = registry
+            .dispatch(
+                "Write",
+                json!({ "file_path": "f.txt", "content": "brand new" }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(out.record.ok, "{}", result_text(&out.tool_result));
+        assert_eq!(
+            result_text(&out.tool_result),
+            "The file f.txt has been updated successfully."
+        );
+        assert_eq!(out.record.output["created"], json!(false));
+        assert_eq!(
+            std::fs::read_to_string(root.join("f.txt")).unwrap(),
+            "brand new"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_stale_after_external_modification_is_rejected() {
+        let (_dir, registry, root) = setup();
+        let p = root.join("f.txt");
+        std::fs::write(&p, "v1").unwrap();
+        read_then(&registry, &root, "f.txt").await;
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&p, "v2 external").unwrap();
+        let out = registry
+            .dispatch(
+                "Write",
+                json!({ "file_path": "f.txt", "content": "v3" }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(!out.record.ok);
+        assert!(result_text(&out.tool_result).starts_with("File has been modified since read"));
+    }
+
+    #[test]
+    fn write_schema_is_faithful() {
+        let (_dir, registry, _root) = setup();
+        let specs = registry.specs();
+        let write = specs
+            .iter()
+            .find(|s| s.name == "Write")
+            .expect("Write spec");
+        let params = match &write.input {
+            locode_protocol::ToolInputFormat::JsonSchema { parameters } => parameters,
+            locode_protocol::ToolInputFormat::Freeform { .. } => panic!("Write is JSON-schema"),
+        };
+        assert_eq!(params["additionalProperties"], json!(false));
+        let props = params["properties"].as_object().unwrap();
+        assert_eq!(
+            props["file_path"]["description"],
+            json!("The absolute path to the file to write (must be absolute, not relative)")
+        );
+        assert_eq!(
+            props["content"]["description"],
+            json!("The content to write to the file")
+        );
+        let mut required: Vec<&str> = params["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        required.sort_unstable();
+        assert_eq!(required, vec!["content", "file_path"]);
     }
 
     #[test]
