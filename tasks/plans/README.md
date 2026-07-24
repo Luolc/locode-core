@@ -79,3 +79,8 @@ tracker.
 | Plan | Task |
 |---|---|
 | [task-30-agents-md-project-instructions.md](task-30-agents-md-project-instructions.md) | Task 30 — shared `AGENTS.md` project-instruction loading (ADR-0023) |
+
+### Home dotfolder (`~/.locode`, ADR-0024)
+| Plan | Task |
+|---|---|
+| [task-31-locode-home-settings-and-trace.md](task-31-locode-home-settings-and-trace.md) | Task 31 — settings loading + resumable session trace (`--continue`/`--resume`) |

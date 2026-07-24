@@ -34,21 +34,35 @@ Full crate layout and rationale: [`../SPEC.md`](../SPEC.md), ADR-0002 (workspace
 
 ### Priorities (user, 2026-07-24)
 The immediate queue, ahead of the remaining packs:
-- **In flight — codex pack (Task 19):** decisions locked (interview 2026-07-24),
-  running **overnight-autonomous** under [`../docs/codex-pack-dev-process.md`](../docs/codex-pack-dev-process.md).
-- **P0 — Skills.** Full skills implementation (discovery + invocation + the skill markdown
-  loading). Ties into the home dotfolder below. Plan from source.
-- **P0 — settings.json + trace persistence (continue/resume).** Persist config
-  (`settings.json`) and the session trace to a **home dotfolder** — our analog of
-  `~/.claude`, `~/.grok`, `~/.codex`, `~/.opencode`; our folder is **`~/.locode`**.
-  Enables `--continue`/`--resume`. Research of what those harnesses store in their dotfolders
-  is under way (subagent) → a research doc will land under `docs/research/`.
+- **P0 — Task 31: settings.json + trace persistence (continue/resume).** Design is
+  **accepted** — [ADR-0024](../docs/decisions/ADR-0024-locode-home-settings-and-traces.md)
+  (`~/.locode`, layered JSON settings, cwd-keyed JSONL rollout, open extension
+  contract), grounded in the shipped research doc
+  [`../docs/research/harness-study-home-dotfolders.md`](../docs/research/harness-study-home-dotfolders.md).
+  Implementation plan: [`plans/task-31-locode-home-settings-and-trace.md`](plans/task-31-locode-home-settings-and-trace.md).
+- **P0 — Task 32: Skills.** Full skills implementation (discovery + invocation + the
+  skill markdown loading). Roots + `skills.extra` are fixed by ADR-0024 §3/§1.4;
+  the rest (frontmatter set, two-switch gate, `User`-reminder listing per ADR-0023)
+  needs its own ADR + plan before implementation — next after Task 31 starts.
 - **P0.5 — Background Bash + Subagents.** Background/async bash commands, and subagents /
   agent-groups (their distinctions + implementations are hard to read off the UIs — needs a
-  source dig). After the two P0s.
+  source dig). After the two P0s. Also unblocks codex `shell_command` → unified exec.
 - **P1 — opencode pack** (the faithful-port half of Task 15) — deferred; plan drafted
   ([`plans/task-15-opencode-pack.md`](plans/task-15-opencode-pack.md)), revisit later.
 - **P1 — our own `locode` best-of pack** (the other half of Task 15).
+
+### Home dotfolder (`~/.locode`, ADR-0024)
+- [ ] **Task 31 — settings + trace persistence** (P0, scope L, 4 slices — plan:
+  [`plans/task-31-locode-home-settings-and-trace.md`](plans/task-31-locode-home-settings-and-trace.md)):
+  - [ ] **S1** — `locode_home()` resolver + layered settings loader (merge + project
+    denylist) + `model`/`api_schema`/`harness` defaults wired into exec/tui.
+  - [ ] **S2** — `instructions.root_stop_pattern` activation (adds the approved `regex`
+    dep; wakes ADR-0023's dormant seam).
+  - [ ] **S3** — trace writer: bijective cwd encoding + rollout JSONL as an `EventSink`
+    wrapper (session_meta + message lines, torn-tail healing, 0600/0700).
+  - [ ] **S4** — `--continue`/`--resume <id>`: tolerant reader + scoped-then-global
+    resolver + ADR-0016 continuity seeding; resumed runs append in place.
+- [ ] **Task 32 — skills** (P0, needs its own ADR first — see Priorities).
 
 ### More harness packs + wires (the A/B bed)
 Planning is a research task (AGENTS.md): re-read the harness source before starting each,
@@ -88,14 +102,15 @@ and resolve the plan's open-questions section first.
 - [ ] **Built-in slash commands** — deferred pending a *holistic* design pass
   (discovery/registry, syntax, pure-UI vs. seam- or persistence-backed), not piecemeal.
   Current commands: `/new` `/quit` `/exit`.
-- [ ] **`/model` switching** — blocked on two seams: a model-selection seam on the ADR-0015
-  `ProviderRegistry`/factory (public surface → ask-first) and config-file persistence (a new
-  XDG `~/.config/locode/` ADR). Read-only `/model` becomes Tier-A once the seam exists.
+- [ ] **`/model` switching** — persistence half is now **settled** (ADR-0024: single
+  `~/.locode/settings.json` with a `model` field — *not* an XDG dir; lands with Task 31 S1).
+  Still blocked on the other seam: model-selection on the ADR-0015 `ProviderRegistry`/factory
+  (public surface → ask-first). Read-only `/model` becomes Tier-A once that seam exists.
 
 ### Tier B/C future capability (short ADR, then mostly-autonomous)
-- [ ] Custom slash-command files · plugins. *(Background bash + subagents promoted to
-  **P0.5**; config-file/trace persistence + skills promoted to **P0** — see Priorities
-  above. Shared AGENTS.md loading was promoted to Task 30.)*
+- [ ] Custom slash-command files · plugins. *(Everything else once listed here has been
+  promoted and is tracked above: background bash + subagents → **P0.5**; settings/trace →
+  **Task 31**; skills → **Task 32**; shared AGENTS.md loading → shipped as Task 30.)*
 
 ### Deferred decisions (researched, not yet decided — don't lose track)
 - [ ] **codex shell tool: `shell_command` now → unified exec later.** The codex pack ships
@@ -190,17 +205,23 @@ One line per task. Design detail is the matching file under [`plans/`](plans/) (
   gitignore, reads bypass the tool jail), engine-side `User`-role `<system-reminder>` injection
   with a 64 KiB budget and per-turn rescan/replace-remove banners, default-on with
   `--no-project-instructions`. **Deferred seams (recorded, not built):** `--add-dir`/`extra_roots`
-  (needs tool-jail widening, ADR-0008) and `root_stop_pattern` (needs `settings.json`; would add
-  `regex`). Plan + Result: [`plans/task-30-agents-md-project-instructions.md`](plans/task-30-agents-md-project-instructions.md).
+  (needs tool-jail widening, ADR-0008) and `root_stop_pattern` (needed `settings.json`; **now
+  scheduled** — ADR-0024 §1.4, Task 31 S2, with the `regex` dep approved). The global file
+  honors `$LOCODE_HOME` since the ADR-0023 amendment 2026-07-24. Plan + Result:
+  [`plans/task-30-agents-md-project-instructions.md`](plans/task-30-agents-md-project-instructions.md).
 
 ---
 
 ## Deferred — reserved seams, not scheduled
 
-parallel tool batches (RwLock read/write) · compaction · OS sandbox · MCP · `--json-schema`
-answers · JSONL session durability · multi-platform `rg` bundle matrix + macOS notarization
-(packaging, ADR-0011) · shared engine session-start context (AGENTS.md loading, ADR-0023) · codex
-unified exec (PTY) / `view_image` / hosted `web_search` · Claude Code
-TodoWrite/Task/WebFetch/WebSearch/NotebookEdit · per-model codex prompt variants · grok pack
-multimodal `read_file` (binary/image/PDF/PPTX) · grok pack background commands (`is_background`
-+ `get_task_output`/`kill_task` + host task registry).
+parallel tool batches (RwLock read/write) · compaction (trace-side `compacted` record already
+reserved, ADR-0024 §2.3) · OS sandbox · MCP · `--json-schema` answers · multi-platform `rg`
+bundle matrix + macOS notarization (packaging, ADR-0011) · codex unified exec (PTY) /
+`view_image` / hosted `web_search` · Claude Code TodoWrite/Task/WebFetch/WebSearch/NotebookEdit ·
+per-model codex prompt variants · grok pack multimodal `read_file` (binary/image/PDF/PPTX) ·
+grok pack background commands (`is_background` + `get_task_output`/`kill_task` + host task
+registry) · `history.jsonl` input recall + trace GC (`cleanup_period_days`) + a rebuildable
+sessions listing index (all reserved by ADR-0024; land on demand).
+
+*(Removed 2026-07-24 as no longer deferred: "shared engine session-start context / AGENTS.md
+loading" — shipped as Task 30; "JSONL session durability" — now scheduled as Task 31, ADR-0024.)*
