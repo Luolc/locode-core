@@ -155,16 +155,8 @@ fn build_session(
 
     let pack = locode_core::resolve(cli.harness.as_str()).map_err(|e| e.to_string())?;
     let registry_tools = pack.build_registry(&host);
-    let pack_ctx = PackContext {
-        cwd: cwd.clone(),
-        os: std::env::consts::OS.to_string(),
-        shell: std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string()),
-        date: chrono::Local::now().format("%Y-%m-%d").to_string(),
-        headless: false,
-        strip_identity: cli.strip_identity,
-    };
-    let preamble = pack.preamble(&pack_ctx);
 
+    // Provider first so the pack env block can name the model (D9).
     let session_id = new_session_id();
     let built = registry
         .build(
@@ -175,6 +167,19 @@ fn build_session(
         )
         .map_err(|e| e.to_string())?;
     let (provider, model) = (built.provider, built.model);
+
+    let pack_ctx = PackContext {
+        cwd: cwd.clone(),
+        os: std::env::consts::OS.to_string(),
+        shell: std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string()),
+        date: chrono::Local::now().format("%Y-%m-%d").to_string(),
+        headless: false,
+        is_git_repo: cwd.ancestors().any(|dir| dir.join(".git").exists()),
+        model: Some(model.clone()),
+        os_version: detect_os_version(),
+        strip_identity: cli.strip_identity,
+    };
+    let preamble = pack.preamble(&pack_ctx);
 
     let config = EngineConfig {
         session_id,
@@ -240,6 +245,27 @@ fn detect_shell() -> String {
         })
         .filter(|base| base == "bash" || base == "zsh")
         .unwrap_or_else(|| "bash".to_string())
+}
+
+/// `uname -s -r` for the Claude pack's env `OS Version:` line (D9); `None` off
+/// Unix or on probe failure.
+fn detect_os_version() -> Option<String> {
+    #[cfg(unix)]
+    {
+        let out = std::process::Command::new("uname")
+            .args(["-s", "-r"])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        (!s.is_empty()).then_some(s)
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
 }
 
 /// A unique-enough session id (mirrors locode-exec; no uuid dep).

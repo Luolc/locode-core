@@ -53,6 +53,7 @@ tracker.
 | [task-20-slice-4-write.md](task-20-slice-4-write.md) | claude pack slice 4 — Write (create-or-overwrite, read-before-write gate) |
 | [task-20-slice-5-glob.md](task-20-slice-5-glob.md) | claude pack slice 5 — Glob (rg --files, mtime sort, cap 100) |
 | [task-20-slice-6-grep.md](task-20-slice-6-grep.md) | claude pack slice 6 — Grep (full ripgrep passthrough, 3 output modes) |
+| [task-20-slice-7-prompt.md](task-20-slice-7-prompt.md) | claude pack slice 7 — full system prompt + env + preamble (pack complete) |
 
 ### TUI core prerequisites + TUI + streaming
 | Plan | Task |

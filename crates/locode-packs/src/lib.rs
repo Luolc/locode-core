@@ -147,6 +147,9 @@ mod tests {
             shell: "/bin/bash".into(),
             date: "2026-07-18".into(),
             headless,
+            is_git_repo: false,
+            model: None,
+            os_version: None,
             strip_identity: false,
         }
     }

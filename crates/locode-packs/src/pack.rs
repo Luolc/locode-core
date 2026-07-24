@@ -24,6 +24,17 @@ pub struct PackContext {
     pub date: String,
     /// Headless run → autonomous identity branch (vs interactive). See Task 13.
     pub headless: bool,
+    /// Whether the working directory is inside a git repository. Rendered in the
+    /// Claude pack's `# Environment` block (`Is a git repository: <bool>`, D9).
+    /// Cheaply probed by the exec/tui layer (a `.git` walk) — no host handle in
+    /// `preamble()`.
+    pub is_git_repo: bool,
+    /// The model id/name for the Claude pack's env "You are powered by the model …"
+    /// line (D9). `None` skips the line (the pack does not guess).
+    pub model: Option<String>,
+    /// The OS version string for the Claude pack's env `OS Version:` line
+    /// (`uname -s -r`, computed by the exec/tui layer). `None` skips the line.
+    pub os_version: Option<String>,
     /// Strip identity-revealing sentences from the rendered prompt (e.g. grok's
     /// "You are Grok released by xAI." and the `<user_guide>` block naming the
     /// Grok Build TUI). **Default `false` = faithful reproduction** (user

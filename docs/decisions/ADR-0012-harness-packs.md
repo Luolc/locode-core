@@ -97,3 +97,29 @@ keeps the A/B honest (it varies the surface under test, not the machinery) and i
 why the per-pack fidelity tables in the `AGENTS.md`/skills studies are superseded.
 The MEMORY note *harness-fidelity-boundary* is the short form; ADR-0023 is the
 decision of record.
+
+## Amendment (2026-07-24): the `claude` pack landed (Task 20)
+
+The `claude` pack (`--harness claude`) ships as the second studied-harness pack: a
+faithful port of Claude Code's six headless-relevant core tools (`Bash`, `Read`,
+`Edit`, `Write`, `Glob`, `Grep`) with its real UpperCamelCase wire names, verbatim
+schemas/descriptions, caps, and guardrails — including the **read-before-edit /
+modified-since-read freshness gate** (a per-run `ClaudeSessionState`, CC's signature
+guardrail and the deliberate behavioral divergence from the grok pack, which
+faithfully has none). The full static system prompt is ported as byte-pinned verbatim
+section constants (identity both-variants + `strip_identity`; the `# Environment`
+block from `PackContext`; the `currentDate` first-turn `<system-reminder>`).
+
+Tools whose behavior is inseparable from loop machinery — `TodoWrite` + its reminder
+cadence, `Task`/`Agent` subagents, `WebFetch`/`WebSearch` — are excluded under the
+fidelity boundary ([ADR-0023](ADR-0023-fidelity-boundary-and-agents-md-loading.md)):
+packs reproduce tools + prompt + static preamble; loop-adjacent behavior stays on the
+shared engine. Built as an autonomous 7-slice workstream; design detail +
+per-slice records in [`tasks/plans/task-20-*`](../../tasks/plans/) and
+[`docs/claude-pack-dev-process.md`](../claude-pack-dev-process.md).
+
+A framework addition rode with it: `Pack::shape_user_prompt` (default = verbatim;
+`GrokPack` overrides to wrap in `<user_query>`) moved harness-specific user-prompt
+shaping into the pack, off the exec/tui layers. `PackContext` grew `is_git_repo`,
+`model`, and `os_version` for the env block (cheap exec/tui-computed fields; no host
+handle in `preamble()`).
