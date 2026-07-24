@@ -74,6 +74,8 @@ pub enum Harness {
     Grok,
     /// Claude Code's toolset + system prompt (ADR-0012, ADR-0023).
     Claude,
+    /// Codex CLI's toolset + system prompt (ADR-0012, ADR-0023).
+    Codex,
 }
 
 impl Harness {
@@ -83,6 +85,7 @@ impl Harness {
         match self {
             Harness::Grok => "grok",
             Harness::Claude => "claude",
+            Harness::Codex => "codex",
         }
     }
 }

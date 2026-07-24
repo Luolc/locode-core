@@ -61,6 +61,11 @@ and resolve the plan's open-questions section first.
   [`../docs/codex-pack-dev-process.md`](../docs/codex-pack-dev-process.md); design detail
   [`plans/task-19-codex-pack.md`](plans/task-19-codex-pack.md) (reconciled; source re-pinned
   to codex `f201c30c`, 2026-07-24). Scope L, ~3 slices.
+  - [x] **Slice 1** — pack scaffold + `shell_command` + minimal prompt + `--harness codex`
+    ([`plans/task-19-slice-1-scaffold-shell.md`](plans/task-19-slice-1-scaffold-shell.md)).
+  - [ ] **Slice 2** — freeform `apply_patch` (V4A parser + fuzzy apply + `Host::create_dir`)
+    + always-appended apply_patch instructions + openai-responses-only wire enforcement.
+  - [ ] **Slice 3** — full gpt-5.6-sol prompt + `strip_identity` + `<environment_context>` preamble.
 - [ ] **Task 15 — remaining packs: `opencode` (P1) + our own `locode` (P1)**. `opencode`
   is a faithful port (plan drafted: [`plans/task-15-opencode-pack.md`](plans/task-15-opencode-pack.md));
   `locode` is our best-of pack (grok-build-style naming; ADR-0011's rg-glob is scoped here).

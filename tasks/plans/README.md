@@ -45,7 +45,8 @@ tracker.
 ### More harness packs
 | Plan | Task |
 |---|---|
-| [task-19-codex-pack.md](task-19-codex-pack.md) | codex pack (`shell_command` + freeform `apply_patch` + `update_plan` + prompt) |
+| [task-19-codex-pack.md](task-19-codex-pack.md) | codex pack (`shell_command` + freeform `apply_patch` + prompt; `update_plan` not ported — see the dev-process doc) |
+| [task-19-slice-1-scaffold-shell.md](task-19-slice-1-scaffold-shell.md) | codex pack slice 1 — pack scaffold + `shell_command` + minimal prompt |
 | [task-15-opencode-pack.md](task-15-opencode-pack.md) | opencode pack (bash/read/write/edit/glob/grep/apply_patch + per-provider prompt) |
 | [task-20-claude-pack.md](task-20-claude-pack.md) | claude pack (Bash/Read/Edit/Write/Glob/Grep + freshness gate + prompt) |
 | [task-20-slice-1-scaffold-bash.md](task-20-slice-1-scaffold-bash.md) | claude pack slice 1 — pack scaffold + Bash + minimal prompt |
