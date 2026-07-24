@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use locode_host::InstructionsConfig;
 use locode_provider::{CacheHint, SamplingArgs};
 
 /// Everything the loop needs that isn't the provider, registry, preamble, or sink.
@@ -43,6 +44,9 @@ pub struct EngineConfig {
     /// the final `Message` is still appended whole, so the trace can stay
     /// whole-message by dropping the deltas (Q1).
     pub streaming: bool,
+    /// Shared project-instruction loading (`AGENTS.md`, ADR-0023): discovered from `cwd`
+    /// and injected once per session as a `User` `<system-reminder>`. Default = enabled.
+    pub instructions: InstructionsConfig,
 }
 
 impl Default for EngineConfig {
@@ -60,6 +64,7 @@ impl Default for EngineConfig {
             sampling_args: SamplingArgs::default(),
             cache_hint: CacheHint::default(),
             streaming: false,
+            instructions: InstructionsConfig::default(),
         }
     }
 }

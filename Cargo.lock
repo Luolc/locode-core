@@ -1191,11 +1191,13 @@ name = "locode-engine"
 version = "0.1.8"
 dependencies = [
  "async-trait",
+ "locode-host",
  "locode-protocol",
  "locode-provider",
  "locode-tools",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-util",
 ]

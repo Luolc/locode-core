@@ -51,7 +51,10 @@ pub use locode_provider::{
 pub use locode_packs::{GrokPack, Pack, PackContext, UnknownHarness, available, grok, resolve};
 
 // ---- host: the side-effect seam ----
-pub use locode_host::{ExecLimits, Host, HostConfig, PathPolicy};
+pub use locode_host::{
+    ExecLimits, Host, HostConfig, InstructionEntry, InstructionsConfig, PathPolicy,
+    ProjectInstructions, load_project_instructions,
+};
 
 // ---- tools: the full tool surface (SPEC Users #4) ----
 pub use locode_tools::{
