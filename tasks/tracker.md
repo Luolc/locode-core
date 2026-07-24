@@ -50,16 +50,6 @@ and resolve the plan's open-questions section first.
   covers GPT + Grok natively). The reasoning-blind LCD/control wire; revisit when a target
   model only speaks chat-completions. Plan: [`plans/task-17-openai-chat-wire.md`](plans/task-17-openai-chat-wire.md). Scope L.
 
-### Shared context machinery (ADR-0023)
-- [ ] **Task 30 — shared `AGENTS.md` project-instruction loading** (ADR-0023): one shared
-  loader in `locode-host` (cwd→git-root walk, `AGENTS.override.md` per-dir override, global
-  `~/.locode/AGENTS.md`, dedup/gitignore), engine-side `User`-role `<system-reminder>`
-  injection with per-turn rescan/diff, default-on with `--no-project-instructions`. Seams
-  deferred (recorded): `--add-dir`/`extra_roots` + tool-jail widening (ADR-0008),
-  `root_stop_pattern` (pending `settings.json`). Plan:
-  [`plans/task-30-agents-md-project-instructions.md`](plans/task-30-agents-md-project-instructions.md).
-  Scope M, 6 slices.
-
 ### TUI backlog
 - [ ] **OSC-8 hyperlinks** (P2) — clickable links (iTerm2 etc.).
 - [ ] **Built-in slash commands** — deferred pending a *holistic* design pass
@@ -129,6 +119,16 @@ One line per task. Design detail is the matching file under [`plans/`](plans/) (
 - [x] **Task 29** — live token streaming (ADR-0021): `Provider::stream` + `Event::MessageDelta`,
   Anthropic + Responses SSE (byte-identical assembly), TUI live cell with incremental markdown,
   headless `--stream`, whole-message trace preserved. Complete 2026-07-22.
+
+### Shared context machinery
+- [x] **Task 30** — shared `AGENTS.md` project-instruction loading (ADR-0023), **6 slices,
+  PRs #146–150, complete 2026-07-23**: one shared loader in `locode-host` (cwd→git-root walk,
+  `AGENTS.override.md` per-dir override, global `~/.locode/AGENTS.md`, canonical dedup +
+  gitignore, reads bypass the tool jail), engine-side `User`-role `<system-reminder>` injection
+  with a 64 KiB budget and per-turn rescan/replace-remove banners, default-on with
+  `--no-project-instructions`. **Deferred seams (recorded, not built):** `--add-dir`/`extra_roots`
+  (needs tool-jail widening, ADR-0008) and `root_stop_pattern` (needs `settings.json`; would add
+  `regex`). Plan + Result: [`plans/task-30-agents-md-project-instructions.md`](plans/task-30-agents-md-project-instructions.md).
 
 ---
 

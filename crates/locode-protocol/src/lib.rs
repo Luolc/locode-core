@@ -39,16 +39,20 @@ pub struct Message {
 
 /// The author of a message (ADR-0013).
 ///
-/// `System` is the static base identity; `Developer` is client-injected instructions
-/// and dynamic context. On the wire, `System` maps to Anthropic's top-level `system`
-/// (or an OpenAI `system` message), while `Developer` maps to an Anthropic
-/// mid-conversation `system` message (or an OpenAI `developer` message).
+/// `System` is the static base identity; `Developer` is app-author instructions that map
+/// **1:1 and losslessly** onto a native provider role. On the wire, `System` maps to
+/// Anthropic's top-level `system` (or an OpenAI `system` message), while `Developer` maps to
+/// an Anthropic mid-conversation `system` message (or an OpenAI `developer` message).
+/// Injected framing/reminders (e.g. `AGENTS.md` project instructions) are **not** `Developer`
+/// — they are authored as `User` `<system-reminder>` so the conversation ⇄ payload
+/// conversion stays reversible (ADR-0013 amendment / ADR-0023).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
     /// Immutable base identity and safety/policy — the "constitution".
     System,
-    /// App-author instructions and dynamically injected operational context.
+    /// App-author instructions with a native provider role (OpenAI `developer` / Anthropic
+    /// beta mid-conversation `system`). Not the vehicle for reminders — those are `User`.
     Developer,
     /// The human's turns; also carries [`ContentBlock::ToolResult`] blocks.
     User,
