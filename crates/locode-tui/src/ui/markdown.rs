@@ -68,8 +68,12 @@ struct Seg {
 
 /// A styled word: a run of non-space chars, each carrying its own style.
 type Word = Vec<(char, Style)>;
-/// One table cell's content, tokenized into styled words.
-type CellWords = Vec<Word>;
+/// A wrap unit + whether whitespace preceded it in the source (so joins are spaced or
+/// glued faithfully). A narrow run is one unit; each wide (CJK/emoji) char is its own
+/// unit, so a space-less CJK run has per-character break opportunities.
+type Unit = (Word, bool);
+/// One table cell's content, tokenized into styled units.
+type CellWords = Vec<Unit>;
 
 /// Accumulates inline segments per block, then wraps them into styled lines.
 struct Writer {
@@ -332,11 +336,12 @@ impl Writer {
         for row in &rows {
             let mut rw = Vec::with_capacity(n_cols);
             for (c, natural_w) in col_natural.iter_mut().enumerate() {
-                let words = row.get(c).map(|s| segs_to_words(s)).unwrap_or_default();
-                let natural = words.iter().map(|w| word_width(w)).sum::<usize>()
-                    + words.len().saturating_sub(1);
+                let units = row.get(c).map(|s| segs_to_units(s)).unwrap_or_default();
+                // Natural (unwrapped) width: unit widths + one space per space-joined unit.
+                let natural = units.iter().map(|(w, _)| word_width(w)).sum::<usize>()
+                    + units.iter().skip(1).filter(|(_, sp)| *sp).count();
                 *natural_w = (*natural_w).max(natural);
-                rw.push(words);
+                rw.push(units);
             }
             cells.push(rw);
         }
@@ -440,7 +445,7 @@ impl Writer {
 
     /// Wrap the accumulated inline segments into `out`, then clear them.
     fn flush_inline(&mut self) {
-        let words = segs_to_words(&self.inline);
+        let words = segs_to_units(&self.inline);
         self.inline.clear();
         if words.is_empty() {
             // No content: drop any dangling marker so it can't leak downward.
@@ -468,39 +473,57 @@ impl Writer {
     }
 }
 
-/// Split inline segments into style-tagged words, collapsing runs of whitespace
-/// and trimming block leading/trailing space. Each word is a run of non-space
-/// chars that may carry mixed styles (e.g. `` streaming`Event` `` with no space).
-fn segs_to_words(segs: &[Seg]) -> Vec<Vec<(char, Style)>> {
-    let mut words: Vec<Vec<(char, Style)>> = Vec::new();
-    let mut cur: Vec<(char, Style)> = Vec::new();
+/// Split inline segments into wrap **units** (see [`Unit`]): a run of narrow chars is
+/// one unit, and **each wide (CJK/emoji, 2-cell) char is its own unit** — so a space-less
+/// CJK run has per-character break opportunities and can *fill a line's tail* instead of
+/// jumping whole to the next line (the over-aggressive raggedness a plain word model
+/// causes). Each unit records whether whitespace preceded it, so joins are spaced or
+/// glued exactly as in the source. This approximates UAX#14 for CJK — the full
+/// textwrap/UAX#14 upgrade (punctuation-aware breaks, grapheme clusters) is tracked in
+/// `docs/research/tui-text-wrapping-cjk.md`.
+fn segs_to_units(segs: &[Seg]) -> Vec<Unit> {
+    let mut units: Vec<Unit> = Vec::new();
+    let mut cur: Word = Vec::new();
+    let mut space_before = false; // whitespace seen since the last emitted unit
     for seg in segs {
         for ch in seg.text.chars() {
             if ch.is_whitespace() {
                 if !cur.is_empty() {
-                    words.push(std::mem::take(&mut cur));
+                    units.push((std::mem::take(&mut cur), space_before));
                 }
+                space_before = true;
+            } else if ch_width(ch) >= 2 {
+                // A wide char is its own break unit; a preceding narrow run stays whole
+                // and the wide char glues onto it (no source whitespace between them).
+                if cur.is_empty() {
+                    units.push((vec![(ch, seg.style)], space_before));
+                } else {
+                    units.push((std::mem::take(&mut cur), space_before));
+                    units.push((vec![(ch, seg.style)], false));
+                }
+                space_before = false;
             } else {
                 cur.push((ch, seg.style));
             }
         }
     }
     if !cur.is_empty() {
-        words.push(cur);
+        units.push((cur, space_before));
     }
-    words
+    units
 }
 
-/// Greedy word-wrap over style-tagged words with distinct first-line and
-/// continuation prefixes. Words wider than the available width hard-split, on the
-/// **display-width** boundary (CJK = 2 cells) so wide text isn't truncated.
+/// Greedy wrap over style-tagged [`Unit`]s with distinct first-line and continuation
+/// prefixes. Units join with a space or glued per their `space_before` flag; a unit
+/// wider than the whole line (an over-long narrow word) hard-splits on the
+/// **display-width** boundary (CJK = 2 cells) so wide text is never truncated.
 ///
-/// TODO(wide-char upgrade): this is a surgical display-width fix over a bespoke wrapper.
-/// A future task adopts the codex/grok `textwrap` 0.16 + UAX#14 + grapheme-cluster stack
-/// for punctuation-aware breaks, ZWJ/emoji clusters, and optimal-fit — see
-/// `docs/research/tui-text-wrapping-cjk.md`.
+/// TODO(wide-char upgrade): a bespoke wrapper with per-CJK-char break opportunities and
+/// display-width math — enough for CJK + common text. The mature codex/grok `textwrap`
+/// 0.16 + UAX#14 + grapheme stack (punctuation-aware breaks, ZWJ/emoji, optimal-fit) is
+/// planned in `docs/research/tui-text-wrapping-cjk.md`.
 fn wrap_words(
-    words: &[Vec<(char, Style)>],
+    units: &[Unit],
     first_lead: &[Span<'static>],
     cont_lead: &[Span<'static>],
     width: usize,
@@ -509,45 +532,59 @@ fn wrap_words(
         |lead: &[Span<'static>]| -> usize { lead.iter().map(|s| s.content.width()).sum() };
     let first_w = lead_width(first_lead);
     let cont_w = lead_width(cont_lead);
+    let avail_for = |out: &[Line<'static>]| -> usize {
+        width
+            .saturating_sub(if out.is_empty() { first_w } else { cont_w })
+            .max(1)
+    };
 
     let mut out: Vec<Line<'static>> = Vec::new();
-    let mut line: Vec<(char, Style)> = Vec::new();
+    let mut line: Word = Vec::new();
     let mut line_w = 0usize; // display width of `line`
-    for word in words {
-        let mut rest: &[(char, Style)] = word;
-        loop {
-            let is_first = out.is_empty();
-            let avail = width
-                .saturating_sub(if is_first { first_w } else { cont_w })
-                .max(1);
-            if line.is_empty() {
-                let rest_w = word_width(rest);
-                if rest_w <= avail {
-                    line.extend_from_slice(rest);
-                    line_w = rest_w;
-                    break;
-                }
-                // Over-wide run (e.g. a space-less CJK sentence): hard-split on the
-                // display-width boundary, not a char-count boundary.
-                let take = prefix_by_width(rest, avail);
-                line.extend_from_slice(&rest[..take]);
-                let lead = if is_first { first_lead } else { cont_lead };
-                out.push(build_line(lead, &std::mem::take(&mut line)));
-                line_w = 0;
-                rest = &rest[take..];
-            } else {
-                let rest_w = word_width(rest);
-                if line_w + 1 + rest_w <= avail {
+    for (chars, space_before) in units {
+        // Try to append to the current line (with a joining space when the source had
+        // whitespace here); if it doesn't fit, flush and continue on a fresh line.
+        if !line.is_empty() {
+            let avail = avail_for(&out);
+            let sep = usize::from(*space_before);
+            let unit_w = word_width(chars);
+            if line_w + sep + unit_w <= avail {
+                if sep == 1 {
                     line.push((' ', Style::default()));
-                    line.extend_from_slice(rest);
-                    line_w += 1 + rest_w;
-                    break;
+                    line_w += 1;
                 }
-                let lead = if is_first { first_lead } else { cont_lead };
-                out.push(build_line(lead, &std::mem::take(&mut line)));
-                line_w = 0;
-                // Retry placing the whole word on a fresh line.
+                line.extend_from_slice(chars);
+                line_w += unit_w;
+                continue;
             }
+            let lead = if out.is_empty() {
+                first_lead
+            } else {
+                cont_lead
+            };
+            out.push(build_line(lead, &std::mem::take(&mut line)));
+            // `line` is now empty; the placement loop below resets `line_w`.
+        }
+        // The line is empty: place the unit, hard-splitting one wider than the whole
+        // line (an over-long narrow word; a wide char is a single unit and always fits).
+        let mut rest: &[(char, Style)] = chars;
+        loop {
+            let avail = avail_for(&out);
+            let rest_w = word_width(rest);
+            if rest_w <= avail {
+                line.extend_from_slice(rest);
+                line_w = rest_w;
+                break;
+            }
+            let take = prefix_by_width(rest, avail);
+            line.extend_from_slice(&rest[..take]);
+            let lead = if out.is_empty() {
+                first_lead
+            } else {
+                cont_lead
+            };
+            out.push(build_line(lead, &std::mem::take(&mut line)));
+            rest = &rest[take..];
         }
     }
     if !line.is_empty() || out.is_empty() {
@@ -749,6 +786,28 @@ mod tests {
             assert!(
                 w <= 16,
                 "line over display width ({w}): {:?}",
+                l.to_string()
+            );
+        }
+    }
+
+    #[test]
+    fn cjk_fills_line_tails_no_early_break() {
+        // A long space-less CJK run must FILL each line before wrapping (per-char break
+        // opportunities) — not jump the whole run to the next line leaving a big gap (the
+        // over-aggressive raggedness). At width 40, each line holds 20 han chars = 40 cells.
+        let md = "这是一段没有任何空格的长中文文本用来验证换行会填满每一行的行尾而不是提前\
+                  断开留下大片空白区域继续继续继续继续继续继续";
+        let width = 40;
+        let lines = render(md, width);
+        assert!(lines.len() >= 2, "must wrap: {:?}", texts(&lines));
+        for l in &lines[..lines.len() - 1] {
+            let w = l.to_string().width();
+            assert!(w <= width, "over width ({w}): {:?}", l.to_string());
+            // Filled to within one wide char (2 cells) of the edge — no early break.
+            assert!(
+                w >= width - 1,
+                "line under-filled ({w}/{width}): {:?}",
                 l.to_string()
             );
         }
