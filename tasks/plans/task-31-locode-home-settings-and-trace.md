@@ -36,14 +36,18 @@
   Codex contract) else `$HOME/.locode`; memoized `OnceLock`; `default_locode_home()`
   split (grok `paths.rs:27-47`); auto-create on first *write* use (reads tolerate absence).
   Rehome the existing global-`AGENTS.md` resolver onto it (today it re-derives from env).
-- `Settings` loader: read the four layers (user file, `<repo>/.locode/settings.json`,
+- `Settings` loader: read the five layers (user file, its **`extends` files** —
+  user-layer-only pointers, list-ordered, non-recursive, resolved against the
+  referencing file's dir, ADR-0024 §1.2 amendment — then `<repo>/.locode/settings.json`,
   `<repo>/.locode/settings.local.json`, `--settings <file|inline-json>`), each parsed to
   `serde_json::Value`; merge value-wise (objects deep, scalars overwrite, arrays
   concat+dedupe — Claude `settings.ts:529-547`); then decode a typed `Settings` view
   (`serde(default)`, unknown keys untouched because merging happens on `Value`).
   **Denylist**: `api_schema` (the v1 list) stripped from the two project layers before
-  the merge, with a stderr warning naming the file. A malformed layer degrades to
-  "skipped + warning", never a hard error (Claude's filter-not-reject).
+  the merge, with a stderr warning naming the file (`extends` files merge with user
+  trust — no denylist; a project-layer `extends` key is ignored with a warning). A
+  malformed layer degrades to "skipped + warning", never a hard error (Claude's
+  filter-not-reject).
 - v1 fields: `model`, `api_schema`, `harness`, `instructions.root_stop_pattern`,
   `skills.extra` (parsed + validated: entry with `SKILL.md` ⇒ single skill; else must
   end in `skills` ⇒ folder; `~` expanded; invalid ⇒ warning + entry dropped).
@@ -51,8 +55,11 @@
   flag/env always wins (`--harness`, `--api-schema`/`LOCODE_API_SCHEMA`; `model` has no
   flag — settings is its first home, threaded to the provider factory via
   `ProviderInit`).
-- Tests: precedence across all four layers; array-union vs scalar overwrite; denylist
-  strips project layers only; unknown-key round-trip; malformed-layer degradation;
+- Tests: precedence across all five layers (incl. extends between user and project,
+  list order within the layer); extends is user-layer-only (project `extends` ignored
+  + warned); no recursion (nested `extends` ignored + warned); missing extends file
+  degrades; array-union vs scalar overwrite; denylist strips project layers only
+  (extends files exempt); unknown-key round-trip; malformed-layer degradation;
   `skills.extra` validation matrix; flag-beats-settings in exec.
 
 ### S2 — `root_stop_pattern` activation (S)

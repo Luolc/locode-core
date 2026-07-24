@@ -74,9 +74,29 @@ capability. `settings.json` matches Claude Code and opencode. *(User decision.)*
 Lowest → highest precedence:
 
 1. `~/.locode/settings.json` — user
-2. `<repo>/.locode/settings.json` — project, committed
-3. `<repo>/.locode/settings.local.json` — project-local, gitignored
-4. `--settings <file-or-inline-json>` — flag
+2. **`extends` files** — external settings files the *user layer* points at
+   (amendment 2026-07-24; e.g. a team-shared `team-settings.json`), in list order
+   (later wins within the layer)
+3. `<repo>/.locode/settings.json` — project, committed
+4. `<repo>/.locode/settings.local.json` — project-local, gitignored
+5. `--settings <file-or-inline-json>` — flag
+
+**The `extends` layer** (amendment 2026-07-24): the user file may carry
+`"extends": ["<path>", …]` — each entry an ordinary settings JSON file merged
+*above* the user layer and *below* the project layers, so a shared team file can
+override personal defaults while any repo still overrides the team. Rules:
+
+- **Only the user layer honors `extends`.** A project-layer `extends` is ignored
+  with a warning — repo-controlled content must not pull arbitrary external files
+  into the config tree (the §1.3 asymmetry, applied to file inclusion).
+- **No recursion**: an extended file's own `extends` is ignored with a warning
+  (cycle-proof by construction; revisit only if a real need appears).
+- **Trust follows the pointer**: the user explicitly opted into the file, so it
+  merges with user-level trust (no denylist) — a team file legitimately sets
+  `model`/`api_schema`; that is its purpose. The denylist continues to bind the
+  *repo*-controlled layers only.
+- Relative entries resolve against the referencing file's directory; `~` expands;
+  a missing/malformed entry degrades to skipped-with-warning (§1.2's rule).
 
 Merge semantics (Claude's, `settings.ts:529-547`): objects **deep-merge**; scalars
 **overwrite**; arrays **concatenate + dedupe** — so permission `allow`/`deny` lists
@@ -107,6 +127,7 @@ existing or imminent run parameter; a flag always wins):
 | `harness` | string | Default pack (`--harness`'s durable default). |
 | `instructions.root_stop_pattern` | string (regex) | Activates ADR-0023's dormant root-detection seam: a directory whose absolute path matches is the project root (the escape hatch for VCS-less trees — monorepo segments, `/workspace/<project>`). Activation requires the `regex` dependency — an ask-first item, approved by accepting this ADR. |
 | `skills.extra` | list of paths | Manual skill entries beyond the standard roots (§3). Entry semantics below. |
+| `extends` | list of paths | User-layer-only pointer(s) to external settings files merged between the user and project layers (§1.2, amendment 2026-07-24) — the team-shared-settings hook. |
 
 **`skills.extra` semantics** *(user decision)*:
 
