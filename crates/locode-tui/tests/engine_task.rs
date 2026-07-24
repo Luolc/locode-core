@@ -109,7 +109,10 @@ async fn submit_runs_to_completion_and_the_session_continues() {
     let registry = scripted_registry(vec![text_turn("first answer"), text_turn("second answer")]);
     let (tx, mut rx) = engine::spawn(cli(&dir, "mock"), registry);
 
-    let EngineMsg::Ready { model, cwd, shell } = recv(&mut rx).await else {
+    let EngineMsg::Ready {
+        model, cwd, shell, ..
+    } = recv(&mut rx).await
+    else {
         panic!("first message must be Ready");
     };
     assert_eq!(model, "mock-scripted");

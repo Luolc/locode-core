@@ -136,8 +136,13 @@ pub struct App {
     pub cwd: Option<String>,
     /// Shell `run_terminal_cmd` uses (status display); set at engine ready.
     pub shell: Option<String>,
-    /// Cumulative input+output tokens across this session's runs (status usage).
-    pub session_tokens: u64,
+    /// The **current context occupancy**: what the last request actually carried
+    /// (input + cache-read + output — i.e. what the next turn starts from), not a
+    /// cumulative generation total. Survives resume via an estimate until the
+    /// first real usage report replaces it.
+    pub context_tokens: u64,
+    /// Whether `context_tokens` is a resume-time estimate (rendered `~N`).
+    pub context_estimated: bool,
     /// Session assembly failed — submits are disabled.
     pub engine_failed: bool,
     /// Spinner frame counter (advanced by `Msg::Tick`).
@@ -189,7 +194,8 @@ impl App {
             model: None,
             cwd: None,
             shell: None,
-            session_tokens: 0,
+            context_tokens: 0,
+            context_estimated: false,
             engine_failed: false,
             spinner_frame: 0,
             streaming: None,
@@ -267,10 +273,25 @@ impl App {
 
     fn on_engine(&mut self, msg: EngineMsg, now: Instant) -> Vec<Cmd> {
         match msg {
-            EngineMsg::Ready { model, cwd, shell } => {
+            EngineMsg::Ready {
+                model,
+                cwd,
+                shell,
+                context,
+            } => {
                 self.model = Some(model);
                 self.cwd = Some(cwd);
                 self.shell = Some(shell);
+                // Fresh session: context resets to 0. Resumed: exact when the
+                // rollout carried usage records, else a `~` estimate — either
+                // way replaced by the first real usage report.
+                if let Some(recovered) = context {
+                    self.context_tokens = recovered.tokens;
+                    self.context_estimated = recovered.estimated;
+                } else {
+                    self.context_tokens = 0;
+                    self.context_estimated = false;
+                }
                 vec![]
             }
             EngineMsg::BuildFailed(message) => {
@@ -435,7 +456,12 @@ impl App {
             RunState::Running { started, .. } => now.duration_since(started).as_secs(),
             RunState::Idle => 0,
         };
-        self.session_tokens += report.usage.input_tokens + report.usage.output_tokens;
+        // Context occupancy = the last request's full prompt (input + cache reads)
+        // plus what it appended (output). A real report replaces any estimate.
+        self.context_tokens = report.usage.input_tokens
+            + report.usage.cache_read_tokens.unwrap_or(0)
+            + report.usage.output_tokens;
+        self.context_estimated = false;
         // A cancelled/errored streaming turn never emits the whole `Message`, so
         // no finalize is pending: drop the in-progress (uncommitted) block (Q2 —
         // the partial is discarded). Any *completed* blocks already committed to
@@ -777,6 +803,7 @@ mod tests {
         let mut app = App::new();
         let _ = app.update(
             Msg::Engine(Box::new(EngineMsg::Ready {
+                context: None,
                 model: "mock-1".into(),
                 cwd: "~/proj".into(),
                 shell: "zsh".into(),
