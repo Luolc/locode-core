@@ -138,6 +138,42 @@ fn project_instructions_injected_from_agents_md() {
 }
 
 #[test]
+fn project_instructions_nested_repo_root_to_cwd_order() {
+    // Full stack: a git repo with an AGENTS.md at the root AND a subdir, run from the
+    // subdir. The injected reminder carries both, labeled, root→cwd (deepest last).
+    let dir = tempdir();
+    std::fs::create_dir(dir.path().join(".git")).expect("mkdir .git");
+    std::fs::write(dir.path().join("AGENTS.md"), "ROOT-RULE").expect("root AGENTS.md");
+    let sub = dir.path().join("crates").join("app");
+    std::fs::create_dir_all(&sub).expect("mkdir subdir");
+    std::fs::write(sub.join("AGENTS.md"), "LEAF-RULE").expect("leaf AGENTS.md");
+
+    let assert = exec()
+        .args([
+            "say hi",
+            "--api-schema",
+            "mock",
+            "--output-format",
+            "stream-json",
+            "--cwd",
+        ])
+        .arg(&sub)
+        .assert()
+        .success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8");
+
+    // Locate the injected reminder line and assert both files, labeled, in root→cwd order.
+    let reminder = stdout
+        .lines()
+        .find(|l| l.contains("system-reminder"))
+        .unwrap_or_else(|| panic!("a reminder event: {stdout}"));
+    assert!(reminder.contains("## From:"), "labeled by source path");
+    let root_at = reminder.find("ROOT-RULE").expect("root rule present");
+    let leaf_at = reminder.find("LEAF-RULE").expect("leaf rule present");
+    assert!(root_at < leaf_at, "root before leaf (deepest wins, last)");
+}
+
+#[test]
 fn no_project_instructions_flag_suppresses_injection() {
     let dir = tempdir();
     std::fs::create_dir(dir.path().join(".git")).expect("mkdir .git");

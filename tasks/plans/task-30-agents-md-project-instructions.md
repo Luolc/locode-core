@@ -1,6 +1,7 @@
 # Task 30 — Shared `AGENTS.md` project-instruction loading (ADR-0023): implementation plan
 
-**Status:** planning (2026-07-23). Design of record: [ADR-0023](../../docs/decisions/ADR-0023-fidelity-boundary-and-agents-md-loading.md).
+**Status:** shipped 2026-07-23 (6 slices, PRs #146–150; see the Result addendum and
+[`../tracker.md`](../tracker.md)). Design of record: [ADR-0023](../../docs/decisions/ADR-0023-fidelity-boundary-and-agents-md-loading.md).
 Ships the first instance of the shared context machinery ADR-0023 defines. Source-grounded
 against the `coding-cli-survey` submodules and the two studies
 ([agents-md](../../docs/research/harness-study-agents-md.md),
@@ -318,3 +319,36 @@ above the cwd-rooted jail (Decision 1); (b) `--add-dir`/`extra_roots` is a seam 
 the tool-jail-widening (ADR-0008) and settings work (Decision 4); (c) `root_stop_pattern` is a
 dormant seam pending `settings.json` (Decision 5). None of these change ADR-0023's decisions —
 they record scope/sequencing discovered in planning.
+
+---
+
+## Result (shipped 2026-07-23)
+
+All six slices landed as planned; two deviations, both simpler than planned, are noted below.
+
+- **Slice 1** (#146) — `locode-host::load_project_instructions` + `InstructionsConfig` /
+  `ProjectInstructions` / `InstructionEntry`: the cwd→root walk, `AGENTS.override.md` override,
+  global file, canonical dedup, gitignore filter. 13 unit tests.
+- **Slices 2+3** (#147, **combined** — a render fn with no caller would be dead code): render to
+  a `User` `<system-reminder>` + 64 KiB budget; engine injection once per session. 5 render + 3
+  injection tests.
+- **Slice 4** (#148) — per-turn rescan + replace/remove banners, content-hash idempotence,
+  never mutating prior history. 3 unit + 3 integration tests.
+- **Slice 5** (#149) — `--no-project-instructions` on both binaries + `to_headless`; the feature
+  is on by default. 2 binary e2e tests.
+- **Slice 6** (#150) — nested-repo full-stack e2e (root + subdir `AGENTS.md`, root→cwd order,
+  labels), the `Role::Developer` doc-comment reconciliation (ADR-0013 amendment), tracker +
+  this addendum.
+
+**Deviations from the plan (simpler):**
+1. **The loader is a free `fn` taking `cwd + cfg`, not a `Host` method** (it reads directly), so
+   the engine needed **no `Arc<Host>` / `with_host` builder** — just the SPEC-declared
+   `engine → host` dependency edge. This removed the plan's biggest structural wrinkle (the map's
+   "engine has no Host handle" flag).
+2. **The feature went live in the binaries at Slice 2+3** (they build `EngineConfig` via
+   `..default()`, which is enabled), so Slice 5 was purely "add the disable flag + binary e2e",
+   not "turn it on".
+
+**Seams left dormant (as planned, recorded here):** `--add-dir` / `extra_roots` (config field
+honored by the loader, no CLI flag — needs tool-jail widening, ADR-0008) and `root_stop_pattern`
+(config field, matching is `TODO(settings)` — needs `settings.json` + the `regex` crate).
