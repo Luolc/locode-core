@@ -73,6 +73,11 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
         .map_err(|e| PreRunError(e.to_string()))?;
     let (provider, model) = (built.provider, built.model);
 
+    // ---- 3b. Wire requirement: a pack whose tools only round-trip on a specific
+    //          wire (codex's freeform `apply_patch` → openai-responses, D5) rejects
+    //          a mismatched `--api-schema` here, before the loop. ----
+    enforce_wire_requirement(pack, provider.api_schema())?;
+
     // ---- 4. Pack: preamble (system prompt + env + first-turn reminder). ----
     let pack_ctx = PackContext {
         cwd: cwd.clone(),
@@ -140,6 +145,24 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
     Ok(output::exit_code(report.status))
 }
 
+/// Reject a `--api-schema` a pack's tools can't round-trip on (codex's freeform
+/// `apply_patch` requires the OpenAI Responses wire, D5). `mock` (keyless CI) is
+/// the universal escape hatch and is always allowed, independent of the pack list.
+fn enforce_wire_requirement(pack: &dyn locode_core::Pack, schema: &str) -> Result<(), PreRunError> {
+    if schema != "mock"
+        && let Some(required) = pack.required_api_schemas()
+        && !required.contains(&schema)
+    {
+        return Err(PreRunError(format!(
+            "harness `{}` requires one of these wires: {}; got `--api-schema {}`",
+            pack.name(),
+            required.join(", "),
+            schema,
+        )));
+    }
+    Ok(())
+}
+
 /// Positional prompt, or stdin when absent / `-` (Codex's convention;
 /// positional XOR stdin per the plan addendum). Empty → usage error.
 fn resolve_prompt(arg: Option<&str>) -> Result<String, PreRunError> {
@@ -205,8 +228,28 @@ fn in_whole_message_trace(event: &locode_core::Event) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::in_whole_message_trace;
+    use super::{enforce_wire_requirement, in_whole_message_trace};
     use locode_core::{Event, Message, Role};
+
+    #[test]
+    fn codex_rejects_a_non_responses_wire() {
+        let codex = locode_core::resolve("codex").unwrap();
+        // A real, mismatched wire is rejected pre-run with an actionable message.
+        let err = enforce_wire_requirement(codex, "anthropic").expect_err("mismatch");
+        assert!(err.0.contains("codex"), "{}", err.0);
+        assert!(err.0.contains("openai-responses"), "{}", err.0);
+        assert!(err.0.contains("anthropic"), "{}", err.0);
+        // The required wire and the keyless-CI escape hatch both pass.
+        assert!(enforce_wire_requirement(codex, "openai-responses").is_ok());
+        assert!(enforce_wire_requirement(codex, "mock").is_ok());
+    }
+
+    #[test]
+    fn wire_agnostic_packs_accept_any_wire() {
+        let grok = locode_core::resolve("grok").unwrap();
+        assert!(enforce_wire_requirement(grok, "anthropic").is_ok());
+        assert!(enforce_wire_requirement(grok, "openai-responses").is_ok());
+    }
 
     #[test]
     fn stream_json_trace_drops_message_deltas_keeps_whole_messages() {

@@ -145,6 +145,25 @@ impl Host {
         })
     }
 
+    /// Remove a single file (jail-resolved). Never recursive — a directory target
+    /// surfaces as an IO error (codex's `apply_patch` refuses to delete a directory).
+    /// The explicit delete seam for a pack that ports a real "delete file" behavior
+    /// (codex `apply_patch`'s `*** Delete File:` and the source side of `*** Move to:`).
+    ///
+    /// # Errors
+    /// [`FsError::Path`] if the path escapes the jail; [`FsError::Io`] if the removal
+    /// fails (missing file, a directory target, or any other IO failure).
+    pub async fn remove_file(&self, cwd: &Path, path: &Path) -> Result<(), FsError> {
+        let resolved = self.resolve_in_jail(cwd, path).await?;
+        tokio::fs::remove_file(&resolved)
+            .await
+            .map_err(|source| FsError::Io {
+                op: "remove",
+                path: resolved.display().to_string(),
+                source,
+            })
+    }
+
     /// Stat a file (jail-resolved).
     ///
     /// # Errors
