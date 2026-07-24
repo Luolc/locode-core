@@ -110,3 +110,38 @@ Ported-pack tool *descriptions* are unchanged: they are verbatim reproductions
 **Still out of scope:** reading `~/.locode` (or any path outside the workspace)
 from a jailed session. That is a genuine widening of the jail — an extra
 permitted root — and needs its own decision, not a side effect of a bug fix.
+
+## Amendment (2026-07-24): the locode home is readable from inside the jail — never writable
+
+The previous amendment left one thing explicitly open: "reading `~/.locode` (or any
+path outside the workspace) from a jailed session … needs its own decision."
+[ADR-0025](ADR-0025-agent-skills.md) forces and makes that decision.
+
+Skills are advertised to the model as a `<system-reminder>` listing carrying the
+**absolute path** of each `SKILL.md`, and there is no skill tool — the model reads
+the file itself (ADR-0025 §4). User skills live in `~/.locode/skills/`, outside the
+workspace root, so without an exception the jail would reject the very paths the
+listing just advertised.
+
+**Decision** *(user)*: the **locode home** (`$LOCODE_HOME`, else `~/.locode`) and
+every **skill root contributed from outside it** (`extends` dotfolders,
+`skills.extra` entries) are **readable** from inside the jail. They remain **not
+writable**: create, write, edit and delete are rejected exactly as before. The
+relaxation is on the read path only.
+
+A narrower variant — admitting only the individual skill directories discovery
+returned, leaving `~/.locode/` itself closed — was drafted, raised together with
+its cost, and **overruled**: the simpler rule is easier to reason about and to
+explain, and read-only is judged sufficient.
+
+**The cost, recorded plainly:** `~/.locode/sessions/` holds full JSONL transcripts
+of previous runs across every project. A jailed run can now read them. Nothing
+advertises those paths, so the model will not stumble into them, but a prompt that
+asks will succeed. Read-only bounds the damage: no run can rewrite or delete
+another run's history. This is also moot under
+`--dangerously-skip-permissions`, which already lifts the jail entirely; the
+exception exists so that skills work in a *jailed* session too.
+
+The rest of the posture is unchanged: one dispatch door, one jail, and no per-tool
+policy. This is a data-scope exception with an asymmetric read/write rule, not a
+new mechanism.

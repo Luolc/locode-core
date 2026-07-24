@@ -1,4 +1,4 @@
-# ADR-0025: Agent Skills — shared discovery + a grok-pack `skill` tool
+# ADR-0025: Agent Skills — shared discovery + a budgeted `<system-reminder>` listing
 
 ## Status
 Accepted
@@ -7,15 +7,17 @@ Accepted
 2026-07-24
 
 ## Amends
-- [ADR-0023](ADR-0023-fidelity-boundary-and-agents-md-loading.md) — its §1 lists
-  "skills discovery and listing/body injection" as shared engine machinery. That
-  holds for **discovery and the listing**; this ADR records that the **body
-  envelope and its delivery are the `skill` tool's surface**, and the tool is a
-  pack tool (grok only). See the ADR-0023 amendment dated 2026-07-24.
 - [ADR-0024](ADR-0024-locode-home-settings-and-traces.md) — §3 reserved the skill
   roots and deferred "frontmatter, the two-switch invocation gate, and injection"
-  to this ADR; §1.4's scaffold default `harness` flips from `claude` to `grok`
-  (Decision §6). See the ADR-0024 amendment dated 2026-07-24.
+  to this ADR; §1.2/§1.4's `extends` **changes from a settings-file pointer to a
+  dotfolder pointer** (Decision §6). See the ADR-0024 amendments dated 2026-07-24.
+- [ADR-0023](ADR-0023-fidelity-boundary-and-agents-md-loading.md) — §2's global
+  instruction file gains one lower-precedence entry per extended dotfolder
+  (Decision §6). See the ADR-0023 amendment dated 2026-07-24.
+- [ADR-0008](ADR-0008-dispatch-door-and-path-jail.md) — the locode home and
+  externally-contributed skill roots become **read-only reachable** from inside the
+  jail (Decision §4.1). See the second ADR-0008 amendment dated 2026-07-24, which
+  also resolves the question the first one left open.
 
 Supersedes the *Recommendation* and *Open questions* sections of
 [`docs/research/harness-study-skills.md`](../research/harness-study-skills.md).
@@ -46,41 +48,36 @@ than re-litigates them:
   framing: `User`-role content carrying `<system-reminder>`, never `Developer`.
 
 What was left open — and what this ADR decides — is the on-disk frontmatter
-contract, the listing's shape and budget, the tool's shape and body envelope,
-which packs carry it, and the safety rules around executing semi-trusted text
-found on disk.
+contract, the listing's shape, budget and update rule, how a skill body reaches
+the model, and what has to be reachable for that to work.
 
 This ADR also **closes the ported-harness workstream** (user decision, below):
 after skills, `claude` / `codex` / `grok` are done, the `opencode` pack is
 cancelled, and every subsequent capability (background tasks, todo, subagents, …)
 is built once, on our own `locode` best-of pack.
 
-Empirical grounding is a fresh source read (2026-07-24) against the
-`coding-cli-survey` submodules, cited below as `harness: path:line`.
+Empirical grounding is a fresh source read plus a live wire probe of the shipped
+binaries (both 2026-07-24), cited below as `harness: path:line` and recorded in
+the study's *Live wire probe* section.
 
 ## Decision
 
-### 1. Placement — one shared loader, one pack-owned tool
+### 1. Placement — one shared implementation, no new tool
 
-**Discovery and the listing are shared engine machinery** (ADR-0023 §1). The
-loader lives in **`locode-host`**, exactly like the `AGENTS.md` loader: it is the
+Skills are **entirely shared engine machinery**, exactly as ADR-0023 §1 says: one
+loader, one listing, one update rule, identical under `--harness claude`, `codex`
+and `grok`. **No pack gains a new tool.** The three ported packs keep the toolsets
+they ship today, byte for byte.
+
+The loader lives in **`locode-host`**, like the `AGENTS.md` loader: it is the
 trusted OS seam, and skills legitimately live *outside* the tool path-jail
 (`~/.locode/skills`, `skills.extra` paths), which a jailed read would reject
 (ADR-0023's Implementation note makes the same call for the same reason). It
 produces a neutral `Vec<Skill>`; the engine renders and injects the listing.
 
-**The `skill` tool is a pack tool, registered only by the grok pack.** Skills are
-a capability we want daily, not a fidelity surface we are measuring; concentrating
-the tool in one pack keeps the other two packs' toolsets untouched and matches how
-we will use the thing (Decision §6 makes `grok` the default harness for exactly
-this reason). `claude` and `codex` packs get **no `skill` tool and no listing** —
-under those harnesses skills simply do not exist for now.
-
-The engine decides whether to inject a listing by asking the registry whether a
-tool of the new kind **`ToolKind::Skill`** is registered — not by a new `Pack`
-method. `ToolKind` was designed to grow this way ("we start small and grow the
-canonical set as packs need it", `locode-tools/src/tool.rs`), so this is the
-additive path and leaves the `Pack` trait signature untouched.
+That skills need no tool is the finding of §4: two of the three surveyed CLIs
+work exactly this way, and the third's tool buys a property we can get more
+cheaply.
 
 ### 2. The on-disk contract
 
@@ -93,12 +90,14 @@ loadSkillsDir.ts:424-428`); the directory is what lets a skill ship
 
 1. **project** — `<repo>/.locode/skills/`
 2. **user** — `~/.locode/skills/` (`$LOCODE_HOME` honored, per ADR-0024)
-3. **extra** — `skills.extra` entries from settings, in list order
+3. **extends** — `<extended dotfolder>/skills/`, in `extends` list order (§6)
+4. **extra** — `skills.extra` entries from settings, in list order
 
-Project wins because it is the most specific to the work at hand — the same
-root→cwd "deepest wins" rule ADR-0023 uses for instructions, and grok's own
+1–3 mirror the settings layers 1:1 (ADR-0024 §3, and §1.2's user-beats-extends
+ordering). Project wins because it is the most specific to the work at hand — the
+same root→cwd "deepest wins" rule ADR-0023 uses for instructions, and grok's own
 ordering (cwd → repo → home, `08-skills.md:15-35`). `extra` sits last because it
-is a manually-pointed grab-bag, not a tier of the project.
+is a manually-pointed grab-bag, not a tier of anything.
 
 **Name identity.** The name is the frontmatter `name`, **normalized to a slug**
 (lowercase; every character outside `[a-z0-9]` → `-`; consecutive hyphens
@@ -111,20 +110,18 @@ documented foot-gun, and the slug rule keeps a human-written `name: Review PR`
 usable (`review-pr`) instead of dropping the skill.
 
 **Collisions.** Same name in two scopes → both are kept, addressable as
-`<scope>:<name>` (`project:commit`, `user:commit`, `extra:commit`) — grok's
-`format_skill_name` (`skill.rs`). The listing shows the qualified name whenever a
-short name is ambiguous; an ambiguous short name passed to the tool returns the
-qualified candidates rather than silently picking first-match (grok's
-`FindSkillResult::Ambiguous`).
+`<scope>:<name>` (`project:commit`, `user:commit`, `extends:commit`,
+`extra:commit`) — grok's `format_skill_name` (`skill.rs`). The listing renders the
+qualified name whenever a short name is ambiguous.
 
 **Frontmatter — exactly five recognized keys** *(user decision)*:
 
 | Key | Effect |
 |---|---|
 | `name` | Identity (slug-normalized; falls back to the directory name). |
-| `description` | The router. Shown in the listing; this is what automatic invocation keys off. |
+| `description` | The router. Shown in the listing; this is what the model matches a task against. |
 | `when-to-use` | Optional trigger phrasing, shown as a separate `Use when:` line. |
-| `disable-model-invocation` | `true` → excluded from the listing, and the tool refuses it. |
+| `disable-model-invocation` | `true` → excluded from the listing, so the model never learns the skill exists. |
 | `user-invocable` | Parsed and carried; **no observable effect in v1** (see below). |
 
 Everything else — `allowed-tools`, `model`, `effort`, `paths`, `argument-hint`,
@@ -154,7 +151,7 @@ to parse, or whose name is unusable, is **skipped with a stderr diagnostic** —
 never aborts the run and never reaches the model.
 
 **The two-switch gate.** `disable-model-invocation` and `user-invocable` are the
-two halves ADR-0024 §3 named. Only the first has a channel in v1: the model's.
+two halves ADR-0024 §3 named. Only the first has a channel in v1: the listing.
 `user-invocable: false` is parsed and recorded but has **no observable behavior**
 until slash-command invocation exists (tracker: deferred pending a holistic
 design pass). We record it now so the on-disk contract is stable, and we will not
@@ -164,9 +161,10 @@ describe it in `--help`/README as if it worked.
 
 **Surface and role.** One `User`-role message wrapping the catalog in
 `<system-reminder>…</system-reminder>` — ADR-0023 §3's rule, and the shape both
-Claude Code (`messages.ts:3728-3738`) and grok (`listing.rs`) put on the wire. The
-system prompt is **never** mutated for skills (mutating it mid-session busts the
-provider prompt cache — the same reason ADR-0023 rejected opencode's approach).
+Claude Code (`messages.ts:3728-3738`) and grok (`listing.rs`) put on the wire
+(confirmed on both wires by the live probe). The system prompt is **never**
+mutated for skills (mutating it mid-session busts the provider prompt cache — the
+same reason ADR-0023 rejected opencode's approach).
 
 **The rendered message, verbatim.** The header and per-entry shape are grok's
 (`listing.rs`, `SkillEntry::format` + `listing_header`):
@@ -185,14 +183,12 @@ The following skills are available for use:
 
 The `  Use when:` line is **omitted entirely** when a skill has no `when-to-use`
 (second entry above); the two continuation lines are indented two spaces. Entries
-are ordered by scope then name (project → user → extra), and a name that is
-ambiguous across scopes is rendered qualified (`project:commit`, §2). The
-**absolute path** is carried because a skill's real payload is often its sibling
-files (`scripts/`, `references/`) and the model needs the base directory to reach
-them — and because it keeps the listing useful even if a future pack ships no
-`skill` tool. We keep grok's header (which does **not** name a tool) rather than
-Claude's "…for use with the Skill tool:" — it stays true under every pack, and the
-tool's own description already says how to load a skill.
+are ordered by scope then name, and a name that is ambiguous across scopes is
+rendered qualified (`project:commit`, §2).
+
+The **absolute path** is not decoration — it is the whole invocation mechanism
+(§4). grok's header, which names no tool, is therefore exactly right for us: there
+is no tool to name.
 
 **Budget and degrade** — grok's numbers verbatim: a char budget of **50 % of the
 context window** (falling back to 400 000 chars when the window is unknown), a
@@ -206,6 +202,9 @@ number can only ever silently truncate the text that does the routing, while
 saving nothing in the common case. A configurable knob is a reserved `skills.*`
 settings sibling (ADR-0024 §1.4 shaped `skills` as an object for exactly this),
 not a v1 field.
+
+**Zero skills → no listing message at all**, and no other trace: a run with no
+skills on disk is byte-identical to today's.
 
 #### 3.1 Update rule — whole-body comparison, never a per-skill delta
 
@@ -251,16 +250,17 @@ Codex is the only surveyed harness that does this (`NO_EXECUTOR_SKILLS_BODY` /
 available."). Claude Code and grok both go silent — grok explicitly rejected a
 removal footer in a `take_pending` comment ("*it wastes tokens and looks like
 skills with no description*"). We take codex's side: the model was told these
-skills exist, and leaving that standing after they are gone is a stale instruction.
-Codex's guard applies too — if there were never any skills, we say nothing.
+skills exist, and leaving that standing after they are gone is a stale
+instruction. Codex's guard applies too — if there were never any skills, we say
+nothing.
 
 **The previous state is the transcript, not a side ledger.** Whether a listing
 counts as "already delivered" is decided by **looking for its marker in the
 conversation actually being sent**, the way codex resolves
 `PreviousSectionState` (`world_state/mod.rs:342-362`: if
 `has_retained_fragment_matcher()` and the fragment is not found in `items`, the
-previous state is `Absent` and the section re-renders). Two properties fall out for
-free, which the other two harnesses each had to hand-manage:
+previous state is `Absent` and the section re-renders). Two properties fall out
+for free, which the other two harnesses each had to hand-manage:
 
 - **Compaction self-heals.** If a future compaction step drops the listing message,
   the next turn finds no marker and re-injects. No compaction hook is needed —
@@ -304,41 +304,40 @@ restart. Among the surveyed harnesses only Claude Code manages that in an ordina
 CLI session; grok notices a new skill only if a tool call happens to touch its
 directory (it has no watcher at all), and codex's CLI does not notice it.
 
-**Zero skills → no listing message at all.** The tool is still registered (below).
+### 4. Invocation — the model reads `SKILL.md` itself
 
-### 4. The `skill` tool — one call, body as the tool result
+*(User decision.)* There is **no `Skill` tool**. The listing gives the model a
+name, a description, and an **absolute path**; when a task matches, the model
+opens that path with the pack's ordinary read tool and follows what it finds.
 
-**Shape.** Registered under the wire name **`skill`** — lower-case, matching both
-the grok pack's snake_case tools (`read_file`, `list_dir`, `search_replace`) and
-grok's own kind→name mapping (`xai-grok-agent/src/prompt/template.rs:105`,
-`(ToolKind::Skill, "skill")`). Input `{ skill: string, args?: string }` (grok's
-`SkillInput`) → the tool result **is** the skill body, wrapped in grok's canonical
-envelope:
+This is the majority behavior among the shipped CLIs, not a shortcut:
 
-```
-<skill name="…" description="…" path="…">
-{body}
-</skill>
-```
+- **Grok Build has no skill tool at all** — see the correction below. Its listing
+  plus the absolute path *is* the mechanism.
+- **Codex's default path is the same**, and states it outright in the prompt text
+  it ships (`render.rs:30-46`): *"After deciding to use a skill, the main agent must
+  read its `SKILL.md` completely before taking task actions … The main agent must
+  read each required instruction or reference file itself before acting."*
+- **Only Claude Code has a real tool**, and the live probe caught its exact shape
+  (`{skill: string, args?: string}`, `skill` required). Reproducing it faithfully
+  means reproducing its two-step delivery: the `tool_result` is only
+  `"Launching skill: <name>"` and the body arrives as a **separate injected user
+  message** (`SkillTool.ts:634-774`, `:856-861`) — a second injection path in the
+  loop, and a turn where one `tool_use` yields both a `tool_result` and an extra
+  message.
 
-The envelope is not decoration: it gives the model an explicit identity and
-boundary so it reads the contents as *instructions to follow*, and knows exactly
-where semi-trusted text starts and stops (grok's own rationale, `skill.rs:46-55`).
-
-**Why body-as-tool-result, and not Claude's two-step** *(user decision)*. Claude
-Code's `Skill` tool returns only `"Launching skill: <name>"` and delivers the body
-as a **separate injected user message** in the same turn (`SkillTool.ts:634-774`,
-`:856-861`). That buys a distinction we do not need and costs machinery we would
-have to build: a second injection path in the loop, and a turn where one
-`tool_use` produces both a `tool_result` and an extra message. Returning the body
-as the tool result keeps the pairing invariant trivially intact (one `tool_use` →
-exactly one `tool_result`, ADR-0004/0008), reuses the one dispatch door, and makes
-the transcript self-describing — the body is *in* the tool result, so a resumed or
-replayed session needs no special case.
+What a tool buys is a durable `tool_use`/`tool_result` record of which skill fired.
+What it costs here is a tool no ported pack legitimately owns: grok and codex do
+not have one, so adding it to their packs breaks the ADR-0023 fidelity boundary,
+and putting Claude's in the claude pack alone would make skills work under one
+harness only. Our own `locode` pack is where a first-class skill tool belongs, and
+it does not exist yet. Until then, reading the file is the honest mechanism — and
+the read itself still leaves a `tool_use`/`tool_result` pair naming the path, so
+the trace is not silent about it either.
 
 > **Correction of record — Grok Build has no `Skill` tool, in source *or* on the
-> wire.** The skills study described this envelope as grok's *live* `Skill` tool.
-> It is not, and this was confirmed twice.
+> wire.** The skills study described the `<skill name description path>` envelope
+> as grok's *live* `Skill` tool. It is not, and this was confirmed twice.
 >
 > *In source:* the grok-native skill tool was **deleted**
 > (`implementations/skills/skill.rs:35-37` — "Old `SkillToolImpl` + `impl Tool`
@@ -354,101 +353,138 @@ replayed session needs no special case.
 > proxy (2026-07-24, [`../research/harness-study-skills.md`](../research/harness-study-skills.md)
 > § *Live wire probe*) captured its request payload: **26 tools, none of them a
 > skill tool**, alongside a `<system-reminder>` skills listing in exactly the
-> format §3 reproduces. So grok's only routes are that listing (whose absolute
-> paths let the model read `SKILL.md` itself) and user-invoked prompt-assembly
-> injection.
+> format §3 reproduces.
 >
-> What survives in grok is the **formatter** (`build_skill_message`,
-> `skill.rs:39-64`), still used by slash expansion, the pager, and agent
-> preloading. We adopt that format knowingly, **as a format** — the tool built
-> here is our own design, not a reproduction of a live grok surface.
+> This correction is why this ADR ships no tool. An earlier draft specified a
+> grok-shaped `skill` tool on the strength of the study's claim; with the claim
+> disproven, building it would have meant inventing a surface and attributing it
+> to a harness that does not have it.
 
-**Argument substitution**, applied to the body before wrapping — grok's set minus
-the vendor aliases: `$ARGUMENTS` (whole string), `$ARGUMENTS[N]` and `$N`
-(0-indexed, whitespace-split), `${SKILL_DIR}` (the directory holding `SKILL.md`),
-`${SESSION_ID}`. When `args` is given but the body contains no argument token, the
-arguments are appended as an `**ARGUMENTS:** …` suffix rather than dropped
-(`apply_substitutions`). We do **not** ship the `${CLAUDE_SKILL_DIR}` /
-`${CLAUDE_SESSION_ID}` aliases: they exist in grok to ingest skills written for
-another vendor, which ADR-0024 §3 already declined ("provenance over
-convenience").
+#### 4.1 Reachability — the locode home and skill roots are readable, never writable
 
-**Failure modes** are ordinary `ToolError`s, never a silent empty result: unknown
-name (with the closest available names listed), ambiguous short name (with the
-qualified candidates), a skill marked `disable-model-invocation`, and an
-unreadable/oversized body.
+Reading `SKILL.md` only works if the model is allowed to. Project skills sit under
+the workspace root and are already reachable; **user, `extends` and `extra` skills
+are not** — `~/.locode/skills/x/SKILL.md` is outside the root, so ADR-0008's jail
+rejects it as an escape. Without an exception, §4 would work for project skills
+only, which is not a feature.
 
-**Body size.** The body is capped at a generous byte budget with a **visible**
-truncation marker; it is exempt from the ordinary tool-result truncation path,
-because silently clipping instructions produces a skill that half-runs, which is
-worse than one that says it was cut.
+The exception, as decided *(user decision)*:
+
+- **The whole locode home is readable** — `$LOCODE_HOME`, else `~/.locode` — not
+  merely the skill subdirectories, plus every **skill root contributed from
+  outside it**: `extends` dotfolders and `skills.extra` entries.
+- **Read only, everywhere.** No write, create, delete, or edit through this
+  exception; those paths keep the unmodified jail and are rejected exactly as they
+  are today. The relaxation is on the read path alone.
+
+A narrower first draft admitted only the directories discovery actually returned,
+so that `~/.locode/skills/commit/` became readable while `~/.locode/` did not. That
+was raised together with its cost and **overruled**: the simpler rule is easier to
+reason about and to explain, and read-only is judged a sufficient safeguard.
+
+**What this means, stated plainly:** `~/.locode/sessions/` holds full JSONL
+transcripts of previous runs in this and every other project. Under this decision
+the model can read them — it will not stumble in (nothing advertises those paths;
+the listing names only `SKILL.md` files), but a prompt that asks for them will
+succeed. That is the accepted trade, and it is bounded by read-only: no run can
+rewrite or delete another run's history. Note also that this is moot in the mode
+the author usually runs — `--dangerously-skip-permissions` already lifts the jail
+entirely (ADR-0008 amendment 2026-07-18); the exception exists so that skills also
+work in a *jailed* session.
+
+The coherence argument stands behind all of it: the listing hands the model these
+exact paths and says they are available. Advertising a path and then refusing to
+read it is a contradiction that would surface as a confusing escape error on the
+happy path.
 
 ### 5. Safety — skill text is semi-trusted
 
-A `SKILL.md` can arrive with a cloned repo. Three rules, all from the study's
-cross-harness observations:
+A `SKILL.md` can arrive with a cloned repo, or from an `extends` dotfolder someone
+else maintains. Not injecting bodies removes most of the attack surface — nothing
+from a skill file enters the conversation unless the model chooses to read it, and
+that read is an ordinary, jailed, approval-gated tool call. What remains:
 
 - **No execution of skill text.** Claude Code expands inline `` !`cmd` `` in a
   skill body at load time (`loadSkillsDir.ts:374-396`); we do **not** implement
-  that in any form. A skill that wants to run something instructs the model to run
-  it through the normal, already-gated Bash tool, with `${SKILL_DIR}` to locate
-  its scripts. A file on disk must not be a silent RCE.
-- **Path-traversal protection on link resolution.** Relative markdown links in a
-  body are resolved to absolute paths for the model's convenience, but a link
-  escaping the skill directory (`../../secret.md`) is **left untouched** rather
-  than resolved (grok's rule and its regression test, `skill.rs:364-453`, test
-  `:1269-1278`).
-- **Envelope always.** The body is never spliced into the conversation bare; it
-  always arrives inside the `<skill …>` envelope of §4.
+  that in any form, and with no body-expansion step there is nowhere for it to
+  live. A skill that wants to run something instructs the model to run it through
+  the normal Bash tool. A file on disk must not be a silent RCE.
+- **The listing is data, not instructions.** Descriptions come from disk and are
+  rendered into a `<system-reminder>`; they are advertising copy for a router, and
+  the enclosing text says so. No skill text is presented as a user message.
+- **Read-only reachability** (§4.1) is the only jail relaxation, and it is scoped
+  to the skill directories themselves.
 
-**No approval gate on invocation.** Loading instructions is not a side effect;
-every side effect a skill causes happens through tools that are already behind the
-ADR-0017 approval seam. Adding a second prompt for "may I read this file you put
-there yourself" trains the user to click through prompts, which makes the gate
-that matters weaker.
+**No separate approval gate for reading a skill.** The read already passes the
+ADR-0017 seam like any other read, and adding a second prompt for "may I read the
+file you put there yourself" trains the user to click through prompts, which makes
+the gate that matters weaker.
 
-### 6. The default harness becomes `grok`
+### 6. `extends` points at a whole dotfolder, not at a settings file
 
-`--harness`'s durable default flips from `claude` back to **`grok`** *(user
-decision)* — the scaffolded `settings.json` default and the built-in fallback,
-both currently `"claude"` (`locode-host/src/settings.rs:237`; ADR-0024 §1.4
-amendment 2026-07-24). `api_schema` (`anthropic`) and `model` (`claude-sonnet-5`)
-are **unchanged**: the daily configuration is deliberately *grok's toolset on a
-Claude model*, which is exactly the one-engine-one-wire-swap-the-surface usage
-ADR-0012 is built for, and is legal because the grok pack is wire-agnostic (only
-the codex pack pins a schema).
+*(User decision.)* ADR-0024's `extends` currently accepts **settings files only** —
+each entry "an ordinary settings JSON file merged between the user and project
+layers" (§1.2 amendment). That was too narrow: the point of the field is to inherit
+a shared *configuration home* — a team's `~/team-locode/` — and a home is more than
+its JSON.
 
-The reason is skills: the `skill` tool lives in the grok pack (§1), and the whole
-point of building this now is to use it every day.
+**An `extends` entry is now a locode dotfolder directory**, and all three of its
+contributions merge:
+
+| Path in the extended dotfolder | Merges as |
+|---|---|
+| `<dir>/settings.json` | a settings layer, exactly where `extends` sits today — between the user and project layers, in list order, non-recursive, §1.3 denylist applied |
+| `<dir>/skills/` | a skill root at precedence tier 3 (§2), below `user`, above `extra` — mirroring where its settings sit |
+| `<dir>/AGENTS.md` | an instruction entry **below** the global `~/.locode/AGENTS.md` (ADR-0023 §2), so ours wins on conflict and the repo chain wins over both |
+
+Multiple entries apply in list order, each labeled with its `source_path` like
+every other instruction entry. **A missing sub-path is simply absent, never an
+error** — extending a dotfolder that ships only skills is a normal thing to do. A
+missing *entry* keeps today's loud warning: the user pointed at it.
+
+**This replaces the file form; it does not sit beside it.** Pointing `extends` at a
+`settings.json` is now a **config error with an explicit message**, not a silently
+reinterpreted path — ADR-0024 §1.5 permits a structural change but forbids silent
+reinterpretation, and a file that used to be read as settings must not quietly
+become "a dotfolder that happens to have no `skills/`". The blast radius is small:
+the field landed in the same release cycle, the first-run scaffold writes
+`extends: []`, and the error text names the fix.
+
+#### 6.1 Load order is now an invariant, not an accident
+
+*(User decision.)* Because `extends` lives **in** settings and decides **where else**
+instructions and skills come from, startup has a required order:
+
+1. Resolve the **user** `settings.json`.
+2. Resolve its **`extends`** entries — the dotfolder list is complete after this
+   one pass, since `extends` does not recurse (ADR-0024 §1.2).
+3. Finish the layer stack (project, local, flag) and produce the merged settings.
+4. **Then** load project instructions — the chain now includes each extended
+   dotfolder's `AGENTS.md` (§6) and honors `instructions.root_stop_pattern`.
+5. **Then** discover skills — the roots now include each extended dotfolder's
+   `skills/` (§2 tier 3) and every `skills.extra` entry contributed by *any*
+   settings layer, including the extended ones.
+
+Steps 4 and 5 are consumers of resolved settings and must never run before step 3.
+The dependency already existed in weaker form — `instructions.root_stop_pattern`
+is a settings key (ADR-0024 §1.4) — but `extends` makes it structural: run
+discovery too early and an extended dotfolder's skills and instructions are
+silently missing, with no error to explain it. Any future settings key that
+contributes a *root* inherits the same rule.
 
 ## Alternatives Considered
 
-- **Claude's two-step delivery (ack + injected user message).** Rejected in §4:
-  extra loop machinery and a turn shape our pairing invariant would have to make an
-  exception for, buying a legibility distinction the enveloped tool result already
-  provides.
-- **Codex's model-reads-the-file (no tool at all).** Rejected: it needs zero new
-  tool surface but leans entirely on the model choosing to read and re-read
-  (`render.rs:30-46`), and it leaves no durable record of which skill fired. Our
-  listing carries absolute paths anyway, so this remains available as a fallback
-  behavior without being the design.
-- **Register the `skill` tool only when ≥ 1 skill is discovered** (considered at
-  length, and initially chosen). Rejected once the source was checked: **neither**
-  harness gates tool registration on skill count — Claude's `SkillTool` sits
-  unconditionally in the static tool array (`tools.ts:212`, unlike its neighbors
-  which are conditionally spread), and gates only the *listing*, on the reverse
-  test ("does this agent have the Skill tool", `attachments.ts:2668-2673`). A
-  count-gated registration decided at session start means the **first** skill a
-  user ever writes requires a restart; deciding it per turn instead busts the
-  prompt-cache prefix on the turn it flips. Gating only the listing has neither
-  problem, and A/B cleanliness — the gate's original motivation — is covered by the
-  future `--bare` switch, which turns skills off wholesale.
-- **A per-pack skill tool for every pack** (the study's original per-pack fidelity
-  table). Rejected by ADR-0023 §1 and by the workstream closing: the ported packs
-  are done, and further capability goes into the `locode` pack.
-- **A conservative listing budget (1–2 %) plus a config knob** (the study's
-  recommendation). Rejected in §3: the budget is a cap that never binds at
-  realistic skill counts, so tightening it can only truncate routing text.
+- **A grok-shaped `skill` tool returning the body as the tool result** (this ADR's
+  own earlier draft). Rejected once the study's claim was checked: grok ships no
+  such tool, so building it would invent a surface and attribute it to a harness
+  that does not have it, and hosting it in the grok pack would break ADR-0023's
+  fidelity boundary. The design's *merits* (one round-trip, a self-describing
+  transcript) are real and belong to the future `locode` pack.
+- **Claude Code's `Skill` tool, faithfully ported into the claude pack.** The only
+  option where the tool reproduces something that exists. Rejected for now: it
+  makes skills work under one harness only, and its two-step delivery needs a new
+  engine path for a tool that emits both a `tool_result` and an extra injected
+  message. Revisit when the `locode` pack lands.
 - **Per-skill incremental announcement** (Claude Code and grok both do this).
   Rejected in §3.1 on two source-visible defects: a delta is emitted under the same
   "the following skills are available" header, so a one-skill announcement reads as
@@ -470,74 +506,88 @@ point of building this now is to use it every day.
 - **Silence when the last skill disappears** (Claude Code and grok both go quiet;
   grok explicitly rejected a removal footer). Rejected in §3.1: an instruction the
   model was given should be withdrawn explicitly, not left standing.
+- **Making all of `~/.locode` readable from the jail** (the simple version of
+  §4.1). Rejected: `~/.locode/sessions/` holds full transcripts of previous runs.
+  The exception is scoped to discovered skill directories.
+- **A conservative listing budget (1–2 %) plus a config knob** (the study's
+  recommendation). Rejected in §3: the budget is a cap that never binds at
+  realistic skill counts, so tightening it can only truncate routing text.
 - **`~/.claude/skills` vendor-compat root** (grok reads Claude's and Cursor's
-  trees). Already rejected by ADR-0024 §3; restated here because the substitution
-  aliases raised it again.
+  trees). Already rejected by ADR-0024 §3; unchanged here.
+- **Keeping the `extends` file form beside the new directory form** (a dual shape,
+  as `skills.extra` uses). Rejected in §6: two meanings for one field is exactly the
+  silent reinterpretation ADR-0024 §1.5 forbids, and the field is new enough that a
+  clear error costs less than a permanent ambiguity.
 
 ## Consequences
 
-- **New shared capability + one new pack tool.** `locode-host` gains a skills
-  loader alongside the instructions loader; `locode-tools` gains
-  `ToolKind::Skill`; `locode-engine` gains listing rendering plus the whole-body
-  diff (structurally the instructions hash-diff shipped in Task 30, with the
-  comparison widened to the rendered body and the "already delivered" test moved
-  onto the transcript); `locode-packs`'s grok pack gains the `skill` tool. No
-  `Pack` or `Tool` trait signature changes.
+- **New shared capability, no new tool.** `locode-host` gains a skills loader
+  alongside the instructions loader and an extra read-only root set for the jail;
+  `locode-engine` gains listing rendering plus the whole-body diff (structurally
+  the instructions hash-diff shipped in Task 30, with the comparison widened to the
+  rendered body and the "already delivered" test moved onto the transcript). **No
+  crate gains a tool, no pack changes, no `Pack`/`Tool` trait signature changes,
+  and no new `ToolKind`.**
+- **Skills work under every harness.** `--harness claude`, `codex` and `grok` all
+  discover, list and read skills identically. The default harness is unchanged
+  (`claude`) — an earlier draft flipped it to `grok` only because the tool was to
+  live there; with no tool, the reason is gone.
+- **A jail relaxation** (§4.1) — the first exception ADR-0008 has taken: the whole
+  locode home plus externally-contributed skill roots become readable, never
+  writable. Read-only bounds it, but it *is* a widening (past-session transcripts
+  included) and should be reviewed as one.
 - **A new engine seam: post-run work.** §3.2 needs a hook that fires after a run
   reaches its terminal state, so the rescan lands off the user's critical path.
   Nothing like it exists today (the loop ends and returns), and the TUI must invoke
-  it *after* its final render. It is small, but it is a genuine addition to the
-  engine's lifecycle and the first consumer of a seam later work (prefetch,
-  background summarization) will likely reuse.
-- **`ToolKind` grows a variant.** Additive by design, but it is a public enum: any
-  exhaustive match downstream must add an arm.
-- **A user-visible default changes.** `--harness` defaults to `grok`; the settings
-  scaffold, the built-in fallback, `README.md`, and the `--help` text must move
-  together, and ADR-0024 §1.4 gets a dated amendment (done in this change).
-- **Skills are grok-only for now.** Under `--harness claude` or `codex`, a
-  `SKILL.md` on disk is inert and nothing is injected. This is deliberate and must
-  be stated plainly in the README rather than left to be discovered.
+  it *after* its final render.
+- **`extends` changes meaning** (§6): a settings-file pointer becomes a dotfolder
+  pointer, and with it the first mechanism by which an external directory
+  contributes settings, skills *and* project instructions at once. The settings
+  merge already ships and keeps its position in the layer stack; the directory
+  resolution, the skills root and the `AGENTS.md` entry land with this task. A
+  file-valued entry becomes a config error with an explicit message.
 - **The ported-harness workstream closes.** `opencode` (Task 15's faithful half)
   is **cancelled**, not deferred; its plan document stays as a record. Everything
   after this — background tasks, todo, subagents — targets the `locode` pack only.
-- **Reconciled in this change** (ADR-first): the ADR-0023 amendment (§1's
-  skills line), the ADR-0024 amendment (§1.4 default `harness`), the skills study
-  (superseded recommendation + the grok correction), the decisions index, and the
-  tracker (Task 32 pointed at this ADR; Task 15's opencode half cancelled).
+- **Reconciled in this change** (ADR-first): amendments to ADR-0008 (jail
+  exception), ADR-0023 (`extends` instructions), ADR-0024 (`extends` dotfolders;
+  §3 skills resolved; the same-day default-harness amendment withdrawn), the skills
+  study, the decisions index, and the tracker.
 
 ## Resolved (user decisions, 2026-07-24)
 
-- **One tool, grok-shaped, grok pack only** — body returned as the tool result
-  inside `<skill name description path>`; Claude's ack + second-message delivery is
-  **not** implemented.
+- **No skill tool** — the listing carries absolute paths and the model reads
+  `SKILL.md` with the pack's ordinary read tool. A first-class tool waits for the
+  `locode` pack.
 - **Exactly five frontmatter keys** — `name`, `description`, `when-to-use`,
   `disable-model-invocation`, `user-invocable`. `allowed-tools` / `model` /
   `effort` / `paths` are not parsed, which removes the permission question
   entirely.
-- **Default `--harness` → `grok`**, with `api_schema` / `model` untouched.
-- **Listing rides the `User` `<system-reminder>`** channel; codex's
-  `developer` + `<skills_instructions>` shape is not used.
-- **The ported-harness reproduction workstream ends with this task**; the
-  `opencode` pack is cancelled and all later capability goes to the `locode` pack.
-- **Registration is not gated on skill count** — only the listing is (decided
-  against the source, see Alternatives).
+- **Listing rides the `User` `<system-reminder>`** channel in grok's verbatim
+  format; codex's `developer` + `<skills_instructions>` shape is not used.
 - **Whole-body comparison, never a per-skill delta** — if the rendered listing
   changed at all, the entire listing is re-sent; two skills becoming three re-sends
   all three (§3.1).
 - **The rescan runs after the run finishes and the UI has rendered**, never at the
-  start of the next user turn — latency hides behind the user reading the reply
-  (§3.2). Session start is the one synchronous exception.
-- **No filesystem watcher** — a bounded rescan instead, consistent with ADR-0023
-  and avoiding an ask-first dependency (§3.2).
+  start of the next user turn (§3.2). Session start is the one synchronous
+  exception. No filesystem watcher.
+- **`extends` points at a dotfolder directory**, inheriting its `settings.json`,
+  `skills/` and `AGENTS.md` (§6). This *replaces* the settings-file form; a
+  file-valued entry is now a config error.
+- **The ported-harness reproduction workstream ends with this task**; the
+  `opencode` pack is cancelled and all later capability goes to the `locode` pack.
 
 ## Open Questions
 
+- **The read-only locode-home exception** (§4.1) is recorded as decided, with the
+  narrower discovery-scoped variant explicitly overruled. It is still a jail
+  widening that exposes past-session transcripts to a jailed run; a reviewer who
+  disagrees should say so before the task ships.
 - **`--bare`.** Referenced as the switch that turns skills (and, later, subagents)
   off wholesale for clean A/B runs. It does not exist yet; when it lands it must
-  disable skill discovery, the listing, and tool registration together, and it
-  subsumes `--no-project-instructions`. Tracked separately.
+  disable discovery, the listing and the §4.1 exception together, and it subsumes
+  `--no-project-instructions`.
 - **Slash invocation.** `user-invocable` stays inert until the deferred
   slash-command design pass; that pass should also decide whether user-invoked
-  skills use grok's zero-round-trip prompt-assembly injection
-  (`build_skill_information`) instead of a tool call.
-- **`allowed-tools`, narrowing-only.** Revisit when the permissions work lands.
+  skills splice the body in at prompt-assembly time (grok's
+  `build_skill_information`) rather than making the model read it.

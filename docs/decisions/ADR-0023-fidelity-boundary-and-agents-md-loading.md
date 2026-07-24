@@ -301,21 +301,46 @@ reverse-lossy caveat recorded in the ADR-0013 amendment.
 
 None outstanding — the review closed every question above.
 
-## Amendment (2026-07-24): where the skills line of §1 stops
+## Amendment (2026-07-24): §1's skills line stands as written
 
-§1 lists "skills discovery and listing/body injection" among the behaviors that
-are **not** reproduced per harness. [ADR-0025](ADR-0025-agent-skills.md) keeps
-that for **discovery and the listing** — one shared loader in `locode-host`, one
-`User` `<system-reminder>` listing format — but records that the **body envelope
-and its delivery are the `Skill` tool's own surface**, and that tool is a pack
-tool carried by the **grok pack only**. Under `--harness claude` or `codex` there
-is no skill tool and no listing.
+An earlier note dated the same day narrowed §1, carving the skill *body envelope*
+out of the shared machinery and into a grok-pack `skill` tool. **That note is
+withdrawn.** It rested on a claim about Grok Build that turned out to be false —
+grok ships no skill tool, in source or on the wire (ADR-0025 §4, correction of
+record) — so hosting one in the grok pack would have meant adding a tool the
+harness does not have to a pack whose whole purpose is faithful reproduction.
 
-This does not widen the fidelity boundary: a pack still chooses only *tools +
-prompt*, and the loop is still never forked. It narrows §1's wording — "body
-injection" was written when the design assumed a neutral engine-owned injection
-format; the body now arrives as an ordinary tool result, so there is no separate
-injection path to share or fork.
+[ADR-0025](ADR-0025-agent-skills.md) instead ships **no skill tool at all**: the
+listing carries absolute paths and the model reads `SKILL.md` with the pack's
+ordinary read tool. So §1 needs no narrowing — skills discovery, the listing, and
+the (non-existent) body injection are all shared engine machinery, identical under
+every pack, exactly as originally written. The three ported packs keep their
+toolsets byte for byte.
+
+## Amendment (2026-07-24): an extended dotfolder contributes an `AGENTS.md`
+
+§2 fixes the instruction sources as `AGENTS.md` files along the cwd→root walk,
+plus a global `~/.locode/AGENTS.md`. [ADR-0025](ADR-0025-agent-skills.md) §6
+changes ADR-0024's `extends` from a settings-file pointer into a **dotfolder**
+pointer, and one of the three things an extended dotfolder contributes is its own
+`AGENTS.md`.
+
+Each extended dotfolder's `AGENTS.md`, when present, becomes an instruction entry
+placed **below the global `~/.locode/AGENTS.md`** — so the user's own global file
+still wins on conflict, and the repo chain (root→cwd, deepest wins) wins over
+both. Multiple entries apply in `extends` list order and are labeled with their
+`source_path` like every other entry; a missing file is simply absent, not an
+error.
+
+This does not reopen the rejected mechanisms: still no `@import`, still no rules
+directories, still no vendor directories. It adds *sources of the same
+single-file kind*, chosen explicitly by the user in settings.
+
+**Load order.** Because `extends` is a settings key, instruction loading now
+depends on settings resolution completing first (ADR-0025 §6.1). The dependency
+already existed via `instructions.root_stop_pattern`; `extends` makes it
+structural — discovery that runs too early silently omits an extended dotfolder's
+instructions, with no error to explain the absence.
 
 ## Implementation note (2026-07-23): what planning revealed (Task 30)
 
