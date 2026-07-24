@@ -36,16 +36,26 @@ wrapping code total (`wrap_words` 61 + `wrap_plain` 51 + helpers):
   width-1 column).
 - `wrap_words` / `wrap_plain` now track line width in cells; lead/marker/indent widths
   and table `col_natural` / `pad_into` use `UnicodeWidthStr::width`.
-- Tests: space-less CJK paragraph, mixed CJK+ASCII, CJK table alignment, `wrap_plain`
-  CJK, ASCII-unchanged regressions.
 
-**What the surgical fix does NOT do** (the reason for the upgrade below): it iterates
-by Unicode **scalar** (`char`), not **grapheme cluster**, and has **no UAX#14
-line-break opportunities**. So it is correct for CJK and common text, but:
+**Follow-up (same day): per-CJK-char break units — fixing over-aggressive raggedness.**
+The first pass measured width correctly but still treated a *space-less CJK run as one
+atomic word*, so it jumped whole to the next line rather than filling the current line's
+tail — a 76-col line dropped to **19 cols** followed by a full line (the "cut too
+aggressive" report). Fix: `segs_to_units` now tokenizes into **wrap units** — a narrow
+run stays one unit, but **each wide (CJK/emoji) char is its own unit**, with a
+`space_before` flag so joins stay spaced-or-glued exactly as in the source. `wrap_words`
+greedily fills with units, so a CJK run breaks per character and fills the line
+(76/76/54 instead of 76/19/70/39). This approximates UAX#14 *for CJK* without a library.
+Tests add `cjk_fills_line_tails_no_early_break` (non-final lines fill to within one wide
+char of the edge).
+
+**What the surgical fix still does NOT do** (the reason for the textwrap upgrade below):
+it iterates by Unicode **scalar** (`char`), not **grapheme cluster**, and has only
+per-char CJK breaks — **not full UAX#14**. So it is correct for CJK + common text, but:
 
 - ZWJ/emoji sequences and combining marks can be split mid-cluster.
-- Breaks in CJK land between *any* two chars (no rule keeping closing punctuation
-  「。』」 off a line start, or keeping a number+unit together).
+- CJK breaks land between *any* two chars — no rule keeping closing punctuation 「。』」
+  off a line start, or keeping a number+unit together (that *is* UAX#14).
 - No optimal-fit (ragged-right minimization) or hyphenation.
 
 ## How the four harnesses do it (research)
