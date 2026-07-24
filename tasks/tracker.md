@@ -38,10 +38,11 @@ The immediate queue, ahead of the remaining packs:
   2026-07-24 (PRs #173–#176) under
   [ADR-0024](../docs/decisions/ADR-0024-locode-home-settings-and-traces.md); see the
   Home-dotfolder section below.
-- **P0 — Task 32: Skills.** Full skills implementation (discovery + invocation + the
-  skill markdown loading). Roots + `skills.extra` are fixed by ADR-0024 §3/§1.4;
-  the rest (frontmatter set, two-switch gate, `User`-reminder listing per ADR-0023)
-  needs its own ADR + plan before implementation — next after Task 31 starts.
+- **P0 (next) — Task 32: Skills.** Full skills implementation (discovery + invocation +
+  the skill markdown loading). Roots + `skills.extra` are fixed by ADR-0024 §3/§1.4
+  (the loader already parses+validates `skills.extra` into `SkillsExtraEntry`); the rest
+  (frontmatter set, two-switch gate, `User`-reminder listing per ADR-0023) needs its own
+  ADR + plan before implementation — **the immediate next task** now that Task 31 is done.
 - **P0.5 — Background Bash + Subagents.** Background/async bash commands, and subagents /
   agent-groups (their distinctions + implementations are hard to read off the UIs — needs a
   source dig). After the two P0s. Also unblocks codex `shell_command` → unified exec.
@@ -61,6 +62,12 @@ The immediate queue, ahead of the remaining packs:
     decoration (session_meta + message lines, torn-tail healing, 0600/0700).
   - [x] **S4** — `--continue`/`--resume <id>`: tolerant reader + scoped-then-global
     resolver + resume-as-preamble seeding; resumed runs append in place.
+  - [x] **Followups (smoke test, shipped in 0.1.10):** TUI resume-transcript replay
+    (#178); footer shows **context occupancy** + per-run `usage` records for exact
+    resume (#179); first-run `settings.json` scaffold + `--model` flag +
+    `claude`/`claude-sonnet-5` defaults + resume-model-from-flag/settings (#181);
+    `--no-session-persistence` + the `.cargo`-redirect revert so `cargo run -c` finds
+    real sessions (#180/#182). Reconciled into ADR-0024 (dated amendments).
 - [ ] **Task 32 — skills** (P0, needs its own ADR first — see Priorities).
 
 ### More harness packs + wires (the A/B bed)
@@ -101,10 +108,11 @@ and resolve the plan's open-questions section first.
 - [ ] **Built-in slash commands** — deferred pending a *holistic* design pass
   (discovery/registry, syntax, pure-UI vs. seam- or persistence-backed), not piecemeal.
   Current commands: `/new` `/quit` `/exit`.
-- [ ] **`/model` switching** — persistence half is now **settled** (ADR-0024: single
-  `~/.locode/settings.json` with a `model` field — *not* an XDG dir; lands with Task 31 S1).
-  Still blocked on the other seam: model-selection on the ADR-0015 `ProviderRegistry`/factory
-  (public surface → ask-first). Read-only `/model` becomes Tier-A once that seam exists.
+- [ ] **`/model` switching** — persistence half is **done** (Task 31 shipped
+  `~/.locode/settings.json` with a `model` field + a `--model` flag; there is no model env
+  var). Still blocked on the other seam: model-selection on the ADR-0015
+  `ProviderRegistry`/factory (public surface → ask-first). Read-only `/model` becomes
+  Tier-A once that seam exists.
 
 ### Tier B/C future capability (short ADR, then mostly-autonomous)
 - [ ] Custom slash-command files · plugins. *(Everything else once listed here has been

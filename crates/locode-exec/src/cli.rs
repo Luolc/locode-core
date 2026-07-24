@@ -100,11 +100,11 @@ pub struct Cli {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
 pub enum Harness {
-    /// Grok Build's toolset + system prompt (ADR-0012).
+    /// Grok Build's toolset + system prompt.
     Grok,
-    /// Claude Code's toolset + system prompt (ADR-0012, ADR-0023).
+    /// Claude Code's toolset + system prompt.
     Claude,
-    /// Codex CLI's toolset + system prompt (ADR-0012, ADR-0023).
+    /// Codex CLI's toolset + system prompt.
     Codex,
 }
 
