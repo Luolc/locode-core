@@ -32,17 +32,39 @@ Full crate layout and rationale: [`../SPEC.md`](../SPEC.md), ADR-0002 (workspace
 
 ## Active / Next — the only open work
 
+### Priorities (user, 2026-07-24)
+The immediate queue, ahead of the remaining packs:
+- **In flight — codex pack (Task 19):** decisions locked (interview 2026-07-24),
+  running **overnight-autonomous** under [`../docs/codex-pack-dev-process.md`](../docs/codex-pack-dev-process.md).
+- **P0 — Skills.** Full skills implementation (discovery + invocation + the skill markdown
+  loading). Ties into the home dotfolder below. Plan from source.
+- **P0 — settings.json + trace persistence (continue/resume).** Persist config
+  (`settings.json`) and the session trace to a **home dotfolder** — our analog of
+  `~/.claude`, `~/.grok`, `~/.codex`, `~/.opencode`; our folder is **`~/.locode`**.
+  Enables `--continue`/`--resume`. Research of what those harnesses store in their dotfolders
+  is under way (subagent) → a research doc will land under `docs/research/`.
+- **P0.5 — Background Bash + Subagents.** Background/async bash commands, and subagents /
+  agent-groups (their distinctions + implementations are hard to read off the UIs — needs a
+  source dig). After the two P0s.
+- **P1 — opencode pack** (the faithful-port half of Task 15) — deferred; plan drafted
+  ([`plans/task-15-opencode-pack.md`](plans/task-15-opencode-pack.md)), revisit later.
+- **P1 — our own `locode` best-of pack** (the other half of Task 15).
+
 ### More harness packs + wires (the A/B bed)
 Planning is a research task (AGENTS.md): re-read the harness source before starting each,
 and resolve the plan's open-questions section first.
 
-- [ ] **Task 19 — codex pack** (`--harness codex`): `shell_command` + freeform `apply_patch`
-  + `update_plan` + base prompt; shared `apply_patch` parser. Native delivery uses Task 18
-  (done); degrades via `{input: string}` elsewhere. Plan:
-  [`plans/task-19-codex-pack.md`](plans/task-19-codex-pack.md). Scope L.
-- [ ] **Task 15 — remaining packs: `opencode` + our own `locode`** (after 19/20). `opencode`
-  is a faithful port; `locode` is our best-of pack (grok-build-style naming; ADR-0011's
-  rg-glob is scoped here). Plan from source when scheduled. Scope L (split per pack).
+- [ ] **Task 19 — codex pack** (`--harness codex`, **in flight, overnight-autonomous**):
+  faithful port of codex's stock duo **`shell_command` + freeform `apply_patch`** + the
+  **gpt-5.6-sol** base prompt; **openai-responses-only**; `update_plan` and unified-exec
+  **not** ported (decisions locked). Entry point + resolved decisions + slice plan:
+  [`../docs/codex-pack-dev-process.md`](../docs/codex-pack-dev-process.md); design detail
+  [`plans/task-19-codex-pack.md`](plans/task-19-codex-pack.md) (reconciled; source re-pinned
+  to codex `f201c30c`, 2026-07-24). Scope L, ~3 slices.
+- [ ] **Task 15 — remaining packs: `opencode` (P1) + our own `locode` (P1)**. `opencode`
+  is a faithful port (plan drafted: [`plans/task-15-opencode-pack.md`](plans/task-15-opencode-pack.md));
+  `locode` is our best-of pack (grok-build-style naming; ADR-0011's rg-glob is scoped here).
+  Both deferred behind the P0s above. Scope L (split per pack).
 - [ ] **Task 17 — OpenAI Chat Completions wire** (`openai-chat`) — **DEFERRED** (Responses
   covers GPT + Grok natively). The reasoning-blind LCD/control wire; revisit when a target
   model only speaks chat-completions. Plan: [`plans/task-17-openai-chat-wire.md`](plans/task-17-openai-chat-wire.md). Scope L.
@@ -62,10 +84,16 @@ and resolve the plan's open-questions section first.
   XDG `~/.config/locode/` ADR). Read-only `/model` becomes Tier-A once the seam exists.
 
 ### Tier B/C future capability (short ADR, then mostly-autonomous)
-- [ ] Background bash commands · custom slash-command files · subagents · plugins ·
-  config-file persistence (XDG). *(Shared AGENTS.md loading promoted to Task 30, above.)*
+- [ ] Custom slash-command files · plugins. *(Background bash + subagents promoted to
+  **P0.5**; config-file/trace persistence + skills promoted to **P0** — see Priorities
+  above. Shared AGENTS.md loading was promoted to Task 30.)*
 
 ### Deferred decisions (researched, not yet decided — don't lose track)
+- [ ] **codex shell tool: `shell_command` now → unified exec later.** The codex pack ships
+  `shell_command` (non-PTY, no background) as a substitution; codex's real mac/Linux default
+  is now **unified exec** (`exec_command`/`write_stdin`, PTY/session/background). Switch when
+  **background support (P0.5)** lands (see `docs/codex-pack-dev-process.md` D2). Comments in
+  the codex shell tool flag it as deprecated.
 - [ ] **Tool-description interface: static `&str` vs dynamic.** Our `Tool::description(&self)
   -> &str` (static, `include_str!`) matches opencode exactly and covers claude/grok/codex once
   the one runtime-model-dependent line is dropped (done — see AGENTS.md "Fidelity vs. truth").

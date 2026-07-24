@@ -21,6 +21,43 @@
 
 ---
 
+## Reconciliation (2026-07-24) — read the working doc first; much below is superseded
+
+This plan was written against submodule pin `1d941253` and predates both the claude
+pack's conventions and a **2026-07-24 re-survey at the re-pinned commit `f201c30c`**
+(codex was 325 commits stale). The **process, resolved decisions, and slice plan now
+live in [`../../docs/codex-pack-dev-process.md`](../../docs/codex-pack-dev-process.md)**
+— start there. What the re-survey changed (this file's affected sections are stale):
+
+- **Tool set is a DUO: `shell_command` + `apply_patch`.** `update_plan` is **not
+  ported** (user decision — deferred entirely; §1.2 / §4.4 / §5.6 no longer apply).
+- **Shell tool = `shell_command` (non-PTY)**, marked deprecated in comments. Codex's
+  mac/Linux default is now **unified exec** (`exec_command`/`write_stdin`, PTY/session);
+  we use `shell_command` (sol's declared `shell_type`, unified-exec disabled) because
+  background/session is out of scope — switch when P0.5 background lands. (§1.1's
+  "shell_command is stock" and §1.3's unified-exec-deferral framing are updated.)
+- **`apply_patch` is freeform-ONLY** — the JSON `{input}` variant was deleted upstream;
+  combined with **openai-responses-only** (D5), the untagged two-shape `Args` (§3.3) and
+  the whole cross-wire degradation story (§4.6, intro) are **dropped**. One shape: a
+  freeform Lark-grammar tool. Add mkdirs parents via `Host::create_dir`.
+- **Base prompt = gpt-5.6-sol** (17730-byte `base_instructions` from `models.json`, new
+  "You are Codex, an agent based on GPT-5" identity), **not** the model-independent
+  `prompt.md` default §4.7 chose. Truth-first: clean. apply_patch instructions: **always
+  appended** (§9 Q2 resolved).
+- **`<environment_context>` rebuilt** (cwd/shell/current_date/timezone/permission-profiles;
+  old approval/sandbox/os tags gone) — §4.8 updated; follow-the-source.
+- **Spec builders moved to the new `codex_tools` crate** — all `core/src/tools/handlers/*`
+  citations need the new path.
+- Conventions since claude: cite **ADR-0023** for the fidelity boundary; AGENTS.md loaded
+  by the shared engine (not the pack); `Pack::shape_user_prompt` (default verbatim);
+  `PackContext` has `is_git_repo`/`model`/`os_version`; `Host::create_dir`.
+
+The parser/matcher design (§3.4, §4.2–4.3), the `deny_unknown_fields`/type-strict schema
+posture (§4.5, §5.5), the approval-params-dropped gap (§5.9), and the freeform-tool
+delivery (§5.2) still stand. Everything else: defer to the working doc.
+
+---
+
 ## 1. Purpose & scope
 
 Port Codex CLI's headless-relevant toolset and base prompt as `--harness codex`

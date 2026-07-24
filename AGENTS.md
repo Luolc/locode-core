@@ -102,11 +102,10 @@ Design rationale and the source study behind every decision live in the separate
     harness's **tools, prompts, and static preamble** faithfully. It does **not** reproduce
     **loop-adjacent machinery** — reminder injection, TodoWrite/plan feedback loops, context
     compaction, subagent orchestration — which lives on our *shared engine* and is the same
-    for every pack (an honest A/B varies the pack, not the loop). So the codex pack ports
-    `update_plan` as a plain tool but not codex's plan-reminder loop; the claude pack ports
-    `Read`/`Edit` but not Claude Code's `<system-reminder>` re-injection. When a ported tool is
-    inseparable from loop machinery, port the tool's surface and leave the machinery to the
-    engine — note the seam. (This was "STATUS #9" before `tasks/STATUS.md` was retired.)
+    for every pack (an honest A/B varies the pack, not the loop). For example, the claude pack
+    ports `Read`/`Edit` but not Claude Code's `<system-reminder>` re-injection. When a ported
+    tool is inseparable from loop machinery, port the tool's surface and leave the machinery to
+    the engine — note the seam. (This was "STATUS #9" before `tasks/STATUS.md` was retired.)
   - **Fidelity vs. truth — truth wins.** Prompt/description *reproducibility* is a goal, but
     it is **subordinate to factual accuracy**. When faithfully reproducing a harness would
     inject something **untrue for our actual run** — most often because the harness computes
