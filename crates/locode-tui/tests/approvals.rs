@@ -18,8 +18,9 @@ fn cli(dir: &tempfile::TempDir, yolo: bool) -> Cli {
     Cli {
         prompt: None,
         print: false,
-        harness: locode_exec::Harness::Grok,
-        api_schema: "mock".into(),
+        harness: Some(locode_exec::Harness::Grok),
+        api_schema: Some("mock".into()),
+        settings: None,
         cwd: Some(dir.path().to_path_buf()),
         output_format: locode_exec::OutputFormat::Json,
         max_turns: None,

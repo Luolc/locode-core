@@ -8,18 +8,22 @@
 //! `ToolError::Respond`.
 
 mod fs;
+mod home;
 mod instructions;
 mod path;
 mod rg;
+mod settings;
 mod shell;
 mod walk;
 
 pub use fs::{DirEntry, FileRead, FileStat, FsError};
+pub use home::{default_locode_home, locode_home};
 pub use instructions::{
     InstructionEntry, InstructionsConfig, ProjectInstructions, load_project_instructions,
 };
 pub use path::PathError;
 pub use rg::rg_program;
+pub use settings::{Settings, SettingsLoad, SkillsExtraEntry, load_settings, load_settings_from};
 pub use shell::{
     ExecError, ExecOutput, ExecRequest, FrontBackCapture, FrontBackSpec, SPILL_RETAIN_MAX,
     ShellSpec,

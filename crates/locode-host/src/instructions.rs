@@ -119,7 +119,7 @@ fn load_impl(cwd: &Path, cfg: &InstructionsConfig, global: Option<&Path>) -> Pro
 
     // Primary chain: root→cwd, deepest last (wins). Gitignore matcher rooted at the
     // discovered project root (only when it is a real git root).
-    let root = find_root(cwd, &cfg.root_markers);
+    let root = find_root_from_markers(cwd, &cfg.root_markers);
     let ignore = build_gitignore(&root);
     for dir in dirs_root_to_leaf(cwd, &root) {
         push_dir_entry(&dir, &mut entries, &mut seen, ignore.as_ref());
@@ -127,7 +127,7 @@ fn load_impl(cwd: &Path, cfg: &InstructionsConfig, global: Option<&Path>) -> Pro
 
     // Extra roots (seam): each discovered the same way, appended after the primary chain.
     for extra in &cfg.extra_roots {
-        let extra_root = find_root(extra, &cfg.root_markers);
+        let extra_root = find_root_from_markers(extra, &cfg.root_markers);
         for dir in dirs_root_to_leaf(extra, &extra_root) {
             push_dir_entry(&dir, &mut entries, &mut seen, None);
         }
@@ -144,25 +144,26 @@ fn global_dir_of(global_file: &Path) -> PathBuf {
         .map_or_else(|| global_file.to_path_buf(), Path::to_path_buf)
 }
 
-/// The global instruction file: `$LOCODE_HOME/AGENTS.md` when the override is set
-/// (ADR-0023 amendment 2026-07-24 — every studied harness has the analog env override),
-/// else `~/.locode/AGENTS.md`; `None` when neither variable resolves. Dependency-free —
-/// the shipped targets are macOS/Linux.
+/// The global instruction file: `<locode home>/AGENTS.md` via the shared ADR-0024
+/// resolver (`$LOCODE_HOME` override — must exist + canonicalize — else
+/// `$HOME/.locode`); `None` when no home resolves. Dependency-free — the shipped
+/// targets are macOS/Linux.
 fn global_instruction_path() -> Option<PathBuf> {
-    global_path_from(std::env::var_os("LOCODE_HOME"), std::env::var_os("HOME"))
+    crate::home::locode_home()
+        .ok()
+        .map(|dir| dir.join(AGENTS_FILE))
 }
 
 /// The env-free core of [`global_instruction_path`] (tests inject the values — `HOME`/
 /// `LOCODE_HOME` are process-global and this crate forbids `unsafe` env mutation).
+#[cfg(test)]
 fn global_path_from(
     locode_home: Option<std::ffi::OsString>,
     home: Option<std::ffi::OsString>,
 ) -> Option<PathBuf> {
-    if let Some(dir) = locode_home.filter(|d| !d.is_empty()) {
-        return Some(PathBuf::from(dir).join(AGENTS_FILE));
-    }
-    let home = home.filter(|h| !h.is_empty())?;
-    Some(PathBuf::from(home).join(".locode").join(AGENTS_FILE))
+    crate::home::resolve_home_from(locode_home, home)
+        .ok()
+        .map(|dir| dir.join(AGENTS_FILE))
 }
 
 /// Ascend from `start`; the nearest ancestor containing any `markers` entry is the root.
@@ -171,7 +172,9 @@ fn global_path_from(
 ///
 /// `root_stop_pattern` (a regex on the path) is a dormant seam and is **not** consulted
 /// here — see [`InstructionsConfig::root_stop_pattern`]. `TODO(settings)`.
-fn find_root(start: &Path, markers: &[String]) -> PathBuf {
+/// Shared with the settings loader (`pub(crate)` as `find_root_from_markers`), which
+/// locates `<project-root>/.locode/` the same way.
+pub(crate) fn find_root_from_markers(start: &Path, markers: &[String]) -> PathBuf {
     let mut dir = Some(start);
     while let Some(d) = dir {
         if markers.iter().any(|m| d.join(m).exists()) {
@@ -486,9 +489,15 @@ mod tests {
     fn global_path_prefers_locode_home_over_home() {
         use std::ffi::OsString;
         // LOCODE_HOME set → `<LOCODE_HOME>/AGENTS.md` (the dir IS the dotfolder).
-        let p = global_path_from(Some(OsString::from("/custom/dot")), None).unwrap();
-        assert_eq!(p, PathBuf::from("/custom/dot").join(AGENTS_FILE));
-        // Empty LOCODE_HOME is treated as unset → falls back to `$HOME/.locode`.
+        // The ADR-0024 resolver requires an explicit override to exist.
+        let dir = tempfile::tempdir().unwrap();
+        let canon = fs::canonicalize(dir.path()).unwrap();
+        let p = global_path_from(Some(dir.path().as_os_str().to_owned()), None).unwrap();
+        assert_eq!(p, canon.join(AGENTS_FILE));
+        // A nonexistent explicit override fails the resolver → no global file.
+        assert!(global_path_from(Some(OsString::from("/definitely/not/here")), None).is_none());
+        // Empty LOCODE_HOME is treated as unset → falls back to `$HOME/.locode`
+        // (the default is deliberately unverified).
         let p = global_path_from(Some(OsString::new()), Some(OsString::from("/home/u"))).unwrap();
         assert_eq!(p, PathBuf::from("/home/u/.locode").join(AGENTS_FILE));
         // Neither set → None.

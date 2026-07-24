@@ -6,6 +6,7 @@ use locode_core::{BuiltProvider, ProviderInit, ProviderRegistry};
 fn init() -> ProviderInit {
     ProviderInit {
         session_id: "sess-test".to_string(),
+        model: None,
     }
 }
 

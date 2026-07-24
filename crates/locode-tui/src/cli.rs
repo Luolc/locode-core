@@ -24,14 +24,21 @@ pub struct Cli {
     #[arg(short = 'p', long = "print")]
     pub print: bool,
 
-    /// The harness pack to run.
-    #[arg(long, value_enum, default_value_t = Harness::Grok)]
-    pub harness: Harness,
+    /// The harness pack to run. Omitted ⇒ the settings `harness` default
+    /// (ADR-0024 §1.4), else `grok`.
+    #[arg(long, value_enum)]
+    pub harness: Option<Harness>,
 
     /// The provider wire schema (`anthropic` | `openai-responses` | `mock`,
-    /// plus any custom-registered names).
-    #[arg(long, env = "LOCODE_API_SCHEMA", default_value = "anthropic")]
-    pub api_schema: String,
+    /// plus any custom-registered names). Omitted ⇒ the settings `api_schema`
+    /// default (ADR-0024 §1.4), else `anthropic`.
+    #[arg(long, env = "LOCODE_API_SCHEMA")]
+    pub api_schema: Option<String>,
+
+    /// Extra settings layer: a path to a JSON file, or inline JSON (highest-
+    /// precedence settings layer, ADR-0024 §1.2).
+    #[arg(long)]
+    pub settings: Option<String>,
 
     /// Working directory (defaults to the current directory); canonicalized
     /// once and shared by the jail, engine, and pack.
@@ -81,6 +88,7 @@ impl Cli {
             cwd: self.cwd.clone(),
             harness: self.harness,
             api_schema: self.api_schema.clone(),
+            settings: self.settings.clone(),
             max_turns: self.max_turns,
             output_format: self.output_format,
             dangerously_skip_permissions: self.dangerously_skip_permissions,

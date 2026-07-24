@@ -18,6 +18,10 @@ pub struct ProviderInit {
     /// The session id — e.g. for cache-routing hints (the `openai-responses`
     /// wire sets it as `prompt_cache_key`, codex's rule).
     pub session_id: String,
+    /// A model override (the `model` settings field, ADR-0024 §1.4). `None` =
+    /// the factory's own default (env/config). Built-in factories honor it;
+    /// custom factories may ignore it.
+    pub model: Option<String>,
 }
 
 /// A constructed provider plus the model name it resolved (for the report
@@ -85,9 +89,14 @@ impl ProviderRegistry {
     #[must_use]
     pub fn builtin() -> Self {
         Self::new()
-            .register("anthropic", |_init| {
-                let provider = AnthropicProvider::from_env()
+            .register("anthropic", |init| {
+                let mut provider = AnthropicProvider::from_env()
                     .map_err(|e| ProviderBuildError(format!("anthropic wire: {e}")))?;
+                // The settings `model` override (ADR-0024 §1.4) beats the
+                // factory's env/config default.
+                if let Some(model) = &init.model {
+                    provider.config_mut().model.clone_from(model);
+                }
                 let model = provider.config().model.clone();
                 Ok(BuiltProvider {
                     provider: Arc::new(provider),
@@ -100,6 +109,9 @@ impl ProviderRegistry {
                 // Cache-routing hint = the session id (codex's rule; probe-verified
                 // harmless for xAI models).
                 provider.config_mut().prompt_cache_key = Some(init.session_id.clone());
+                if let Some(model) = &init.model {
+                    provider.config_mut().model.clone_from(model);
+                }
                 let model = provider.config().model.clone();
                 Ok(BuiltProvider {
                     provider: Arc::new(provider),
