@@ -98,8 +98,10 @@ A single headless loader in the shared engine produces a neutral value and injec
 it once per turn. It is not pack-selectable; every pack gets the same behavior.
 
 **Shape.** A neutral `ProjectInstructions { entries: Vec<Entry> }` where
-`Entry { source_path, content }`. The loader routes all filesystem reads through
-the `locode-host` seam (ADR-0008) — never `std::fs` in a tool, never the wire.
+`Entry { source_path, content }`. The loader **lives in `locode-host`**, reusing
+its existing path/query/read machinery (ADR-0008) rather than a new crate — every
+filesystem read goes through the host seam, never `std::fs` in a tool, never the
+wire. The engine calls the loader and injects the neutral value.
 
 **Files.** `AGENTS.md` is canonical (this repo already standardizes on it).
 `CLAUDE.md` is recognized as a compatibility alias so existing repos load without
@@ -113,8 +115,11 @@ conventionally-gitignored "local, uncommitted variant" of a directory's checked-
 `AGENTS.md` (the tool does not gitignore it for you). This contrasts with Claude's
 `CLAUDE.local.md`, an *additive* private tier rather than a replacement — we adopt
 Codex's replacement semantics.
-Rules-dir globbing (`.locode/rules/*.md`) and `@import` (Claude-style —
-`claude-code: claudemd.ts:459-486,537`) are **deferred** (see Open Questions).
+Rules-dir globbing (`.locode/rules/*.md`) is deferred (see Open Questions).
+**`@import` is out of scope** — we do not adopt Claude's `@path` include mechanism
+(`claude-code: claudemd.ts:459-486,537`); its external-approval prompts and
+cycle-guard machinery are not worth it for our headless core. Instructions are
+single files assembled by the directory walk, nothing more.
 
 **Root detection (walk).** Ascend from cwd; **stop at the nearest ancestor that
 matches either rule, first match wins**:
@@ -146,15 +151,23 @@ effects share one flag, as in Claude/Codex (`claude-code: main.tsx:1000`;
 explicit `--add-dir` is **still honored** — Claude's "skip what I didn't ask for,
 not what I asked for" rule (`claude-code: context.ts:162-172`).
 
+Multi-root (`--add-dir`) is a **core/engine capability, supported in the headless
+path too** — not a TUI-only concern (a headless eval/pipeline run must be able to
+span extra roots). Cross-root conflicts are resolved by **append order + source-path
+labeling only**; there is no "primary project always wins" override — the label
+lets the model attribute a rule to its root, which is enough.
+
 **Merge.** Additive; assembled **root→cwd** so the deepest (most specific) file
 wins on conflict (universal across all four harnesses). Dedup by **canonical path**
 (case-insensitive FS / symlink-resolved — Grok's robustness, `grok:
 agents_md.rs:159-168`); `.gitignore`-filtered (`grok: agents_md.rs:156`); YAML
 frontmatter stripped from rules files. Every entry is **labeled with its source
 path** (all four harnesses do this) so the model can attribute conflicting rules. A
-**byte cap with a truncation marker** bounds a runaway file (Codex's discipline —
-`codex: agents_md.rs:95-130`; Claude's 40k char cap — `claude-code: claudemd.ts:92`);
-the exact cap is an Open Question.
+**byte budget with a truncation marker** bounds a runaway file: default **64 KiB**
+for the whole assembled body, files exceeding the remaining budget are truncated
+with a marker, and `0` disables loading — Codex's `project_doc_max_bytes` semantics
+(`codex: agents_md.rs:95-130`), sized a little above Claude's 40k-char cap
+(`claude-code: claudemd.ts:92`). The budget is configurable.
 
 **Injection.** One **`User`-role** meta message wrapping the assembled body in
 `<system-reminder>…</system-reminder>`, with (a) a short authority preamble, (b)
@@ -170,7 +183,10 @@ double-injected on fork/resume — `grok` idempotence tests), **re-injected afte
 compaction**, and re-emitted with a replace/remove banner when the files change
 mid-session (Codex/opencode's mature pattern —
 `codex: context/world_state/agents_md.rs`; `opencode: instruction-context.ts:36-37`).
-This is engine machinery and therefore shared.
+Change detection is a **per-turn rescan**, not a filesystem watcher: the cwd→root
+walk is bounded (at most root-deep) and cheap, so re-scanning each turn and diffing
+against the last-injected set is simpler than watch/invalidate and fast enough for
+the headless loop. This is engine machinery and therefore shared.
 
 **Enable/disable.** An env switch plus a `--bare`-style flag turns auto-discovery
 off atomically (Claude's `--bare` — `claude-code: main.tsx:976`; Codex's
@@ -234,9 +250,8 @@ reverse-lossy caveat recorded in the ADR-0013 amendment.
 - **`Developer` narrows**: it is the native-mapped role only; reminders are `User`.
   No current code path emits `Developer` for reminders (today `Role::Developer` is
   produced only in protocol tests — `crates/locode-protocol/src/lib.rs:476,581`), so
-  this is a forward-looking constraint, not a migration. Whether to eventually
-  retire `DeveloperRendering::SystemReminder` from the wire is an Open Question, not
-  decided here.
+  this is a forward-looking constraint, not a migration. `DeveloperRendering::SystemReminder`
+  stays in the wire as a caveated escape hatch (Resolved, below) — no wire change.
 - **New shared capability, not yet built.** This ADR records the design; the loader
   is a future task (tracker: *Tier B/C future capability* / *Deferred*). When it
   lands it introduces a neutral `ProjectInstructions` type and a `root_stop_pattern`
@@ -247,26 +262,30 @@ reverse-lossy caveat recorded in the ADR-0013 amendment.
   notes), the tracker (relabel "pack session-start file context" → shared engine
   context), and the decisions index.
 
+## Resolved (user review, 2026-07-23)
+
+- **Loader home → `locode-host`.** Reuse its existing path/query/read machinery; no
+  new crate. (Decision §2, *Shape*.)
+- **Cap default → a 64 KiB byte budget** with a truncation marker, `0` to disable,
+  configurable. (Decision §2, *Merge*.)
+- **`@import` → out of scope.** Not built — single files + the directory walk only.
+  (Decision §2, *Files*.)
+- **Multi-root / `--add-dir` → in the core, headless included.** Not TUI-only; a
+  headless run must be able to span extra roots. Cross-root conflicts are handled by
+  append order + source-path labeling, no "primary wins" override. (Decision §2,
+  *`--add-dir`*.)
+- **Refresh → per-turn rescan.** The bounded cwd→root walk is cheap; re-scan each
+  turn and diff, no filesystem watcher. (Decision §2, *Refresh*.)
+- **Keep `DeveloperRendering::SystemReminder`.** Retain it as the caveated,
+  reverse-lossy escape hatch for a deliberately-emitted non-beta `Developer`
+  message; do **not** turn a non-beta `Developer` into an error. Reminders are
+  `User` regardless (Decision §3), so this fallback is out of the reminder path.
+
 ## Open Questions
 
-1. **Loader home** — a module in `locode-host`, a small new `locode-instructions`
-   crate, or the engine? The walk + reads must route through the host seam
-   (ADR-0008); rules-dir enumeration could reuse the ripgrep/glob machinery
-   (ADR-0011). (Adding a crate is an *Ask-first* boundary — SPEC.)
-2. **Cap default** — Codex's byte budget vs Claude's 40k-char cap, and the exact
-   truncation marker.
-3. **`CLAUDE.md` alias scope** — recognize `CLAUDE.md` everywhere `AGENTS.md` is
+1. **`CLAUDE.md` alias scope** — recognize `CLAUDE.md` everywhere `AGENTS.md` is
    scanned, or only at the repo root? And do we scan any `.claude`/`.cursor`
    compatibility dirs, or keep the shared loader to `AGENTS.md`(+`CLAUDE.md`) only?
-4. **`@import` and rules dirs** — ship in the shared loader later (Claude-style
-   modularity, with the external-approval + cycle-guard complexity), or keep the
-   shared surface to single files + a flat rules dir?
-5. **Cross-root precedence for `--add-dir`** — appended-after (this ADR) is a
-   deterministic default; is any "primary project always wins on conflict" override
-   needed, or is source-path labeling enough?
-6. **Retire `DeveloperRendering::SystemReminder`?** Now that reminders are `User`
-   and `Developer` is native-mapped only, is the reverse-lossy portable fallback
-   still worth keeping in the Anthropic wire, or should a non-beta Developer message
-   become an error (forcing the caller to choose `User` or the beta)?
-7. **Refresh cost** — per-turn `stat` vs watch/invalidate for mid-session reload in
-   the headless loop.
+2. **Rules dirs** — whether/when to add flat rules-dir globbing
+   (`.locode/rules/*.md`) to the shared loader (deferred, not rejected; `@import`
+   is rejected).
