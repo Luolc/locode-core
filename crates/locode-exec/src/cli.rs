@@ -13,6 +13,7 @@ use clap::{Parser, ValueEnum};
 /// (ADR-0009), diagnostics on stderr, exit code from the run's status.
 #[derive(Parser, Debug)]
 #[command(name = "locode-exec", version, about)]
+#[allow(clippy::struct_excessive_bools)] // CLI flags are naturally bools
 pub struct Cli {
     /// The task prompt. `-` or omitted reads the prompt from stdin.
     pub prompt: Option<String>,
@@ -58,6 +59,11 @@ pub struct Cli {
     /// whole-message: token deltas are assembled but **not** written to it.
     #[arg(long)]
     pub stream: bool,
+
+    /// Skip project-instruction loading (`AGENTS.md`) — the `--bare`-style disable
+    /// (ADR-0023). Auto-discovery is otherwise on by default.
+    #[arg(long)]
+    pub no_project_instructions: bool,
 }
 
 /// The registered harness packs (a closed set — clap validates and lists them).

@@ -6,8 +6,8 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use locode_core::{
-    CacheHint, EngineConfig, EventSink, FnSink, Host, HostConfig, NullSink, PackContext,
-    PathPolicy, ProviderInit, ProviderRegistry, SamplingArgs, Session, grok,
+    CacheHint, EngineConfig, EventSink, FnSink, Host, HostConfig, InstructionsConfig, NullSink,
+    PackContext, PathPolicy, ProviderInit, ProviderRegistry, SamplingArgs, Session, grok,
 };
 
 use crate::cli::{Cli, Harness, OutputFormat};
@@ -104,6 +104,12 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
         // (Anthropic rejects non-streaming past ~10 min). Off by default keeps
         // `-p` byte-for-byte as it was (ADR-0021).
         streaming: cli.stream,
+        // Project-instruction loading (`AGENTS.md`, ADR-0023) — on by default,
+        // `--no-project-instructions` opts out.
+        instructions: InstructionsConfig {
+            enabled: !cli.no_project_instructions,
+            ..InstructionsConfig::default()
+        },
         ..EngineConfig::default()
     };
     let sink: Box<dyn EventSink> = match cli.output_format {

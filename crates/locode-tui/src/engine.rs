@@ -5,8 +5,9 @@
 use std::sync::Arc;
 
 use locode_core::{
-    CacheHint, CancellationToken, EngineConfig, EventSink, FnSink, Host, HostConfig, PackContext,
-    PathPolicy, ProviderInit, ProviderRegistry, Report, SamplingArgs, Session, grok,
+    CacheHint, CancellationToken, EngineConfig, EventSink, FnSink, Host, HostConfig,
+    InstructionsConfig, PackContext, PathPolicy, ProviderInit, ProviderRegistry, Report,
+    SamplingArgs, Session, grok,
 };
 
 use crate::cli::Cli;
@@ -179,6 +180,12 @@ fn build_session(
         cache_hint: CacheHint::Standard,
         // The interactive TUI always streams (ADR-0021) — live token render.
         streaming: true,
+        // Project-instruction loading (`AGENTS.md`, ADR-0023) — on by default,
+        // `--no-project-instructions` opts out.
+        instructions: InstructionsConfig {
+            enabled: !cli.no_project_instructions,
+            ..InstructionsConfig::default()
+        },
         ..EngineConfig::default()
     };
 
