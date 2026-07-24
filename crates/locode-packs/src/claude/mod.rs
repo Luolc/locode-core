@@ -3,10 +3,11 @@
 //! highest-value A/B counterpart to the grok pack: same engine, same wire,
 //! genuinely different tool surface.
 //!
-//! Current state (through Slice 6): all six tools — `Bash`, `Read`, `Edit`,
-//! `Write` (the middle three sharing the `ClaudeSessionState` read-before-write +
-//! staleness gate), `Glob`, and `Grep` — plus a minimal system prompt (identity +
-//! intro). The full byte-exact prompt lands in Slice 7 — see `docs/claude-pack-dev-process.md`.
+//! Complete (Task 20, 7 slices): all six tools — `Bash`, `Read`, `Edit`, `Write`
+//! (the middle three sharing the `ClaudeSessionState` read-before-write + staleness
+//! gate), `Glob`, and `Grep` — plus the full byte-exact static system prompt (all
+//! sections + env block + the `currentDate` first-turn reminder). See
+//! `docs/claude-pack-dev-process.md`.
 //!
 //! Fidelity boundary (ADR-0023): the pack reproduces tools + prompt + static
 //! preamble only. Loop-adjacent machinery (project-instruction loading, reminder
@@ -683,6 +684,42 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(root.join("f.txt")).unwrap(),
             "brand new"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_creates_missing_parent_dirs() {
+        // CC mkdirs parents on create; via Host::create_dir (not write_file).
+        let (_dir, registry, root) = setup();
+        let out = registry
+            .dispatch(
+                "Write",
+                json!({ "file_path": "a/b/c.txt", "content": "deep" }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(out.record.ok, "{}", result_text(&out.tool_result));
+        assert_eq!(
+            std::fs::read_to_string(root.join("a/b/c.txt")).unwrap(),
+            "deep"
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_creates_file_with_missing_parent_dirs() {
+        let (_dir, registry, root) = setup();
+        let out = registry
+            .dispatch(
+                "Edit",
+                json!({ "file_path": "x/y/z.txt", "old_string": "", "new_string": "made" }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(out.record.ok, "{}", result_text(&out.tool_result));
+        assert_eq!(out.record.output["created"], json!(true));
+        assert_eq!(
+            std::fs::read_to_string(root.join("x/y/z.txt")).unwrap(),
+            "made"
         );
     }
 

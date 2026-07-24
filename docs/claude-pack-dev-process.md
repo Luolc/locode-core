@@ -177,6 +177,20 @@ that PR.
 - **Substitutions:** path jail = our `PathPolicy` (ADR-0008), not CC's permission
   system; result *rendering* approximated where UI-coupled (but result *text* is P0,
   D4).
+- **Truth-first drop (not a gap — the honest rendering):** CC's `Bash` git section
+  embeds the *running model's* name in `Co-Authored-By: {model}` / `Generated with
+  [Claude Code]`; a static `&str` `description()` can't render that truthfully, and a
+  hardcoded name would lie in every commit trace. We render CC's real
+  `includeCoAuthoredBy: false` branch (attribution off). Principle: AGENTS.md
+  "Fidelity vs. truth". The static-vs-dynamic description-interface question is
+  researched + deferred: [`research/tool-description-interface.md`](research/tool-description-interface.md).
+
+**Post-completion follow-ups (2026-07-24), both resolved:**
+- **mkdir on create — resolved.** CC's `Edit`/`Write` create parent dirs; added an
+  opt-in `Host::create_dir` (`parents` + `exist_ok`) used only by the claude pack, so
+  the host's footgun-avoidance default (`write_file` never auto-creates) still holds
+  for grok/others. Our own `locode` pack decides its `write_file` behavior later.
+- **Attribution model name — resolved** (dropped; see the truth-first bullet above).
 
 ---
 

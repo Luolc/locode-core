@@ -94,6 +94,57 @@ impl Host {
         self.stat_resolved(&resolved).await
     }
 
+    /// Create a directory (jail-resolved) — an explicit, opt-in `mkdir`, separate
+    /// from [`Host::write_file`], which deliberately never auto-creates dirs. A
+    /// pack calls this when it wants a harness's real "create the parent dir on
+    /// write" behavior (e.g. Claude Code's `Edit`/`Write`), without changing the
+    /// footgun-avoidance default for everyone else.
+    ///
+    /// - `parents` — create missing intermediate dirs (`mkdir -p`); when `false`,
+    ///   a missing parent is an error.
+    /// - `exist_ok` — succeed if the target dir already exists; when `false`, an
+    ///   existing target is an error (`mkdir` without `-p`'s tolerance).
+    ///
+    /// # Errors
+    /// [`FsError::Path`] if the path escapes the jail; [`FsError::Io`] on a missing
+    /// parent (when `!parents`), an existing target (when `!exist_ok`), or any other
+    /// IO failure.
+    pub async fn create_dir(
+        &self,
+        cwd: &Path,
+        path: &Path,
+        parents: bool,
+        exist_ok: bool,
+    ) -> Result<(), FsError> {
+        let resolved = self.resolve_in_jail(cwd, path).await?;
+        let already_exists = tokio::fs::metadata(&resolved)
+            .await
+            .is_ok_and(|m| m.is_dir());
+        if already_exists {
+            if exist_ok {
+                return Ok(());
+            }
+            return Err(FsError::Io {
+                op: "create_dir",
+                path: resolved.display().to_string(),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    "directory already exists",
+                ),
+            });
+        }
+        let result = if parents {
+            tokio::fs::create_dir_all(&resolved).await
+        } else {
+            tokio::fs::create_dir(&resolved).await
+        };
+        result.map_err(|source| FsError::Io {
+            op: "create_dir",
+            path: resolved.display().to_string(),
+            source,
+        })
+    }
+
     /// Stat a file (jail-resolved).
     ///
     /// # Errors
@@ -178,6 +229,52 @@ mod tests {
 
         let err = host
             .read_file(&root, Path::new("/etc/passwd"))
+            .await
+            .expect_err("jail rejection");
+        assert!(matches!(err, FsError::Path(_)));
+    }
+
+    #[tokio::test]
+    async fn create_dir_makes_parents_and_is_exist_ok() {
+        let dir = tempdir().unwrap();
+        let host = test_host(dir.path(), PathPolicy::Jailed, false);
+        let root = host.workspace_root().to_path_buf();
+
+        // mkdir -p: intermediate dirs created.
+        host.create_dir(&root, Path::new("a/b/c"), true, true)
+            .await
+            .unwrap();
+        assert!(root.join("a/b/c").is_dir());
+        // exist_ok = true: creating it again succeeds.
+        host.create_dir(&root, Path::new("a/b/c"), true, true)
+            .await
+            .unwrap();
+        // exist_ok = false on an existing dir errors.
+        let err = host
+            .create_dir(&root, Path::new("a/b/c"), true, false)
+            .await
+            .expect_err("existing dir with exist_ok=false");
+        assert!(matches!(err, FsError::Io { .. }));
+        // parents = false with a missing parent errors.
+        let err = host
+            .create_dir(&root, Path::new("x/y/z"), false, true)
+            .await
+            .expect_err("missing parent with parents=false");
+        assert!(matches!(err, FsError::Io { .. }));
+        // A new dir directly under root, no parents needed.
+        host.create_dir(&root, Path::new("solo"), false, true)
+            .await
+            .unwrap();
+        assert!(root.join("solo").is_dir());
+    }
+
+    #[tokio::test]
+    async fn create_dir_outside_jail_is_a_path_error() {
+        let dir = tempdir().unwrap();
+        let host = test_host(dir.path(), PathPolicy::Jailed, false);
+        let root = host.workspace_root().to_path_buf();
+        let err = host
+            .create_dir(&root, Path::new("/tmp/escape"), true, true)
             .await
             .expect_err("jail rejection");
         assert!(matches!(err, FsError::Path(_)));
