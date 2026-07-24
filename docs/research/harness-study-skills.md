@@ -1,5 +1,14 @@
 # Harness study — Agent Skills
 
+> **Recommendation partially superseded (2026-07-23) by [ADR-0023](../decisions/ADR-0023-fidelity-boundary-and-agents-md-loading.md).**
+> The descriptions below stand. But the *Recommendation*'s per-pack fidelity table
+> (item 3 — each pack reproducing its harness's skill discovery/listing/body
+> injection) is overruled: skills are **loop-adjacent context machinery**, so if
+> built they are a **shared, single implementation** for every pack (fidelity is
+> bounded to tools + system prompt). And any listing injection is **`User`-role**
+> `<system-reminder>`, **not `Developer`** (ADR-0013 amendment 2026-07-23). A
+> future "Agent Skills" ADR builds on ADR-0023's boundary, not the per-pack table.
+
 Source study of the **Agent Skills** feature across the four surveyed harnesses:
 **Claude Code** (TypeScript/Bun — the primary source), **Codex**
 (`codex-rs`, Rust), **Grok Build** (`xai-grok-*`, Rust — the unification model),

@@ -83,3 +83,17 @@ the next milestone.
 - The `Tool` framework (trait/registry/dispatch/errors) and `locode-tools` remain; what
   moves is the concrete tools — from "6 canonical impls in `locode-tools`" to
   "per-harness impls in `locode-packs`."
+
+## Amendment (2026-07-23): where pack faithfulness stops (see [ADR-0023](ADR-0023-fidelity-boundary-and-agents-md-loading.md))
+
+"Faithful reproduction" here is bounded to exactly two surfaces: a pack reproduces
+its harness's **system prompt** and its **tool set** (the six core `ToolKind`s —
+names, schemas, behavior, caps, guardrails). Everything loop-adjacent —
+project-instruction loading (`AGENTS.md`/`CLAUDE.md`), skills, reminder/context
+injection, compaction, subagent orchestration — is **shared, single-implementation
+engine machinery, identical for every pack**, not reproduced per harness. A pack
+selects *tools + a prompt*; it never forks the loop or the context pipeline. This
+keeps the A/B honest (it varies the surface under test, not the machinery) and is
+why the per-pack fidelity tables in the `AGENTS.md`/skills studies are superseded.
+The MEMORY note *harness-fidelity-boundary* is the short form; ADR-0023 is the
+decision of record.

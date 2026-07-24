@@ -19,8 +19,8 @@ live in `~/dev/coding-cli-survey`.
 | [0009](ADR-0009-headless-io-contract.md) | Single JSON report on stdout; diagnostics on stderr | Accepted |
 | [0010](ADR-0010-rust-tooling-baseline.md) | Rust tooling/CI baseline (pinned toolchain, fmt+clippy-deny+test) | Accepted |
 | [0011](ADR-0011-search-ripgrep-bundling.md) | Search uses ripgrep (host-resolved, bundled at packaging) | Accepted |
-| [0012](ADR-0012-harness-packs.md) | Harness packs — faithful per-harness toolsets (supersedes 0006) | Accepted |
-| [0013](ADR-0013-conversation-protocol.md) | Conversation protocol — 4-role (System/Developer/User/Assistant), Anthropic-shaped blocks | Accepted |
+| [0012](ADR-0012-harness-packs.md) | Harness packs — faithful per-harness toolsets (supersedes 0006) | Accepted (fidelity boundary clarified by 0023) |
+| [0013](ADR-0013-conversation-protocol.md) | Conversation protocol — 4-role (System/Developer/User/Assistant), Anthropic-shaped blocks | Accepted (`Developer` narrowed by 0023) |
 | [0014](ADR-0014-streaming-event-protocol.md) | Streaming event protocol (`stream-json`) — self-sufficient trace source | Accepted |
 | [0015](ADR-0015-custom-provider-injection.md) | Custom providers — `ProviderRegistry` + library-entry `locode-exec` | Accepted |
 | [0016](ADR-0016-session-continuity.md) | Session continuity — multi-turn conversations in the engine | Accepted |
@@ -30,3 +30,4 @@ live in `~/dev/coding-cli-survey`.
 | [0020](ADR-0020-markdown-code-highlighting.md) | TUI Markdown code-block syntax highlighting (`syntect` + `two-face`) | Accepted |
 | [0021](ADR-0021-live-token-streaming.md) | Live token streaming — provider SSE → engine deltas → TUI incremental render | Accepted |
 | [0022](ADR-0022-vendored-terminal-relative-frame.md) | Dynamic composer via a vendored terminal + relative-frame rendering (supersedes 0019 §Rendering) | Accepted |
+| [0023](ADR-0023-fidelity-boundary-and-agents-md-loading.md) | Fidelity boundary (packs = tools + prompt); shared `AGENTS.md` loading with `User`-role injection (amends 0012, 0013) | Accepted |

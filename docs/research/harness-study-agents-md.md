@@ -1,5 +1,14 @@
 # Harness study — AGENTS.md / CLAUDE.md project-instruction loading
 
+> **Recommendation partially superseded (2026-07-23) by [ADR-0023](../decisions/ADR-0023-fidelity-boundary-and-agents-md-loading.md).**
+> The seven-axis *descriptions* below remain the authoritative catalogue of each
+> harness's behavior. But the *Recommendation* section's two load-bearing choices
+> are overruled: (1) there is **no per-pack fidelity** for loading — one **shared**
+> loader serves every pack (fidelity is bounded to tools + system prompt); and
+> (2) injection is **`User`-role** `<system-reminder>`, **not `Developer`** (the
+> `Developer` portable fallback is reverse-lossy — ADR-0013 amendment 2026-07-23).
+> Read this study as the menu ADR-0023 picked the one shared best-of design from.
+
 Source study of how the four studied harnesses discover, merge, and inject
 project-level instruction files (`AGENTS.md`, `CLAUDE.md`, rules dirs, memory
 files). Conducted 2026-07-22 against the `coding-cli-survey` submodules.
