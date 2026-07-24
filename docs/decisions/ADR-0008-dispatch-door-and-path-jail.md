@@ -74,3 +74,39 @@ here is unchanged: no prompt UI, no terminal interaction, and no policy inside
 individual tools or inside `Registry::dispatch` itself — the tools crate stays
 interaction-free (ADR-0017 rejected exactly that as Option P2). See ADR-0017
 for the trait, vocabulary, and event/record semantics.
+
+## Amendment (2026-07-24): `~` is expanded before the jail runs
+
+`Host::resolve_in_jail` now expands a leading `~` / `~/…` against `$HOME` as its
+first step, before the absolute-vs-relative branch.
+
+The old behavior was a bug, not a policy: `Path::is_absolute()` is false for
+`~/…`, so the path took the relative branch and became `<cwd>/~/…`. That path
+lives *inside* the workspace root, so both jail checks passed and the tool failed
+later with a plain "not found" — for a directory literally named `~` that the
+caller never asked for. Both reference harnesses expand it (Claude Code's
+`expandPath`, applied to Read/Write/Edit/Glob input — `src/utils/path.ts:57-64`,
+`FileReadTool.ts:392`; grok's `shellexpand::tilde`), and our own settings loader
+already did (`locode-host/src/settings.rs:376`), so the tool path was the one
+place in the codebase where `~` meant nothing.
+
+Three properties keep this inside the ADR's existing posture:
+
+- **Expansion is not a permission.** The expanded path faces the same two checks.
+  Under `PathPolicy::Jailed` a home path outside the workspace is still
+  `PathError::Escape` — the change is only that the rejection names the path the
+  caller meant instead of a fictional one.
+- **`$HOME`, never `$LOCODE_HOME`.** `~` is the OS home in every shell and every
+  surveyed harness; `$LOCODE_HOME` (ADR-0024) relocates only our dotfolder.
+  Conflating them would make `~/x` denote different files depending on an
+  unrelated override.
+- **Only `~` and `~/`.** `~user` is untouched — resolving another user's home
+  needs a passwd lookup we have no reason to perform, and both harnesses stop at
+  the same place. With no `$HOME`, the path is left unchanged rather than guessed.
+
+Ported-pack tool *descriptions* are unchanged: they are verbatim reproductions
+(ADR-0012), and this is host-level path resolution shared by every pack.
+
+**Still out of scope:** reading `~/.locode` (or any path outside the workspace)
+from a jailed session. That is a genuine widening of the jail — an extra
+permitted root — and needs its own decision, not a side effect of a bug fix.

@@ -25,7 +25,16 @@ pub enum PathError {
 }
 
 impl Host {
-    /// Resolve `candidate` (absolute, or relative to `cwd`) to a concrete absolute path.
+    /// Resolve `candidate` (absolute, `~`-prefixed, or relative to `cwd`) to a concrete
+    /// absolute path.
+    ///
+    /// A leading `~` or `~/` is expanded against `$HOME` **before** anything else, so a
+    /// model-supplied `~/.config/x` names the real home path instead of a literal `~`
+    /// directory under `cwd`. Only `~` and `~/…` expand; `~user` is left alone, and with
+    /// no `$HOME` the path is unchanged. Expansion is not a permission:
+    /// the expanded path still faces the jail below, and under [`PathPolicy::Jailed`] a
+    /// home path outside the workspace is rejected as an escape — the point is that the
+    /// rejection now names the path the caller actually meant.
     ///
     /// Under [`PathPolicy::Jailed`] the result is guaranteed to live under the workspace
     /// root — `..`, absolute, and **symlink** escapes are rejected — while paths whose
@@ -40,10 +49,11 @@ impl Host {
         cwd: &Path,
         candidate: &Path,
     ) -> Result<PathBuf, PathError> {
+        let candidate = expand_home_prefix(candidate, home_dir().as_deref());
         let absolute = if candidate.is_absolute() {
             candidate.to_path_buf()
         } else {
-            cwd.join(candidate)
+            cwd.join(&*candidate)
         };
         let normalized = normalize_lexical(&absolute);
 
@@ -69,6 +79,47 @@ impl Host {
             return Err(PathError::Escape(normalized.display().to_string()));
         }
         Ok(normalized)
+    }
+}
+
+/// The user's home directory (`$HOME`), or `None` when it is unset or empty.
+///
+/// Deliberately `$HOME` and **not** `$LOCODE_HOME`: `~` is the OS-level home in every
+/// shell and every surveyed harness, while `$LOCODE_HOME` (`crate::locode_home`) only
+/// relocates *our* dotfolder. Conflating them would make `~/x` mean different files
+/// depending on an unrelated override.
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|h| !h.is_empty())
+        .map(PathBuf::from)
+}
+
+/// Expand a leading `~` / `~/…` against `home`, borrowing when there is nothing to do.
+///
+/// Only the bare `~` and the `~/` prefix are recognized — `~user` is left untouched, as
+/// in both reference harnesses (Claude Code's `expandPath`, `src/utils/path.ts:57-64`,
+/// and grok's `shellexpand::tilde`), because resolving another user's home needs a
+/// passwd lookup we have no reason to perform. With no `$HOME` the path is returned
+/// unchanged rather than guessed at.
+fn expand_home_prefix<'a>(path: &'a Path, home: Option<&Path>) -> std::borrow::Cow<'a, Path> {
+    use std::borrow::Cow;
+
+    // Operate on the raw bytes/str form: `Path::components` would already have split
+    // `~/foo` into `~` + `foo`, and a bare `~` must map to the home dir itself.
+    let Some(raw) = path.to_str() else {
+        return Cow::Borrowed(path);
+    };
+    let Some(home) = home else {
+        return Cow::Borrowed(path);
+    };
+    if raw == "~" {
+        return Cow::Owned(home.to_path_buf());
+    }
+    match raw.strip_prefix("~/") {
+        // `~/` alone (and `~//x`) would `join("")`/absolutize oddly; trim leading slashes
+        // so the result is always `<home>/<rest>`.
+        Some(rest) => Cow::Owned(home.join(rest.trim_start_matches('/'))),
+        None => Cow::Borrowed(path),
     }
 }
 
@@ -107,6 +158,92 @@ mod tests {
     use super::*;
     use crate::{PathPolicy, test_host};
     use tempfile::tempdir;
+
+    #[test]
+    fn expands_bare_tilde_and_tilde_slash() {
+        let home = Path::new("/home/u");
+        let cases = [
+            ("~", "/home/u"),
+            ("~/", "/home/u"),
+            ("~/.locode/settings.json", "/home/u/.locode/settings.json"),
+            ("~//nested", "/home/u/nested"),
+        ];
+        for (raw, want) in cases {
+            let got = expand_home_prefix(Path::new(raw), Some(home));
+            assert_eq!(normalize_lexical(&got), Path::new(want), "{raw}");
+        }
+    }
+
+    #[test]
+    fn leaves_non_home_prefixes_alone() {
+        let home = Path::new("/home/u");
+        // `~user` needs a passwd lookup we do not do; `~` mid-path is an ordinary name;
+        // and a file literally called `~x` must not become a home path.
+        for raw in [
+            "~root/x",
+            "~x",
+            "a/~/b",
+            "./~",
+            "relative/path",
+            "/abs/path",
+        ] {
+            let got = expand_home_prefix(Path::new(raw), Some(home));
+            assert_eq!(got.as_ref(), Path::new(raw), "{raw} must be untouched");
+        }
+    }
+
+    #[test]
+    fn without_home_the_path_is_unchanged() {
+        let got = expand_home_prefix(Path::new("~/x"), None);
+        assert_eq!(got.as_ref(), Path::new("~/x"));
+    }
+
+    #[tokio::test]
+    async fn tilde_resolves_to_the_real_home_not_a_cwd_subdir() {
+        // The reported bug: `~/…` took the relative branch and became `<cwd>/~/…`, a
+        // path that sits *inside* the jail, so both checks passed and the read failed
+        // with a bogus "not found" for a directory literally named `~`.
+        let Some(home) = home_dir() else {
+            return; // no $HOME in this environment; nothing to assert
+        };
+        let dir = tempdir().unwrap();
+        let host = test_host(dir.path(), PathPolicy::Unrestricted, false);
+        let cwd = host.workspace_root().to_path_buf();
+
+        let resolved = host
+            .resolve_in_jail(&cwd, Path::new("~/.locode/settings.json"))
+            .await
+            .expect("unrestricted resolve");
+        assert_eq!(resolved, home.join(".locode/settings.json"));
+        assert!(!resolved.starts_with(&cwd), "must not land under cwd");
+    }
+
+    #[tokio::test]
+    async fn jailed_tilde_escape_names_the_expanded_path() {
+        // Expansion is not a permission: outside the workspace, `~/…` is still an
+        // escape — but the error now names the home path the caller meant.
+        let Some(home) = home_dir() else {
+            return;
+        };
+        let dir = tempdir().unwrap();
+        let host = test_host(dir.path(), PathPolicy::Jailed, false);
+        let cwd = host.workspace_root().to_path_buf();
+
+        let err = host
+            .resolve_in_jail(&cwd, Path::new("~/.locode/settings.json"))
+            .await
+            .expect_err("home is outside the workspace root");
+        match err {
+            PathError::Escape(shown) => {
+                assert!(shown.starts_with(&home.display().to_string()), "{shown}");
+                assert!(
+                    !shown.contains('~'),
+                    "the literal tilde must be gone: {shown}"
+                );
+            }
+            other => panic!("expected Escape, got {other:?}"),
+        }
+    }
 
     #[tokio::test]
     async fn rejects_parent_and_absolute_escapes() {
