@@ -107,6 +107,21 @@ Design rationale and the source study behind every decision live in the separate
     `Read`/`Edit` but not Claude Code's `<system-reminder>` re-injection. When a ported tool is
     inseparable from loop machinery, port the tool's surface and leave the machinery to the
     engine — note the seam. (This was "STATUS #9" before `tasks/STATUS.md` was retired.)
+  - **Fidelity vs. truth — truth wins.** Prompt/description *reproducibility* is a goal, but
+    it is **subordinate to factual accuracy**. When faithfully reproducing a harness would
+    inject something **untrue for our actual run** — most often because the harness computes
+    it from runtime state we can't or won't carry (the running model's name, a real product's
+    version/marketing catalog, host-specific values) — **do not reproduce the falsehood**; a
+    prompt that lies is worse than one that omits a low-impact line, and a wrong value poisons
+    anyone reading the trace later. Order of priority: **(1) be truthful; (2) under that,
+    reproduce the harness as faithfully as possible; (3) where a detail has little effect on
+    the actual evaluation (the code/answers the model produces — what an A/B measures), it is
+    fine to drop it** rather than fake it. Prefer the harness's *own* off/absent branch when
+    it has one (e.g. Claude Code's `includeCoAuthoredBy: false` renders the git section with
+    no `Co-Authored-By: {model}` line — so we render that, instead of hardcoding a model name
+    that would be wrong the moment we run a different model). Record each such call as a gap
+    with the reason; if it hints at a needed interface change, research + track it rather than
+    forcing a signature change on the spot (see `docs/research/tool-description-interface.md`).
 - **ADR-first: keep the ADRs authoritative — reconcile them *before* changing code.**
   When a new finding or the user's latest instruction conflicts with an accepted ADR,
   do **not** just change the code (that is exactly what causes ADR-vs-code drift). Instead,

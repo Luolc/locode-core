@@ -20,10 +20,9 @@
 //!   multi-match without `replace_all` (errorCode 9). All messages verbatim.
 //! - **Edit creates files** (`:216-220`, `call()` mkdir note `:427`): empty
 //!   `old_string` on a nonexistent path creates it — **correcting plan §4.3**
-//!   ("no file creation via Edit"). Our host deliberately does not mkdir parents
-//!   (ADR-0008 footgun avoidance; grok is consistent), so creation needs an
-//!   existing parent dir — a documented gap (the mkdir seam is a batched
-//!   question, shared with Write/S4).
+//!   ("no file creation via Edit"). CC mkdirs the parent first; we do the same via
+//!   the host's opt-in `Host::create_dir` seam (added for this; `write_file` still
+//!   never auto-creates dirs — the footgun-avoidance default holds for grok/others).
 //! - **CRLF** (`:217`, `writeTextContent`): CC normalizes `\r\n`→`\n` for matching
 //!   and re-expands on write. Ported (grok `search_replace` precedent).
 //! - **Replacement** (`applyEditToFile`, `utils.ts:206-216`): `replace_all` →
@@ -246,6 +245,15 @@ impl ClaudeEdit {
         replacements: usize,
     ) -> Result<EditOutput, ToolError> {
         let path = Path::new(&args.file_path);
+        // CC mkdirs the parent before an atomic write (`FileEditTool.ts:427`); for a
+        // new file, create any missing parent dirs (mkdir -p) via the host's opt-in
+        // seam. (No-op for an existing file's already-present parent.)
+        if created && let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            self.host
+                .create_dir(&ctx.cwd, parent, true, true)
+                .await
+                .map_err(|e| ToolError::Respond(e.to_string()))?;
+        }
         let stat = self
             .host
             .write_file(&ctx.cwd, path, contents)

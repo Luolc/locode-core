@@ -16,9 +16,15 @@
 //!   background note), sandbox off (empty section), external user + git
 //!   instructions on. Stored verbatim in `descriptions/bash.md` (pinned below).
 //!   Gaps (D8): the sleep bullets + git section mention `run_in_background` /
-//!   `TodoWrite` / `Agent` unconditionally in CC — kept verbatim; the commit
-//!   attribution model name is frozen to CC's external fallback `Claude Opus 4.6`
-//!   (`Tool::description()` is `&str`, built without `PackContext`).
+//!   `TodoWrite` / `Agent` unconditionally in CC — kept verbatim. **Attribution
+//!   removed (truth-first, AGENTS.md "Fidelity vs. truth"):** CC's git section
+//!   embeds the *running model's* name in `Co-Authored-By: {model}` /
+//!   `Generated with [Claude Code]`, which a static `&str` `description()` (built
+//!   at `register()`, no `PackContext`) cannot render truthfully — a hardcoded
+//!   name would lie about the model in every commit trace. We render CC's real
+//!   `includeCoAuthoredBy: false` branch instead (attribution off), which drops
+//!   the line honestly. The static-vs-dynamic `description()` interface question
+//!   is researched + deferred in `docs/research/tool-description-interface.md`.
 //! - **Result text** (`mapToolResultToToolResultBlockParam`, `BashTool.tsx:555-624`):
 //!   CC runs a merged fd (stderr in stdout, `:692,717`), strips leading
 //!   whitespace-only lines + `trimEnd`, appends `Exit code N` on a non-zero exit
@@ -249,8 +255,8 @@ mod tests {
     fn description_is_the_pinned_bash_md() {
         let desc = include_str!("descriptions/bash.md");
         // Provenance pin (grok `template_copy_is_pinned` pattern): byte length +
-        // opening line. sha256 236d397fa7b925adbb5aa321d30a3b68725fee394bb98540ccde65c1095c47ff.
-        assert_eq!(desc.len(), 9649, "bash.md byte length changed");
+        // opening line. sha256 71e60fe7d090d8ab1cc9604bd6ed745249f3fe88c33ac723f913f8959bbb7439.
+        assert_eq!(desc.len(), 9451, "bash.md byte length changed");
         assert!(
             desc.starts_with("Executes a given bash command and returns its output."),
             "bash.md opening line changed"
@@ -260,7 +266,16 @@ mod tests {
                 .ends_with("gh api repos/foo/bar/pulls/123/comments"),
             "bash.md closing line changed"
         );
-        // The frozen attribution model name (documented gap).
-        assert!(desc.contains("Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"));
+        // Attribution removed (truth-first): CC's `includeCoAuthoredBy: false`
+        // branch — no model name to lie about in commit traces.
+        assert!(
+            !desc.contains("Co-Authored-By"),
+            "attribution must be absent"
+        );
+        assert!(
+            !desc.contains("Generated with [Claude Code]"),
+            "PR attribution must be absent"
+        );
+        assert!(desc.contains("- Create the commit with a message."));
     }
 }

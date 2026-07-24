@@ -65,6 +65,16 @@ and resolve the plan's open-questions section first.
 - [ ] Background bash commands · custom slash-command files · subagents · plugins ·
   config-file persistence (XDG). *(Shared AGENTS.md loading promoted to Task 30, above.)*
 
+### Deferred decisions (researched, not yet decided — don't lose track)
+- [ ] **Tool-description interface: static `&str` vs dynamic.** Our `Tool::description(&self)
+  -> &str` (static, `include_str!`) matches opencode exactly and covers claude/grok/codex once
+  the one runtime-model-dependent line is dropped (done — see AGENTS.md "Fidelity vs. truth").
+  Analysis locked down in [`../docs/research/tool-description-interface.md`](../docs/research/tool-description-interface.md).
+  **Re-open when:** a ported pack needs description text that must vary with run-time state we
+  can't drop, or we want the Claude attribution line back with a truthful dynamic model name.
+  Preferred path if forced: thread `PackContext` into `Pack::register` + store an owned `String`
+  (not a `Tool::description` signature change).
+
 ### Tech debt
 - ~~Collapse the `locode-exec` crate into `locode-tui`~~ — **rejected (user, 2026-07-23):**
   `locode-exec` stays a **standalone library** so headless-only consumers can depend on it (or

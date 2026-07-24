@@ -17,9 +17,10 @@
 //!   "File created successfully at: {path}"; existing → "The file {path} has been
 //!   updated successfully."
 //! - **Records** the post-write mtime (offset=None → Write-origin).
-//! - **Gaps (D8):** the host does not mkdir parents (ADR-0008 footgun avoidance;
-//!   grok is consistent) — creation needs an existing parent dir (shared with
-//!   Edit/S3; batched mkdir-seam question).
+//! - **mkdir on create** (`writeTextContent` writes through): a new file's missing
+//!   parent dirs are created (mkdir -p) via the host's opt-in `Host::create_dir`
+//!   seam. `write_file` itself still never auto-creates dirs — the footgun-avoidance
+//!   default holds for every other harness.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -129,6 +130,14 @@ impl Tool for ClaudeWrite {
             }
         }
 
+        // CC creates missing parent dirs when writing a new file; do the same via
+        // the host's opt-in mkdir seam (no-op when overwriting an existing file).
+        if created && let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            self.host
+                .create_dir(&ctx.cwd, parent, true, true)
+                .await
+                .map_err(|e| ToolError::Respond(e.to_string()))?;
+        }
         // Write the model's content verbatim (CC writes LF as sent).
         let stat = self
             .host
