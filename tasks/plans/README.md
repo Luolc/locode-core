@@ -46,6 +46,7 @@ tracker.
 | Plan | Task |
 |---|---|
 | [task-19-codex-pack.md](task-19-codex-pack.md) | codex pack (`shell_command` + freeform `apply_patch` + `update_plan` + prompt) |
+| [task-15-opencode-pack.md](task-15-opencode-pack.md) | opencode pack (bash/read/write/edit/glob/grep/apply_patch + per-provider prompt) |
 | [task-20-claude-pack.md](task-20-claude-pack.md) | claude pack (Bash/Read/Edit/Write/Glob/Grep + freshness gate + prompt) |
 | [task-20-slice-1-scaffold-bash.md](task-20-slice-1-scaffold-bash.md) | claude pack slice 1 — pack scaffold + Bash + minimal prompt |
 | [task-20-slice-2-read-freshness.md](task-20-slice-2-read-freshness.md) | claude pack slice 2 — Read + ClaudeSessionState freshness store |
