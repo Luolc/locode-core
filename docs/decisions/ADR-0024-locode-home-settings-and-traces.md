@@ -122,7 +122,7 @@ existing or imminent run parameter; a flag always wins):
 
 | Key | Type | Notes |
 |---|---|---|
-| `model` | string | Default model, overriding the provider factory's default. Settings is this knob's first home (no `--model` flag yet; if one lands, it wins). |
+| `model` | string | Default model. Resolution is `--model` flag > settings > the wire's built-in default; there is deliberately **no model env var** (amendment 2026-07-24 — `LOCODE_MODEL` was removed from the provider factories so the model's precedence chain matches every other knob). |
 | `api_schema` | string | Default wire (persists today's flag/env). **Project-denylisted** (§1.3). |
 | `harness` | string | Default pack (`--harness`'s durable default). |
 | `instructions.root_stop_pattern` | string (regex) | Activates ADR-0023's dormant root-detection seam: a directory whose absolute path matches is the project root (the escape hatch for VCS-less trees — monorepo segments, `/workspace/<project>`). Activation requires the `regex` dependency — an ask-first item, approved by accepting this ADR. |
@@ -151,6 +151,21 @@ essentially never want as durable state; keeping them out of settings avoids a
 forgotten config permanently distorting runs. `--stream`, `--strip-identity`, and
 `--dangerously-skip-permissions` follow the same principle (the last is additionally
 a trust-class switch that must never be durable).
+
+**First-run scaffold** *(amendment 2026-07-24, user decision)*: when the **user**
+`settings.json` is absent, the loader writes it with every v1 key at its **current
+default**, then proceeds normally. This freezes today's defaults as explicit config
+(a later change to a built-in default cannot silently move an existing user's runs)
+and doubles as a discoverable template. Written with `create_new` (a concurrent
+first run is race-safe), keys in **lexicographic order** (byte-stable output), and
+any failure is silent — the loader behaves identically without the file. Only the
+user layer is ever scaffolded; project layers stay opt-in.
+
+The scaffolded defaults are `harness: "claude"`, `api_schema: "anthropic"`,
+`model: "claude-sonnet-5"` (amendment 2026-07-24), with `extends`/`skills.extra`
+empty and `instructions.root_stop_pattern` null. The **built-in** fallbacks (used
+when no settings file exists at all) match: `claude` / `anthropic` / the wire's
+default model.
 
 **Reserved (shapes defined by their own features, later)**: `env` (session
 environment variables), `permissions` `{allow, deny, ask, default_mode}` (the
@@ -291,6 +306,7 @@ concentrate):
 |---|---|---|
 | `message` | a `locode-protocol` `Message`, **verbatim** (`{role, content: [blocks…]}`) | The workhorse. One appended `Message` = one line, in append order — preamble (`system`), user turns, assistant turns (with `tool_use` blocks), tool results (`user` role with `tool_result` blocks). Replay = collect `message` lines in order; the file is a **self-sufficient replay source** (it starts with the rendered preamble, like our `stream-json` `Init`). |
 | `turn_context` | `{"cwd": "...", "model": "..."}` | Per-turn deltas of mutable run state, written only when a value changes. Codex-proven (`protocol.rs:3272`): resume reads the *latest* `turn_context` so a mid-session `cd`/model switch resumes correctly. |
+| `usage` | the run's `Usage` (input/output/cache tokens) | Written at each run's end *(amendment 2026-07-24)*. The message stream alone cannot reconstruct token counts, so without this a resumed session could only estimate its context occupancy; with it, resume restores the exact figure. A textbook §2.4 additive record type — older readers skip it, older rollouts still load (callers fall back to a byte estimate). |
 | `compacted` | `{"summary": "...", "replacement_history": [Message…]}` | **Reserved** — written by nobody in v1 (the engine does not compact yet). Defined now so shipping compaction later is purely additive: on replay, a `compacted` line replaces all prior `message` lines with `replacement_history` (codex's `CompactedItem`). |
 
 Storing the protocol `Message` verbatim (not a lossy re-projection) is Claude's
@@ -333,6 +349,14 @@ touching v1's shapes**. Mechanisms, fixed now:
 - **`--continue`** = encode the cwd, list that one directory, take the newest rollout.
 - **`--resume <id>`** = check the cwd's directory first, then scan the other cwd
   directories for `*-<id>.jsonl` (Claude's scoped-then-global resolver).
+- **What resume recovers from the header, and what it doesn't** *(amendment
+  2026-07-24, user decision)*: the **pack** and **wire** are header-bound (an
+  explicit conflicting flag is a pre-run error) because they affect transcript
+  validity — a session must not change its toolset or cross wires mid-transcript.
+  The **model is not**: it resolves exactly like a fresh run (`--model` > settings >
+  the wire's default), so yesterday's model never leaks into today's resumed run.
+  The header still *records* the model the session started under (provenance), it
+  simply does not steer the resumed run.
 - **No SQLite in v0.** We are a headless core + one TUI — none of opencode's
   many-client/search/branching pressure that justifies its event-sourced DB (38
   migrations, a projection engine, an opaque store). If listing over a huge history

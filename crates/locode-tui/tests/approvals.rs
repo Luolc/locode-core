@@ -20,6 +20,7 @@ fn cli(dir: &tempfile::TempDir, yolo: bool) -> Cli {
         print: false,
         harness: Some(locode_exec::Harness::Grok),
         api_schema: Some("mock".into()),
+        model: None,
         settings: None,
         continue_session: false,
         resume: None,

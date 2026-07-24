@@ -249,7 +249,12 @@ fn resolve_identity(
         return Ok(RunIdentity {
             harness: meta.harness.clone(),
             api_schema: meta.api_schema.clone(),
-            model_override: Some(meta.model.clone()),
+            // The model is deliberately NOT recovered from the header (user
+            // decision 2026-07-24): resume resolves it exactly like a fresh
+            // run — flag > settings > the wire's default. Pack/wire stay
+            // header-bound because they affect transcript validity; the model
+            // doesn't, and yesterday's model should not leak into today.
+            model_override: cli.model.clone().or_else(|| settings.model.clone()),
             session_id: meta.session_id.clone(),
             resumed: Some(ResumedSession {
                 path,
@@ -264,14 +269,14 @@ fn resolve_identity(
             None => settings
                 .harness
                 .clone()
-                .unwrap_or_else(|| "grok".to_string()),
+                .unwrap_or_else(|| "claude".to_string()),
         },
         api_schema: cli
             .api_schema
             .clone()
             .or_else(|| settings.api_schema.clone())
             .unwrap_or_else(|| "anthropic".to_string()),
-        model_override: settings.model.clone(),
+        model_override: cli.model.clone().or_else(|| settings.model.clone()),
         session_id: new_session_id(),
         resumed: None,
     })

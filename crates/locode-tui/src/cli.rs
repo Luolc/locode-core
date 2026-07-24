@@ -25,7 +25,7 @@ pub struct Cli {
     pub print: bool,
 
     /// The harness pack to run. Omitted ⇒ the settings `harness` default
-    /// (ADR-0024 §1.4), else `grok`.
+    /// (ADR-0024 §1.4), else `claude`.
     #[arg(long, value_enum)]
     pub harness: Option<Harness>,
 
@@ -34,6 +34,11 @@ pub struct Cli {
     /// default (ADR-0024 §1.4), else `anthropic`.
     #[arg(long, env = "LOCODE_API_SCHEMA")]
     pub api_schema: Option<String>,
+
+    /// Model id override (flag > settings `model` > the wire's default —
+    /// ADR-0024 §1.4; there is deliberately no model env var).
+    #[arg(long)]
+    pub model: Option<String>,
 
     /// Extra settings layer: a path to a JSON file, or inline JSON (highest-
     /// precedence settings layer, ADR-0024 §1.2).
@@ -96,6 +101,7 @@ impl Cli {
             cwd: self.cwd.clone(),
             harness: self.harness,
             api_schema: self.api_schema.clone(),
+            model: self.model.clone(),
             settings: self.settings.clone(),
             continue_session: self.continue_session,
             resume: self.resume.clone(),

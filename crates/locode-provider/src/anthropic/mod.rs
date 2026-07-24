@@ -68,8 +68,8 @@ impl AnthropicProvider {
         })
     }
 
-    /// Build from the environment (`LOCODE_API_KEY` / `LOCODE_BASE_URL` /
-    /// `LOCODE_MODEL`).
+    /// Build from the environment (`LOCODE_API_KEY` / `LOCODE_BASE_URL`); the
+    /// model comes from `--model`/settings, not env (ADR-0024 §1.4).
     ///
     /// # Errors
     /// [`ProviderError::Auth`] when the key is missing;

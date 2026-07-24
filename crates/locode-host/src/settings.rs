@@ -83,6 +83,14 @@ pub fn load_settings(cwd: &Path, flag: Option<&str>) -> SettingsLoad {
             None
         }
     };
+    // First-run scaffold (user decision 2026-07-24, ADR-0024 §1 amendment): an
+    // absent user settings.json is written with the CURRENT defaults, freezing
+    // them as explicit config and doubling as a discoverable template.
+    if let Some(dir) = &user_dir
+        && let Some(notice) = scaffold_user_settings(dir)
+    {
+        warnings.push(notice);
+    }
     let home_for_tilde = std::env::var_os("HOME")
         .filter(|h| !h.is_empty())
         .map(PathBuf::from);
@@ -208,6 +216,41 @@ pub fn load_settings_from(
         },
         warnings,
     }
+}
+
+/// The first-run scaffold: written only when the user `settings.json` is
+/// absent. Carries every v1 key with its **current default** — `null` marks
+/// "no override" (the factory/built-in default applies) — so the file is both
+/// the frozen defaults and a template to edit. `create_new` makes a concurrent
+/// first run race-safe (the loser reads the winner's file); any failure is
+/// silent (the loader works identically without the file).
+fn scaffold_user_settings(user_dir: &Path) -> Option<String> {
+    let path = user_dir.join("settings.json");
+    if path.exists() {
+        return None;
+    }
+    // Keys in lexicographic order — the emitted file is deterministic
+    // regardless of serde_json's map flavor (user decision 2026-07-24).
+    let body = serde_json::json!({
+        "api_schema": "anthropic",
+        "extends": [],
+        "harness": "claude",
+        "instructions": { "root_stop_pattern": Value::Null },
+        "model": "claude-sonnet-5",
+        "skills": { "extra": [] },
+    });
+    let text = serde_json::to_string_pretty(&body).ok()? + "\n";
+    crate::trace::create_dir_private(user_dir).ok()?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .ok()?;
+    std::io::Write::write_all(&mut file, text.as_bytes()).ok()?;
+    Some(format!(
+        "settings: created {} with the current defaults",
+        path.display()
+    ))
 }
 
 /// The serde shape of one merged settings document. Plain `Deserialize` — unknown
@@ -619,6 +662,33 @@ mod tests {
         );
         let got = load_settings_from(None, &cwd, None, None);
         assert_eq!(got.settings.model.as_deref(), Some("here"));
+    }
+
+    #[test]
+    fn scaffold_writes_current_defaults_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let user_dir = dir.path().join(".locode");
+        // Absent file (and absent dir): scaffolded.
+        let notice = scaffold_user_settings(&user_dir).expect("scaffolded");
+        assert!(notice.contains("settings.json"));
+        let path = user_dir.join("settings.json");
+        let value: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(value["harness"], "claude");
+        assert_eq!(value["api_schema"], "anthropic");
+        assert_eq!(value["model"], "claude-sonnet-5");
+        assert_eq!(value["skills"]["extra"], serde_json::json!([]));
+        // The scaffold round-trips through the loader with the same effective
+        // result as no file at all (nulls decode to None).
+        let cwd = tempfile::tempdir().unwrap();
+        let got = load_settings_from(Some(&user_dir), cwd.path(), None, None);
+        assert_eq!(got.settings.harness.as_deref(), Some("claude"));
+        assert_eq!(got.settings.model.as_deref(), Some("claude-sonnet-5"));
+        assert!(got.warnings.is_empty(), "{:?}", got.warnings);
+        // Second call: never overwrites.
+        fs::write(&path, r#"{"harness":"claude"}"#).unwrap();
+        assert!(scaffold_user_settings(&user_dir).is_none());
+        let kept: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(kept["harness"], "claude", "existing file untouched");
     }
 
     #[test]

@@ -56,6 +56,10 @@ fn sampling_with_thinking() -> SamplingArgs {
 #[allow(clippy::too_many_lines)] // a linear live scenario reads better unsplit
 async fn live_interleaved_thinking_tool_round_trip() {
     let mut cfg = ModelConfig::from_env().unwrap_or_else(|e| panic!("env not configured: {e}"));
+    // from_env no longer reads LOCODE_MODEL; the live smoke keeps its env knob.
+    if let Ok(model) = std::env::var("LOCODE_MODEL") {
+        cfg.model = model;
+    }
     // Pin first-party routing FOR THIS TEST ONLY: the default trio keeps Vertex
     // (production-relevant), but cross-provider routing between the two turns
     // would forfeit the cache-read proof this smoke asserts.
@@ -208,6 +212,10 @@ async fn live_interleaved_thinking_tool_round_trip() {
 #[ignore = "live network; run manually with the direnv env"]
 async fn live_error_body_classifies_sensibly() {
     let mut cfg = ModelConfig::from_env().unwrap_or_else(|e| panic!("env not configured: {e}"));
+    // from_env no longer reads LOCODE_MODEL; the live smoke keeps its env knob.
+    if let Ok(model) = std::env::var("LOCODE_MODEL") {
+        cfg.model = model;
+    }
     cfg.model = "anthropic/does-not-exist-v0".into();
     let provider = AnthropicProvider::new(cfg).unwrap_or_else(|e| panic!("provider: {e}"));
 

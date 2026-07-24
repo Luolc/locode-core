@@ -12,6 +12,14 @@ use assert_cmd::Command;
 use locode_core::{Event, Report, Status, reconstruct_conversation};
 use predicates::prelude::*;
 
+/// One fresh `~/.locode` stand-in for the whole test binary — hermetic against
+/// both the developer's real home AND the repo-local dev home (whose
+/// settings.json contents must not steer assertions). The scaffold writes the
+/// current defaults here on first use, which is exactly what the
+/// default-behavior tests assert.
+static TEST_HOME: std::sync::LazyLock<tempfile::TempDir> =
+    std::sync::LazyLock::new(|| tempfile::tempdir().unwrap());
+
 fn locode() -> Command {
     let mut cmd = Command::cargo_bin("locode").unwrap_or_else(|e| panic!("binary builds: {e}"));
     // Hermetic: never inherit a real key/base-url/schema from the dev env.
@@ -20,7 +28,8 @@ fn locode() -> Command {
         .env_remove("LOCODE_MODEL")
         .env_remove("LOCODE_API_SCHEMA")
         .env_remove("LOCODE_MOCK_SCRIPT")
-        .env_remove("RUST_LOG");
+        .env_remove("RUST_LOG")
+        .env("LOCODE_HOME", TEST_HOME.path());
     cmd
 }
 
@@ -41,7 +50,7 @@ fn mock_json_is_exactly_one_parseable_report() {
     assert_eq!(lines.len(), 1, "exactly one stdout line: {stdout:?}");
     let report: Report = serde_json::from_str(lines[0]).expect("parses as Report");
     assert_eq!(report.status, Status::Completed);
-    assert_eq!(report.harness, "grok");
+    assert_eq!(report.harness, "claude");
     assert_eq!(report.api_schema, "mock");
     assert_eq!(report.final_message.as_deref(), Some("Mock run complete."));
     assert_eq!(report.schema_version, 1);
@@ -73,6 +82,8 @@ fn stream_json_is_valid_jsonl_and_reconstructs() {
         .args([
             "-p",
             "say hi",
+            "--harness",
+            "grok",
             "--api-schema",
             "mock",
             "--output-format",
@@ -136,6 +147,8 @@ fn project_instructions_injected_from_agents_md() {
         .args([
             "-p",
             "say hi",
+            "--harness",
+            "grok",
             "--api-schema",
             "mock",
             "--output-format",
@@ -171,6 +184,8 @@ fn project_instructions_nested_repo_root_to_cwd_order() {
         .args([
             "-p",
             "say hi",
+            "--harness",
+            "grok",
             "--api-schema",
             "mock",
             "--output-format",
@@ -203,6 +218,8 @@ fn no_project_instructions_flag_suppresses_injection() {
         .args([
             "-p",
             "say hi",
+            "--harness",
+            "grok",
             "--api-schema",
             "mock",
             "--output-format",
@@ -329,6 +346,8 @@ fn strip_identity_removes_grok_from_the_stream() {
         .args([
             "-p",
             "say hi",
+            "--harness",
+            "grok",
             "--api-schema",
             "mock",
             "--output-format",
@@ -371,7 +390,7 @@ mod sigterm {
 
     fn spawn_locode(dir: &tempfile::TempDir, extra_args: &[&str], script: Option<&str>) -> Child {
         let mut cmd = StdCommand::new(assert_cmd::cargo::cargo_bin("locode"));
-        cmd.args(["-p", "--api-schema", "mock", "--cwd"])
+        cmd.args(["-p", "--harness", "grok", "--api-schema", "mock", "--cwd"])
             .arg(dir.path())
             .args(extra_args)
             .env_remove("LOCODE_API_KEY")
@@ -534,5 +553,152 @@ mod sigterm {
             stderr.contains("SIGTERM before the run started"),
             "stderr names the cause: {stderr:?}"
         );
+    }
+}
+
+/// `~/.locode` settings + resume semantics (ADR-0024 §1.4/§2.5), end-to-end.
+mod locode_home {
+    use super::{locode, tempdir};
+
+    /// The model the run actually used, from the `stream-json` init event.
+    fn run_model(home: &std::path::Path, cwd: &std::path::Path, extra: &[&str]) -> String {
+        let assert = locode()
+            .env("LOCODE_HOME", home)
+            .args(["-p", "hi", "--output-format", "stream-json", "--cwd"])
+            .arg(cwd)
+            .args(extra)
+            .assert()
+            .success();
+        let stdout = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8");
+        for line in stdout.lines() {
+            let event: serde_json::Value = serde_json::from_str(line).expect("jsonl");
+            if event["type"] == "init" {
+                return event["model"].as_str().expect("model").to_string();
+            }
+        }
+        panic!("no init event: {stdout}");
+    }
+
+    fn write_settings(home: &std::path::Path, model: &str) {
+        std::fs::create_dir_all(home).expect("home");
+        std::fs::write(
+            home.join("settings.json"),
+            format!(r#"{{"harness":"claude","api_schema":"mock","model":"{model}"}}"#),
+        )
+        .expect("settings");
+    }
+
+    #[test]
+    fn first_run_scaffolds_settings_with_sorted_keys_and_current_defaults() {
+        let home = tempdir();
+        let cwd = tempdir();
+        let path = home.path().join("settings.json");
+        assert!(!path.exists(), "absent before the first run");
+
+        locode()
+            .env("LOCODE_HOME", home.path())
+            .args(["-p", "hi", "--api-schema", "mock", "--cwd"])
+            .arg(cwd.path())
+            .assert()
+            .success();
+
+        let text = std::fs::read_to_string(&path).expect("scaffolded");
+        // Deterministic key order: top-level keys (indent 2 in pretty JSON) are
+        // emitted lexicographically, so the scaffold is byte-stable.
+        let keys: Vec<&str> = text
+            .lines()
+            .filter_map(|l| l.strip_prefix("  \""))
+            .filter_map(|l| l.split('"').next())
+            .collect();
+        let mut sorted = keys.clone();
+        sorted.sort_unstable();
+        assert_eq!(keys, sorted, "top-level keys sorted: {keys:?}");
+        assert!(
+            keys.contains(&"model") && keys.contains(&"harness"),
+            "{keys:?}"
+        );
+        let value: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+        assert_eq!(value["harness"], "claude");
+        assert_eq!(value["api_schema"], "anthropic");
+        assert_eq!(value["model"], "claude-sonnet-5");
+
+        // A second run never rewrites it.
+        std::fs::write(&path, r#"{"harness":"grok","api_schema":"mock"}"#).expect("edit");
+        locode()
+            .env("LOCODE_HOME", home.path())
+            .args(["-p", "hi", "--api-schema", "mock", "--cwd"])
+            .arg(cwd.path())
+            .assert()
+            .success();
+        let kept = std::fs::read_to_string(&path).expect("still there");
+        assert!(kept.contains("grok"), "user edits survive: {kept}");
+    }
+
+    #[test]
+    fn resume_takes_the_model_from_flag_or_settings_never_the_header() {
+        let home = tempdir();
+        let cwd = tempdir();
+
+        // Session starts under model-A.
+        write_settings(home.path(), "model-A");
+        assert_eq!(run_model(home.path(), cwd.path(), &[]), "model-A");
+
+        // Settings change; --continue must use the NEW model, not the recorded one.
+        write_settings(home.path(), "model-B");
+        assert_eq!(
+            run_model(home.path(), cwd.path(), &["-c"]),
+            "model-B",
+            "resume resolves the model like a fresh run"
+        );
+
+        // An explicit --model beats settings, resumed or not.
+        assert_eq!(
+            run_model(home.path(), cwd.path(), &["-c", "--model", "model-C"]),
+            "model-C"
+        );
+        assert_eq!(
+            run_model(home.path(), cwd.path(), &["--model", "model-C"]),
+            "model-C"
+        );
+    }
+
+    #[test]
+    fn resume_keeps_the_recorded_harness_and_rejects_a_conflicting_flag() {
+        let home = tempdir();
+        let cwd = tempdir();
+        write_settings(home.path(), "model-A"); // harness claude
+
+        locode()
+            .env("LOCODE_HOME", home.path())
+            .args(["-p", "hi", "--api-schema", "mock", "--cwd"])
+            .arg(cwd.path())
+            .assert()
+            .success();
+
+        // Settings flip to grok — the resumed session still runs its recorded pack.
+        std::fs::write(
+            home.path().join("settings.json"),
+            r#"{"harness":"grok","api_schema":"mock","model":"model-A"}"#,
+        )
+        .expect("settings");
+        let assert = locode()
+            .env("LOCODE_HOME", home.path())
+            .args(["-p", "hi", "-c", "--cwd"])
+            .arg(cwd.path())
+            .assert()
+            .success();
+        let stdout = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8");
+        let report: serde_json::Value =
+            serde_json::from_str(stdout.lines().next().expect("line")).expect("report");
+        assert_eq!(report["harness"], "claude", "pack is header-bound");
+
+        // And an explicit conflicting --harness is a clean pre-run error.
+        locode()
+            .env("LOCODE_HOME", home.path())
+            .args(["-p", "hi", "-c", "--harness", "grok", "--cwd"])
+            .arg(cwd.path())
+            .assert()
+            .failure()
+            .stderr(predicates::str::contains("conflicts with the resumed"));
     }
 }
