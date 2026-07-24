@@ -1,5 +1,30 @@
 # Harness study — Agent Skills
 
+> **Correction (2026-07-24) — Grok Build has no live `Skill` tool.** This study
+> repeatedly describes one (the *Grok Build* section, the comparison table's
+> "Body → model via" / "Tool args" rows, and archetype 1). Re-read against the
+> published snapshot, that is **wrong**: the grok-native skill tool was deleted
+> (`implementations/skills/skill.rs:35-37` — "Old `SkillToolImpl` + `impl Tool`
+> deleted", pointing at a `grok_build/skill/` directory absent from the published
+> tree), and **no `grok_build` toolset registers a skill tool**
+> (`xai-grok-agent/src/config.rs:440-517`). The only registered one is
+> `opencode::OpenCodeSkillTool`, used solely by `opencode_toolset()`
+> (`registry/types.rs:707`, `config.rs:528`) — an opencode-shaped tool
+> (`{name}` only, `<skill_content>` wrapper). Corroborating detail: the listing
+> header function takes `_tool_name` (discarded) and hardcodes "The following
+> skills are available for use:", the no-tool phrasing. What is real in grok is
+> the **formatter** `build_skill_message` (`skill.rs:39-64`) plus the
+> `<skill_information>` prompt-assembly path — both still used by slash expansion,
+> the pager, and agent preloading. So grok's live routes are the
+> `<system-reminder>` listing (with `Absolute path:`) and user-invoked assembly
+> injection; there is no model-invocable skill tool. Everything else in this
+> document held up on re-read. [ADR-0025](../decisions/ADR-0025-agent-skills.md)
+> adopts the `<skill …>` format knowingly, as a format.
+
+> **Recommendation and Open questions superseded (2026-07-24) by
+> [ADR-0025](../decisions/ADR-0025-agent-skills.md)**, which decides the
+> frontmatter contract, listing shape/budget, tool shape, and safety rules.
+
 > **Recommendation partially superseded (2026-07-23) by [ADR-0023](../decisions/ADR-0023-fidelity-boundary-and-agents-md-loading.md).**
 > The descriptions below stand. But the *Recommendation*'s per-pack fidelity table
 > (item 3 — each pack reproducing its harness's skill discovery/listing/body
@@ -33,6 +58,47 @@ injection / a `$mention` (Grok, Codex), or *the model reading the file itself*
 with its ordinary Read tool (Codex). Grok Build even ships **vendor-compat
 loaders** that read Claude's and Cursor's skill directories, which is the
 strongest possible evidence that the format is now a de-facto standard.
+
+---
+
+## Live wire probe (2026-07-24)
+
+The source reads above were checked against what the shipped binaries actually put
+on the wire, by routing each client through a local recording reverse proxy
+(`cc-reverse-proxy`, Anthropic-Messages-aware, `--simplify-tool-schema=false`) to
+OpenRouter and reading the captured request payloads. Three findings, two of which
+contradict this document as originally written:
+
+- **Grok Build 0.2.111 sends 26 tools and none of them is a skill tool** —
+  `ask_user_question`, `enter_plan_mode`, `exit_plan_mode`,
+  `get_command_or_subagent_output`, `grep`, `image_edit`, `image_gen`,
+  `image_to_video`, `kill_command_or_subagent`, `list_dir`, `monitor`, `read_file`,
+  `reference_to_video`, `run_terminal_command`, `scheduler_create`,
+  `scheduler_delete`, `scheduler_list`, `search_replace`, `search_tool`,
+  `spawn_subagent`, `todo_write`, `use_tool`, `web_fetch`, `web_search`,
+  `workflow`, `write`. It *does* send the `<system-reminder>` skills listing, in
+  exactly the shape described above (`- name: desc` + `  Use when:` +
+  `  Absolute path:`), with the 400-byte per-entry truncation visible. A skill
+  carrying `disable-model-invocation: true` was present on disk and correctly
+  absent from the listing. This confirms the correction at the top of this file.
+- **Claude Code's shipped tool set is 27 tools** and *does* include `Skill`
+  (`{skill: string, args?: string}`, `skill` required) — unconditionally, in a
+  session whose only user skill was one directory. Its listing is `- name:
+  description` only: **no `Use when:` line and no `Absolute path:` line** (those two
+  are grok-isms), and it is concatenated into the *same* user message as the
+  agent-types listing and the date context. Note also that the live set omits
+  `Glob`, `Grep`, `TodoWrite` and `Task` (embedded search + task-v2 branches), and
+  the live `Skill` description is a plain-prose rewrite of the "BLOCKING
+  REQUIREMENT" text in the snapshot.
+- **Two snapshot-vs-shipped drifts affecting our packs.** grok's shell tool is
+  `run_terminal_command` on the wire but `run_terminal_cmd` in the published source
+  (`ToolId::new("run_terminal_cmd")`), which is the name our grok pack ports; and
+  live grok ships a standalone `write` tool that our grok pack does not have.
+  Recorded as a known gap in the tracker — not fixed here.
+
+General lesson, earned three times in one session: **the published source snapshot
+is not the shipped binary.** Any fidelity claim about a harness's tools should be
+checked on the wire, not only in the submodule.
 
 ---
 

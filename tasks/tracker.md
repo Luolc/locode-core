@@ -40,15 +40,22 @@ The immediate queue, ahead of the remaining packs:
   Home-dotfolder section below.
 - **P0 (next) — Task 32: Skills.** Full skills implementation (discovery + invocation +
   the skill markdown loading). Roots + `skills.extra` are fixed by ADR-0024 §3/§1.4
-  (the loader already parses+validates `skills.extra` into `SkillsExtraEntry`); the rest
-  (frontmatter set, two-switch gate, `User`-reminder listing per ADR-0023) needs its own
-  ADR + plan before implementation — **the immediate next task** now that Task 31 is done.
+  (the loader already parses+validates `skills.extra` into `SkillsExtraEntry`); everything
+  else is decided in
+  [ADR-0025](../docs/decisions/ADR-0025-agent-skills.md) (**Proposed**, 2026-07-24 —
+  five-key frontmatter, budgeted `User` `<system-reminder>` listing, body as the result of
+  a **grok-pack-only** `Skill` tool, default `--harness` → `grok`). Needs a plan doc, then
+  implementation — **the immediate next task** now that Task 31 is done.
 - **P0.5 — Background Bash + Subagents.** Background/async bash commands, and subagents /
   agent-groups (their distinctions + implementations are hard to read off the UIs — needs a
   source dig). After the two P0s. Also unblocks codex `shell_command` → unified exec.
-- **P1 — opencode pack** (the faithful-port half of Task 15) — deferred; plan drafted
-  ([`plans/task-15-opencode-pack.md`](plans/task-15-opencode-pack.md)), revisit later.
-- **P1 — our own `locode` best-of pack** (the other half of Task 15).
+- **~~P1 — opencode pack~~ — CANCELLED** (user decision, 2026-07-24). The ported-harness
+  reproduction workstream **ends with skills**: `claude` / `codex` / `grok` are the three
+  packs we ship, and no fourth port is built. The drafted plan
+  ([`plans/task-15-opencode-pack.md`](plans/task-15-opencode-pack.md)) stays as a record.
+- **P1 — our own `locode` best-of pack** (the other half of Task 15) — now the **only**
+  remaining pack work, and the home for every capability after skills (background tasks,
+  todo, subagents, …): those are built once, on `locode`, not ported per harness.
 
 ### Home dotfolder (`~/.locode`, ADR-0024)
 - [x] **Task 31 — settings + trace persistence** (P0, **complete 2026-07-24**, PRs
@@ -90,10 +97,20 @@ and resolve the plan's open-questions section first.
     ([`plans/task-19-slice-2-apply-patch.md`](plans/task-19-slice-2-apply-patch.md)).
   - [x] **Slice 3** — full gpt-5.6-sol prompt + `strip_identity` + `<environment_context>` preamble
     ([`plans/task-19-slice-3-prompt.md`](plans/task-19-slice-3-prompt.md)).
-- [ ] **Task 15 — remaining packs: `opencode` (P1) + our own `locode` (P1)**. `opencode`
-  is a faithful port (plan drafted: [`plans/task-15-opencode-pack.md`](plans/task-15-opencode-pack.md));
-  `locode` is our best-of pack (grok-build-style naming; ADR-0011's rg-glob is scoped here).
-  Both deferred behind the P0s above. Scope L (split per pack).
+- [ ] **grok pack fidelity gaps found by a live wire probe** (2026-07-24, decision
+  pending — see [`../docs/research/harness-study-skills.md`](../docs/research/harness-study-skills.md)
+  § *Live wire probe*). Grok Build 0.2.111 sends its shell tool as
+  **`run_terminal_command`**, but the published source says `run_terminal_cmd`
+  (`ToolId::new("run_terminal_cmd")`) and that is what our pack registers; live grok
+  also ships a standalone **`write`** tool the pack lacks. Not fixed: the ported-pack
+  workstream is closed, so whether to chase the shipped binary or stay pinned to the
+  snapshot is a user call.
+- [ ] **Task 15 — our own `locode` best-of pack** (P1). The `opencode` half is
+  **cancelled** (user decision, 2026-07-24 — see Priorities); its plan
+  ([`plans/task-15-opencode-pack.md`](plans/task-15-opencode-pack.md)) is kept as a record.
+  `locode` is our best-of pack (grok-build-style naming; ADR-0011's rg-glob is scoped here)
+  and becomes the single home for post-skills capability. Deferred behind the P0s above.
+  Scope L.
 - [ ] **Task 17 — OpenAI Chat Completions wire** (`openai-chat`) — **DEFERRED** (Responses
   covers GPT + Grok natively). The reasoning-blind LCD/control wire; revisit when a target
   model only speaks chat-completions. Plan: [`plans/task-17-openai-chat-wire.md`](plans/task-17-openai-chat-wire.md). Scope L.

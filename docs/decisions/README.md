@@ -31,4 +31,5 @@ live in `~/dev/coding-cli-survey`.
 | [0021](ADR-0021-live-token-streaming.md) | Live token streaming — provider SSE → engine deltas → TUI incremental render | Accepted |
 | [0022](ADR-0022-vendored-terminal-relative-frame.md) | Dynamic composer via a vendored terminal + relative-frame rendering (supersedes 0019 §Rendering) | Accepted |
 | [0023](ADR-0023-fidelity-boundary-and-agents-md-loading.md) | Fidelity boundary (packs = tools + prompt); shared `AGENTS.md` loading with `User`-role injection (amends 0012, 0013) | Accepted |
-| [0024](ADR-0024-locode-home-settings-and-traces.md) | `~/.locode` — layered JSON settings + resumable JSONL session trace (cwd-keyed, open extension contract) | Accepted |
+| [0024](ADR-0024-locode-home-settings-and-traces.md) | `~/.locode` — layered JSON settings + resumable JSONL session trace (cwd-keyed, open extension contract) | Accepted (skills §3 resolved by 0025; default `harness` → `grok`) |
+| [0025](ADR-0025-agent-skills.md) | Agent Skills — shared discovery + whole-body-diffed `<system-reminder>` listing (rescanned post-run); body via a grok-pack `skill` tool (amends 0023, 0024) | Accepted |

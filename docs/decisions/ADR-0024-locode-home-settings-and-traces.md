@@ -167,6 +167,16 @@ empty and `instructions.root_stop_pattern` null. The **built-in** fallbacks (use
 when no settings file exists at all) match: `claude` / `anthropic` / the wire's
 default model.
 
+> **Amendment (2026-07-24, later the same day): default `harness` → `grok`.**
+> *(User decision.)* Both the scaffolded default and the built-in fallback for
+> `harness` become **`grok`**; `api_schema` (`anthropic`) and `model`
+> (`claude-sonnet-5`) are unchanged, so the default configuration is grok's
+> toolset on a Claude model — legal because the grok pack is wire-agnostic (only
+> the codex pack pins a schema). The reason is
+> [ADR-0025](ADR-0025-agent-skills.md): the `Skill` tool is carried by the grok
+> pack, and skills are meant to be used daily. Existing `settings.json` files are
+> untouched — the scaffold only writes when the user file is absent.
+
 **Reserved (shapes defined by their own features, later)**: `env` (session
 environment variables), `permissions` `{allow, deny, ask, default_mode}` (the
 array-union merge of §1.2 is designed for it; lands with the permission-rules work),
@@ -383,6 +393,13 @@ A/B-oriented agent muddies provenance; our own tree only. This ADR reserves the
 paths; frontmatter, the two-switch invocation gate, and injection live in the skills
 P0 design (per ADR-0023 they are one shared-engine implementation, `User`-role
 `<system-reminder>` listing).
+
+> **Resolved (2026-07-24) by [ADR-0025](ADR-0025-agent-skills.md).** The roots
+> above are adopted unchanged, with precedence **project → user → `skills.extra`**.
+> The frontmatter set is exactly five keys, the two-switch gate is
+> `disable-model-invocation` (live) + `user-invocable` (parsed, inert until slash
+> invocation exists), and the body reaches the model as the `Skill` tool's own
+> result — a grok-pack tool, not a shared injection path.
 
 ## 4. What `~/.locode` deliberately does NOT contain
 
