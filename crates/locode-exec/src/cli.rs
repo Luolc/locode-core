@@ -23,15 +23,23 @@ pub struct Cli {
     #[arg(long)]
     pub cwd: Option<PathBuf>,
 
-    /// Harness pack selecting the toolset + system prompt.
-    #[arg(long, value_enum, default_value_t = Harness::Grok)]
-    pub harness: Harness,
+    /// Harness pack selecting the toolset + system prompt. Omitted ⇒ the
+    /// settings `harness` default (ADR-0024 §1.4), else `grok`.
+    #[arg(long, value_enum)]
+    pub harness: Option<Harness>,
 
     /// Provider wire schema: `anthropic`, `openai-responses`, or `mock`
     /// (keyless CI) — plus any custom providers the binary registered
     /// (ADR-0015). Unknown names fail pre-run listing the available set.
-    #[arg(long, env = "LOCODE_API_SCHEMA", default_value = "anthropic")]
-    pub api_schema: String,
+    /// Omitted ⇒ the settings `api_schema` default (ADR-0024 §1.4 — the
+    /// project layers may not set it), else `anthropic`.
+    #[arg(long, env = "LOCODE_API_SCHEMA")]
+    pub api_schema: Option<String>,
+
+    /// Extra settings layer: a path to a JSON file, or inline JSON (highest-
+    /// precedence settings layer, ADR-0024 §1.2).
+    #[arg(long)]
+    pub settings: Option<String>,
 
     /// Hard ceiling on sample→dispatch turns. **Unlimited when omitted**
     /// (ADR-0005 amendment — no studied harness caps turns by default).

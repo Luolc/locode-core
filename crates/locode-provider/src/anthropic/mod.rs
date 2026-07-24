@@ -98,6 +98,12 @@ impl AnthropicProvider {
         &self.config
     }
 
+    /// Mutable config access (pre-run tweaks — e.g. the settings `model`
+    /// override, ADR-0024; mirrors the Responses provider's accessor).
+    pub fn config_mut(&mut self) -> &mut ModelConfig {
+        &mut self.config
+    }
+
     fn current_auth(&self) -> AuthScheme {
         self.auth
             .lock()

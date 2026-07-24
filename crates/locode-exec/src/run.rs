@@ -57,17 +57,39 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
     }
     let host = Arc::new(Host::new(host_config)?);
 
+    // ---- 2b. Settings (ADR-0024): the durable defaults *under* the flags —
+    //          an explicit flag/env always wins. Layer degradations surface as
+    //          stderr warnings, never hard errors. ----
+    let settings_load = locode_core::load_settings(&cwd, cli.settings.as_deref());
+    for warning in &settings_load.warnings {
+        output::warning_line(warning);
+    }
+    let settings = settings_load.settings;
+
     // ---- 3. Provider: registry-resolved (ADR-0015); unknown names and factory
     //         failures (missing env, …) fail BEFORE driving the loop. Built first
     //         so the pack env block can name the model (D9). ----
-    let pack = locode_core::resolve(cli.harness.as_str())?;
+    let harness_name = match cli.harness {
+        Some(harness) => harness.as_str().to_string(),
+        None => settings
+            .harness
+            .clone()
+            .unwrap_or_else(|| "grok".to_string()),
+    };
+    let pack = locode_core::resolve(&harness_name)?;
     let registry = pack.build_registry(&host);
     let session_id = new_session_id();
+    let api_schema = cli
+        .api_schema
+        .clone()
+        .or_else(|| settings.api_schema.clone())
+        .unwrap_or_else(|| "anthropic".to_string());
     let built = providers
         .build(
-            &cli.api_schema,
+            &api_schema,
             &ProviderInit {
                 session_id: session_id.clone(),
+                model: settings.model.clone(),
             },
         )
         .map_err(|e| PreRunError(e.to_string()))?;
@@ -100,7 +122,7 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
     // ---- 5. Engine config + event sink per output mode. ----
     let config = EngineConfig {
         session_id,
-        harness: cli.harness.as_str().to_string(),
+        harness: pack.name().to_string(),
         api_schema: provider.api_schema().to_string(),
         model,
         cwd: cwd.clone(),
@@ -113,9 +135,11 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
         // `-p` byte-for-byte as it was (ADR-0021).
         streaming: cli.stream,
         // Project-instruction loading (`AGENTS.md`, ADR-0023) — on by default,
-        // `--no-project-instructions` opts out.
+        // `--no-project-instructions` opts out. `root_stop_pattern` threads
+        // through from settings (ADR-0024 §1.4; matching activates in S2).
         instructions: InstructionsConfig {
             enabled: !cli.no_project_instructions,
+            root_stop_pattern: settings.root_stop_pattern.clone(),
             ..InstructionsConfig::default()
         },
         ..EngineConfig::default()

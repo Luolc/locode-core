@@ -1222,6 +1222,8 @@ version = "0.1.9"
 dependencies = [
  "ignore",
  "nix",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tokio",

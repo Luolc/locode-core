@@ -21,8 +21,9 @@ fn cli(dir: &tempfile::TempDir, api_schema: &str) -> Cli {
     Cli {
         prompt: None,
         print: false,
-        harness: locode_exec::Harness::Grok,
-        api_schema: api_schema.into(),
+        harness: Some(locode_exec::Harness::Grok),
+        api_schema: Some(api_schema.into()),
+        settings: None,
         cwd: Some(dir.path().to_path_buf()),
         output_format: locode_exec::OutputFormat::Json,
         max_turns: None,

@@ -40,6 +40,13 @@ pub fn error_line(message: &str) {
     let _ = writeln!(std::io::stderr().lock(), "error: {message}");
 }
 
+/// Write a non-fatal diagnostic to stderr (`warning: …`) — settings-layer
+/// degradations (ADR-0024: skipped layers, stripped keys, invalid entries).
+pub fn warning_line(message: &str) {
+    use std::io::Write;
+    let _ = writeln!(std::io::stderr().lock(), "warning: {message}");
+}
+
 /// ADR-0009 exit-code mapping: 0 for any **structured** terminal state
 /// (`completed`/`max_turns`/`cancelled` — the run produced a valid report,
 /// ADR-0018), 1 for fatal (`model_error`/`error`); clap owns exit 2 for usage

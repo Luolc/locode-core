@@ -79,11 +79,12 @@ pub fn spawn(
     tokio::spawn(async move {
         // Resolved once — `$SHELL` doesn't change over a session.
         let shell = detect_shell();
-        // The pack owns user-prompt shaping; resolve it once for the run loop.
-        let pack: &'static dyn Pack = match locode_core::resolve(cli.harness.as_str()) {
+        // The pack owns user-prompt shaping; resolve it once for the run loop
+        // (flag, else the settings default — ADR-0024 §1.4).
+        let pack: &'static dyn Pack = match resolve_pack(&cli) {
             Ok(pack) => pack,
             Err(e) => {
-                let _ = msg_tx.send(EngineMsg::BuildFailed(e.to_string()));
+                let _ = msg_tx.send(EngineMsg::BuildFailed(e));
                 return;
             }
         };
@@ -132,6 +133,25 @@ pub fn spawn(
     (cmd_tx, msg_rx)
 }
 
+/// Resolve the effective pack: the `--harness` flag, else the settings
+/// `harness` default (ADR-0024 §1.4), else `grok`. Settings need a cwd; this
+/// pre-session resolution mirrors `build_session`'s (same flags, same layers).
+fn resolve_pack(cli: &Cli) -> Result<&'static dyn Pack, String> {
+    let harness_name = if let Some(harness) = cli.harness {
+        harness.as_str().to_string()
+    } else {
+        let cwd = match &cli.cwd {
+            Some(dir) => dir.clone(),
+            None => std::env::current_dir().map_err(|e| e.to_string())?,
+        };
+        locode_core::load_settings(&cwd, cli.settings.as_deref())
+            .settings
+            .harness
+            .unwrap_or_else(|| "grok".to_string())
+    };
+    locode_core::resolve(&harness_name).map_err(|e| e.to_string())
+}
+
 /// Assemble the session exactly as `locode-exec` does (canonical cwd shared
 /// by jail/engine/pack; --yolo lifts the jail). Duplication flagged in the
 /// slice plan; a facade helper is a future core proposal.
@@ -153,16 +173,33 @@ fn build_session(
     }
     let host = Arc::new(Host::new(host_config).map_err(|e| e.to_string())?);
 
-    let pack = locode_core::resolve(cli.harness.as_str()).map_err(|e| e.to_string())?;
+    // Settings (ADR-0024): durable defaults under the flags. Interactive mode
+    // has no stderr surface, so layer warnings are dropped here; the `-p`
+    // headless path prints them (locode-exec).
+    let settings = locode_core::load_settings(&cwd, cli.settings.as_deref()).settings;
+    let harness_name = match cli.harness {
+        Some(harness) => harness.as_str().to_string(),
+        None => settings
+            .harness
+            .clone()
+            .unwrap_or_else(|| "grok".to_string()),
+    };
+    let pack = locode_core::resolve(&harness_name).map_err(|e| e.to_string())?;
     let registry_tools = pack.build_registry(&host);
 
     // Provider first so the pack env block can name the model (D9).
     let session_id = new_session_id();
+    let api_schema = cli
+        .api_schema
+        .clone()
+        .or_else(|| settings.api_schema.clone())
+        .unwrap_or_else(|| "anthropic".to_string());
     let built = registry
         .build(
-            &cli.api_schema,
+            &api_schema,
             &ProviderInit {
                 session_id: session_id.clone(),
+                model: settings.model.clone(),
             },
         )
         .map_err(|e| e.to_string())?;
@@ -184,7 +221,7 @@ fn build_session(
 
     let config = EngineConfig {
         session_id,
-        harness: cli.harness.as_str().to_string(),
+        harness: pack.name().to_string(),
         api_schema: provider.api_schema().to_string(),
         model: model.clone(),
         cwd: cwd.clone(),
