@@ -1163,7 +1163,7 @@ dependencies = [
 
 [[package]]
 name = "locode-app"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "assert_cmd",
  "locode-core",
@@ -1175,7 +1175,7 @@ dependencies = [
 
 [[package]]
 name = "locode-core"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "locode-engine",
  "locode-host",
@@ -1188,7 +1188,7 @@ dependencies = [
 
 [[package]]
 name = "locode-engine"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "async-trait",
  "locode-host",
@@ -1204,7 +1204,7 @@ dependencies = [
 
 [[package]]
 name = "locode-exec"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "chrono",
  "clap",
@@ -1218,7 +1218,7 @@ dependencies = [
 
 [[package]]
 name = "locode-host"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "ignore",
  "nix",
@@ -1230,7 +1230,7 @@ dependencies = [
 
 [[package]]
 name = "locode-packs"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "async-trait",
  "locode-host",
@@ -1248,7 +1248,7 @@ dependencies = [
 
 [[package]]
 name = "locode-protocol"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "serde",
  "serde_json",
@@ -1256,7 +1256,7 @@ dependencies = [
 
 [[package]]
 name = "locode-provider"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "async-trait",
  "locode-protocol",
@@ -1271,7 +1271,7 @@ dependencies = [
 
 [[package]]
 name = "locode-tools"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "async-trait",
  "locode-protocol",
@@ -1285,7 +1285,7 @@ dependencies = [
 
 [[package]]
 name = "locode-tui"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "async-trait",
  "chrono",
