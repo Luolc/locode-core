@@ -196,6 +196,28 @@ Every line is one JSON object with the same three-field envelope:
 rehydrates the right pack regardless of the model catalog — grok persists
 `agent_name` for exactly this reason (`persistence.rs:786-870`).
 
+**The `session_meta` payload is an open, growing record — plan on it.** Every future
+feature that needs per-session metadata lands here as a **new optional field**, and
+that must never break an existing reader or an existing file. The binding rules
+(they restate §2.4 for this one payload because it is where growth will
+concentrate):
+
+- **New fields are optional with a defined default.** A v1 file missing the field
+  reads as the default in a newer binary; a newer file carrying it is read by a v1
+  binary, which ignores it (the reader never rejects unknown fields). Both
+  directions hold *by construction*, not by review vigilance.
+- **Existing fields are never removed, renamed, or repurposed.** A field that stops
+  mattering is simply no longer written (absent ⇒ default), its meaning frozen.
+- **`kind`, `parent_id`, `group` are the pre-reserved growth points** for
+  subagents/workflows (§2.4); concrete future fields we already anticipate —
+  `agent_type`/`description` (subagent resume routing, Claude's `.meta.json`
+  sidecar fields), `seen_cwds` (§2.1), `title` (a resume-picker label, grok's
+  `generated_title`) — all fit this pattern without touching `schema_version`.
+- Grok's `Summary` struct is the working proof: every field
+  `#[serde(default, skip_serializing_if)]` precisely so old and new binaries share
+  one on-disk population (`persistence.rs:786-870`); our `session_meta` follows the
+  same discipline.
+
 **Subsequent lines** are one of the v1 record types:
 
 | `type` | `payload` | Notes |
