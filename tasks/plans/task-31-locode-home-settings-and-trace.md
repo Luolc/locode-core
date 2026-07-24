@@ -159,3 +159,15 @@ Final state: 595 workspace tests; every slice shipped through the four-part
 gate + its preset. Deviations, both reconciled in ADR-0024 dated notes:
 session-id format (`sess-` not UUIDv7); TUI drops settings warnings silently
 (no stderr surface — headless prints them).
+
+**Followups (smoke test → 0.1.10, ADR-0024 dated amendments):** TUI
+resume-transcript replay so recovered user prompts render (#178); the footer
+shows **context occupancy** (last run's input+cache+output) backed by a per-run
+`usage` record persisted to the rollout, so resume restores the exact figure
+(#179); a first-run `settings.json` **scaffold** (current defaults, sorted keys,
+never-rewritten), a `--model` flag with `LOCODE_MODEL` removed from the
+factories, defaults flipped to `harness: claude` / `model: claude-sonnet-5`, and
+**resume takes the model from flag/settings, never the header** (#181);
+`--no-session-persistence` plus reverting #180's `.cargo/config.toml`
+`LOCODE_HOME` redirect (it broke `cargo run -c`) in favor of per-test hermetic
+homes (#182). Shipped in release 0.1.10.

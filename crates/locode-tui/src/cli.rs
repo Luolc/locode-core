@@ -12,7 +12,11 @@ use locode_exec::{Harness, OutputFormat};
 /// `locode` — an interactive coding agent (default), or a headless one-shot
 /// with `-p`.
 #[derive(Debug, Clone, Parser)]
-#[command(name = "locode", version, about)]
+#[command(
+    name = "locode",
+    version,
+    about = "A coding agent: an interactive terminal UI, or a headless one-shot with `-p`."
+)]
 #[allow(clippy::struct_excessive_bools)] // CLI flags are naturally bools
 pub struct Cli {
     /// The task prompt. With `-p` it is the headless task (`-` or omitted
@@ -20,77 +24,77 @@ pub struct Cli {
     pub prompt: Option<String>,
 
     /// Headless mode: run one turn to a machine-readable result and exit
-    /// (no TUI) — Claude Code's `-p`/`--print`.
+    /// (no interactive UI).
     #[arg(short = 'p', long = "print")]
     pub print: bool,
 
-    /// The harness pack to run. Omitted ⇒ the settings `harness` default
-    /// (ADR-0024 §1.4), else `claude`.
+    /// The harness pack (its toolset + system prompt) to run. Omitted uses the
+    /// `harness` setting, then `claude`.
     #[arg(long, value_enum)]
     pub harness: Option<Harness>,
 
-    /// The provider wire schema (`anthropic` | `openai-responses` | `mock`,
-    /// plus any custom-registered names). Omitted ⇒ the settings `api_schema`
-    /// default (ADR-0024 §1.4), else `anthropic`.
+    /// The provider wire schema: `anthropic`, `openai-responses`, or `mock`
+    /// (keyless), plus any custom-registered names. Omitted uses the
+    /// `api_schema` setting, then `anthropic`.
     #[arg(long, env = "LOCODE_API_SCHEMA")]
     pub api_schema: Option<String>,
 
-    /// Model id override (flag > settings `model` > the wire's default —
-    /// ADR-0024 §1.4; there is deliberately no model env var).
+    /// Model id. Omitted uses the `model` setting, then the wire's default.
+    /// There is no model environment variable — set it here or in settings.
     #[arg(long)]
     pub model: Option<String>,
 
-    /// Extra settings layer: a path to a JSON file, or inline JSON (highest-
-    /// precedence settings layer, ADR-0024 §1.2).
+    /// Extra settings layer: a path to a JSON file, or inline JSON. Highest
+    /// precedence, above the user (`~/.locode`) and project settings.
     #[arg(long)]
     pub settings: Option<String>,
 
-    /// Do not write a session trace for this run (ADR-0024 §2; Claude Code's
-    /// `--no-session-persistence`). `--continue`/`--resume` still read.
+    /// Do not write a session trace for this run. `--continue`/`--resume` still
+    /// read earlier sessions.
     #[arg(long)]
     pub no_session_persistence: bool,
 
-    /// Continue the newest session started in this cwd (ADR-0024 §2.5).
+    /// Continue the newest session started in this directory.
     #[arg(short = 'c', long = "continue", conflicts_with = "resume")]
     pub continue_session: bool,
 
-    /// Resume the session with this id (this cwd's sessions first, then anywhere).
+    /// Resume the session with this id (this directory's sessions first, then
+    /// anywhere).
     #[arg(short = 'r', long = "resume", value_name = "SESSION_ID")]
     pub resume: Option<String>,
 
-    /// Working directory (defaults to the current directory); canonicalized
-    /// once and shared by the jail, engine, and pack.
+    /// Working directory (defaults to the current directory).
     #[arg(long)]
     pub cwd: Option<PathBuf>,
 
-    /// Headless stdout artifact: `json` = one Report; `text` = the final
-    /// message; `stream-json` = the Event JSONL. Ignored without `-p`.
+    /// Headless stdout artifact: `json` = one report; `text` = the final
+    /// message; `stream-json` = the event stream. Ignored without `-p`.
     #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
     pub output_format: OutputFormat,
 
-    /// Hard ceiling on sample→dispatch turns (unlimited when omitted).
+    /// Hard ceiling on the number of model turns (unlimited when omitted).
     #[arg(long)]
     pub max_turns: Option<u32>,
 
-    /// Auto-allow every tool call (no approval prompts) and lift the path
-    /// jail — the harnesses' full-access behavior.
+    /// Auto-allow every tool call (no approval prompts) and lift the path jail
+    /// (full filesystem access). Use with care.
     #[arg(long = "dangerously-skip-permissions", alias = "yolo")]
     pub dangerously_skip_permissions: bool,
 
-    /// Strip the harness identity sentence from the pack prompt.
+    /// Strip the harness's identity sentence from the system prompt.
     #[arg(long)]
     pub strip_identity: bool,
 
-    /// Stream the model turn (SSE) in `-p` headless mode (ADR-0021). The
-    /// interactive TUI always streams; this opts the headless one-shot in —
-    /// needed for **unbounded output**, since Anthropic rejects non-streaming
-    /// requests that may exceed ~10 min. The `stream-json` trace stays
-    /// whole-message (token deltas are dropped).
+    // Anthropic rejects non-streaming requests that may exceed ~10 min, so
+    // `--stream` is required for unbounded headless output (ADR-0021).
+    /// Stream the reply as it is generated in `-p` headless mode (the
+    /// interactive UI always streams). Needed for very long outputs. The
+    /// `stream-json` trace stays whole-message.
     #[arg(long)]
     pub stream: bool,
 
-    /// Skip project-instruction loading (`AGENTS.md`) — the `--bare`-style disable
-    /// (ADR-0023). Auto-discovery is otherwise on by default.
+    /// Skip loading project instructions (`AGENTS.md`). Discovery is otherwise
+    /// on by default.
     #[arg(long)]
     pub no_project_instructions: bool,
 }

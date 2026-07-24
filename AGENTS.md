@@ -146,6 +146,19 @@ Design rationale and the source study behind every decision live in the separate
   tools never touch the filesystem/shell directly, every side effect goes through
   the one dispatch door, and every `tool_use` is paired with exactly one
   `tool_result`. These are correctness invariants, not style preferences.
+- **Keep user-facing text truthful and jargon-free — audit it on every feature, not
+  just at release.** Whenever a change adds or alters behavior, re-check the surfaces a
+  *user* reads: `--help` (the clap `///` doc comments on the `Cli` structs + the
+  `Harness`/`OutputFormat` enums — these ARE the help text), `README.md`, and
+  stdout/stderr messages. Two rules for that text: **(1) never reference internal
+  vocabulary** — no ADR numbers, task/slice numbers, `plan §`, `sample→dispatch`,
+  "the jail/engine/pack", or "Claude Code's X" framing; users don't know these. Say
+  what the flag/behavior *does*. **(2) never let it drift into a lie** — a removed
+  env var (e.g. `LOCODE_MODEL`), a renamed flag, a changed default (e.g. `--harness`
+  now defaults to `claude`) must be fixed in the same change, or the help/README
+  hallucinates a surface that no longer exists. The *rationale* (the "why", with ADR
+  citations) belongs in ordinary `//`/`//!` source comments and the ADRs — those stay
+  internal and are never shown to a user, so reference ADRs freely there.
 
 ## TUI workstream: the autonomous slice loop
 
@@ -196,6 +209,39 @@ the platform CLI (`gh` or equivalent); do not ask the user to push or click.
   authored the change using that harness's own convention (e.g. a
   `Co-Authored-By:` trailer for the model that wrote it) — do not hardcode another
   harness's attribution.
+
+## Releasing (agents drive this end-to-end)
+
+A release is **all three of** version-bump, GitHub tag/binaries, and crates.io publish —
+never tag-only. Skipping the crates.io half, or bumping the workspace version without the
+internal dep pins, ships a broken/incomplete release. The version is a **single 0.1.x line**
+that every crate shares (`[workspace.package] version`, inherited via `version.workspace =
+true`); bump the patch by one. A release is also the last-chance checkpoint for the
+user-facing-text rule above — confirm `--help` and `README.md` name no removed/renamed flag,
+env var, or default before tagging. Steps, in order:
+
+1. **Bump every version, in one PR.** In root `Cargo.toml`: `[workspace.package] version`
+   **and** every internal pin under `[workspace.dependencies]` (`locode-* = { path = …,
+   version = "X.Y.Z" }`). The pins are invisible locally (path wins) but become the
+   published manifests' cross-crate requirements — if left stale, a published crate depends
+   on old siblings. Also update the version examples in `README.md` and `install.sh`, and
+   `Current release:` in `tasks/tracker.md`. Run `cargo build` to refresh `Cargo.lock`
+   (every `locode-*` entry must show the new version). Write a `chore: release X.Y.Z — <one-
+   line highlights>` body summarizing everything since the last tag. Merge on green.
+2. **Tag on the merged commit:** `git tag vX.Y.Z && git push origin vX.Y.Z`. The
+   `v[0-9]+.[0-9]+.[0-9]+` tag triggers `.github/workflows/release.yml`, which creates the
+   GitHub Release and builds+attaches the 4-platform binaries (darwin/linux × x86_64/aarch64
+   + sha256). Wait for that run to go green.
+3. **Publish all 8 crates to crates.io** (the workflow does **not** — it's agent-driven),
+   in dependency order so each dep is on the index before its dependents:
+   `protocol → tools → host → provider → packs → engine → core → exec`
+   (`cargo publish -p locode-<name>` each; `cargo publish` waits for the index between
+   steps). `locode-tui` and `locode-app` are `publish = false` — 8 published, 10 in the
+   workspace. Auth is `~/.cargo/credentials.toml`; new-version publishes are not
+   rate-limited (unlike a first-ever burst of new crates, which replenishes ~1 per 10 min).
+4. **Verify:** each crate's `max_version` on crates.io is the new version (the API needs a
+   `User-Agent` header — an empty reply is a missing UA, not a failed publish), and the
+   GitHub Release carries all four `.tar.gz` + `.sha256` assets.
 
 ## Quality bar (the mandatory gate)
 

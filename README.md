@@ -49,24 +49,38 @@ Or build from source: `cargo install --git https://github.com/Luolc/locode-core 
 ```sh
 export LOCODE_API_KEY=…      # required (except with --api-schema mock)
 export LOCODE_BASE_URL=…     # optional: provider endpoint override
-export LOCODE_MODEL=…        # optional: model id override
 
 # One task, headless: one JSON report on stdout, diagnostics on stderr.
-locode -p "summarize this repo" --harness grok
+locode -p "summarize this repo"
 # …or from a source checkout, without installing:
-cargo run -p locode-app -- -p "summarize this repo" --harness grok
+cargo run -p locode-app -- -p "summarize this repo"
 ```
 
-Select the provider wire with `--api-schema` (`anthropic` | `openai-responses`
-| `mock`, where `mock` runs keyless) and the stdout artifact with
-`--output-format` (`json` | `stream-json` | `text`). See `locode --help` for the
-full surface.
+Select the harness pack with `--harness` (`claude` | `codex` | `grok` — default
+`claude`), the provider wire with `--api-schema` (`anthropic` | `openai-responses`
+| `mock`, where `mock` runs keyless), the model with `--model`, and the stdout
+artifact with `--output-format` (`json` | `stream-json` | `text`). See
+`locode --help` for the full surface.
 
 `LOCODE_BASE_URL` defaults to the wire's native endpoint
 (`https://api.anthropic.com` for `anthropic`, `https://api.openai.com` for
 `openai-responses`); point it at any compatible gateway (e.g. OpenRouter) to
 reach other providers over the same schema. `LOCODE_API_KEY` must match
-whichever endpoint you target.
+whichever endpoint you target. (The model is chosen with `--model` or in
+settings — there is no model env var.)
+
+## Configuration & sessions (`~/.locode`)
+
+Durable settings live in `~/.locode/settings.json` (scaffolded with defaults on
+first run; override the home with `LOCODE_HOME`). They layer **user →
+`extends` → project `.locode/settings.json` → `.locode/settings.local.json` →
+`--settings` flag**, and an explicit flag always wins. Keys include `harness`,
+`api_schema`, `model`, `instructions.root_stop_pattern`, and `skills.extra`.
+
+Every run appends a JSONL trace under `~/.locode/sessions/`; `--continue`
+resumes the newest session for the current directory and `--resume <id>` resumes
+by id (both in headless and interactive modes). `--no-session-persistence`
+skips writing the trace for a run.
 
 ## Interactive app (`locode`)
 
