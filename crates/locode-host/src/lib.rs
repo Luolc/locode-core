@@ -12,8 +12,10 @@ mod home;
 mod instructions;
 mod path;
 mod rg;
+mod session_dirs;
 mod settings;
 mod shell;
+mod trace;
 mod walk;
 
 pub use fs::{DirEntry, FileRead, FileStat, FsError};
@@ -23,11 +25,13 @@ pub use instructions::{
 };
 pub use path::PathError;
 pub use rg::rg_program;
+pub use session_dirs::{decode_cwd_dirname, encode_cwd_dirname};
 pub use settings::{Settings, SettingsLoad, SkillsExtraEntry, load_settings, load_settings_from};
 pub use shell::{
     ExecError, ExecOutput, ExecRequest, FrontBackCapture, FrontBackSpec, SPILL_RETAIN_MAX,
     ShellSpec,
 };
+pub use trace::{GitMeta, SessionMeta, TRACE_SCHEMA_VERSION, TraceExtras, TraceWriter};
 pub use walk::{WalkEntry, WalkOptions};
 
 use std::path::{Path, PathBuf};
