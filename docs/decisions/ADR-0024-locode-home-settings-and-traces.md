@@ -153,6 +153,12 @@ a `cd` inside a shell call is per-invocation. If persistent `cd` ever makes the
 B-side miss a real pain, the extension contract admits additive fixes — a pointer
 file in B's dir or a `seen_cwds` header field — with no layout change.)
 
+For the same reason, a future `--add-dir` (extra working roots — today a dormant
+`extra_roots` seam, ADR-0023) widens **discovery and access** only: instruction
+loading, skills roots, and the tool path-jail. It never participates in the trace's
+directory key or `--continue` scoping — a session has exactly one primary cwd, fixed
+at start (Claude's `--add-dir` likewise leaves the transcript's project dir alone).
+
 ### 2.2 The file: one append-only JSONL rollout per session
 
 JSONL is authoritative — the trace maps 1:1 onto the engine's sample→dispatch→append
