@@ -3,10 +3,10 @@
 //! highest-value A/B counterpart to the grok pack: same engine, same wire,
 //! genuinely different tool surface.
 //!
-//! Current state (through Slice 4): `Bash`, `Read`, `Edit`, and `Write` (the
-//! last three sharing the `ClaudeSessionState` read-before-write + staleness
-//! gate) + a minimal system prompt (identity + intro). `Glob`, `Grep`, and the
-//! full byte-exact prompt land in later slices — see `docs/claude-pack-dev-process.md`.
+//! Current state (through Slice 5): `Bash`, `Read`, `Edit`, `Write` (the middle
+//! three sharing the `ClaudeSessionState` read-before-write + staleness gate),
+//! and `Glob` + a minimal system prompt (identity + intro). `Grep` and the full
+//! byte-exact prompt land in later slices — see `docs/claude-pack-dev-process.md`.
 //!
 //! Fidelity boundary (ADR-0023): the pack reproduces tools + prompt + static
 //! preamble only. Loop-adjacent machinery (project-instruction loading, reminder
@@ -14,6 +14,7 @@
 
 mod bash;
 mod edit;
+mod glob;
 pub mod prompt;
 mod read;
 mod state;
@@ -28,6 +29,7 @@ use locode_tools::Registry;
 use crate::pack::{Pack, PackContext};
 use bash::ClaudeBash;
 use edit::ClaudeEdit;
+use glob::ClaudeGlob;
 use read::ClaudeRead;
 use state::ClaudeSessionState;
 use write::ClaudeWrite;
@@ -60,6 +62,7 @@ impl Pack for ClaudePack {
             "Write",
             ClaudeWrite::new(Arc::clone(host), Arc::clone(&state)),
         );
+        registry.register("Glob", ClaudeGlob::new(Arc::clone(host)));
     }
 
     fn preamble(&self, ctx: &PackContext) -> Vec<Message> {
@@ -129,7 +132,7 @@ mod tests {
         let (_dir, registry, _root) = setup();
         let mut names: Vec<&str> = registry.names().collect();
         names.sort_unstable();
-        assert_eq!(names, vec!["Bash", "Edit", "Read", "Write"]);
+        assert_eq!(names, vec!["Bash", "Edit", "Glob", "Read", "Write"]);
         assert_eq!(
             registry.kind_of("Bash"),
             Some(locode_tools::ToolKind::Shell)
@@ -140,6 +143,7 @@ mod tests {
             registry.kind_of("Write"),
             Some(locode_tools::ToolKind::Write)
         );
+        assert_eq!(registry.kind_of("Glob"), Some(locode_tools::ToolKind::Glob));
     }
 
     #[test]
@@ -683,6 +687,112 @@ mod tests {
             .await;
         assert!(!out.record.ok);
         assert!(result_text(&out.tool_result).starts_with("File has been modified since read"));
+    }
+
+    // ---- Glob (needs `rg`; happy paths gated on its presence) ----
+
+    fn rg_present() -> bool {
+        std::process::Command::new("rg")
+            .arg("--version")
+            .output()
+            .is_ok()
+    }
+
+    #[tokio::test]
+    async fn glob_finds_matching_files() {
+        if !rg_present() {
+            return;
+        }
+        let (_dir, registry, root) = setup();
+        std::fs::create_dir(root.join("src")).unwrap();
+        std::fs::write(root.join("src/main.rs"), "").unwrap();
+        std::fs::write(root.join("src/lib.rs"), "").unwrap();
+        std::fs::write(root.join("README.md"), "").unwrap();
+        let out = registry
+            .dispatch("Glob", json!({ "pattern": "**/*.rs" }), &ctx(&root))
+            .await;
+        assert!(out.record.ok, "{}", result_text(&out.tool_result));
+        let text = result_text(&out.tool_result);
+        assert!(text.contains("src/main.rs"), "{text}");
+        assert!(text.contains("src/lib.rs"), "{text}");
+        assert!(!text.contains("README.md"), "{text}");
+        assert_eq!(out.record.output["truncated"], json!(false));
+    }
+
+    #[tokio::test]
+    async fn glob_no_match_says_no_files_found() {
+        if !rg_present() {
+            return;
+        }
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("a.txt"), "").unwrap();
+        let out = registry
+            .dispatch("Glob", json!({ "pattern": "**/*.zzz" }), &ctx(&root))
+            .await;
+        assert!(out.record.ok);
+        assert_eq!(result_text(&out.tool_result), "No files found");
+    }
+
+    #[tokio::test]
+    async fn glob_path_missing_is_soft_error() {
+        let (_dir, registry, root) = setup();
+        let out = registry
+            .dispatch(
+                "Glob",
+                json!({ "pattern": "*", "path": "nope" }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(!out.record.ok);
+        assert!(result_text(&out.tool_result).starts_with("Directory does not exist: nope."));
+    }
+
+    #[tokio::test]
+    async fn glob_path_is_a_file_is_soft_error() {
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("f.txt"), "x").unwrap();
+        let out = registry
+            .dispatch(
+                "Glob",
+                json!({ "pattern": "*", "path": "f.txt" }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(!out.record.ok);
+        assert_eq!(
+            result_text(&out.tool_result),
+            "Path is not a directory: f.txt"
+        );
+    }
+
+    #[test]
+    fn glob_schema_is_faithful() {
+        let (_dir, registry, _root) = setup();
+        let specs = registry.specs();
+        let glob = specs.iter().find(|s| s.name == "Glob").expect("Glob spec");
+        let params = match &glob.input {
+            locode_protocol::ToolInputFormat::JsonSchema { parameters } => parameters,
+            locode_protocol::ToolInputFormat::Freeform { .. } => panic!("Glob is JSON-schema"),
+        };
+        assert_eq!(params["additionalProperties"], json!(false));
+        let props = params["properties"].as_object().unwrap();
+        assert_eq!(
+            props["pattern"]["description"],
+            json!("The glob pattern to match files against")
+        );
+        assert!(
+            props["path"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("DO NOT enter \"undefined\" or \"null\"")
+        );
+        let required: Vec<&str> = params["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(required, vec!["pattern"]);
     }
 
     #[test]

@@ -431,6 +431,14 @@ error codes; `FileEditTool.ts`):
   avoidable by passing `--glob <pattern>` to rg itself (`rg --files -g pattern`).
 - No matches → soft-ok text ("No files found").
 
+> **Correction (Slice 5, 2026-07-24 — two details above were wrong).** CC's glob
+> (`utils/glob.ts:66-155`) runs `rg --files --glob <pattern> --sort=modified
+> --no-ignore --hidden`: (1) `--sort=modified` is **oldest first** (rg ascending),
+> not "mtime descending"; and (2) it **does NOT respect `.gitignore`** by default
+> (`--no-ignore`, `CLAUDE_CODE_GLOB_NO_IGNORE` || 'true') and **includes hidden
+> files** (`--hidden`). The faithful port passes those flags and lets rg do the
+> sort. Full record: [`task-20-slice-5-glob.md`](task-20-slice-5-glob.md).
+
 ### 4.6 `Grep`
 
 - Full ripgrep passthrough (the schema *is* rg's surface — `-A/-B/-C`, `-n`,
