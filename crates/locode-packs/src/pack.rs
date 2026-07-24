@@ -57,6 +57,15 @@ pub trait Pack: Send + Sync {
     /// the real content lands in Task 13.
     fn preamble(&self, ctx: &PackContext) -> Vec<Message>;
 
+    /// Shape a raw user prompt the way this harness expects it. Some harnesses wrap
+    /// the task in a tag their system prompt refers to (grok's `<user_query>`);
+    /// Claude Code sends it verbatim. The default is verbatim; a pack overrides only
+    /// if its prompt is written against a wrapper. Keeps harness-specific shaping in
+    /// the pack rather than spread across the exec/tui layers.
+    fn shape_user_prompt(&self, text: &str) -> String {
+        text.to_owned()
+    }
+
     /// Convenience: a fresh [`Registry`] holding exactly this pack's tools, over `host`.
     ///
     /// # Panics

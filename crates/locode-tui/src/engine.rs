@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use locode_core::{
     CacheHint, CancellationToken, EngineConfig, EventSink, FnSink, Host, HostConfig,
-    InstructionsConfig, PackContext, PathPolicy, ProviderInit, ProviderRegistry, Report,
-    SamplingArgs, Session, grok,
+    InstructionsConfig, Pack, PackContext, PathPolicy, ProviderInit, ProviderRegistry, Report,
+    SamplingArgs, Session,
 };
 
 use crate::cli::Cli;
@@ -79,6 +79,14 @@ pub fn spawn(
     tokio::spawn(async move {
         // Resolved once — `$SHELL` doesn't change over a session.
         let shell = detect_shell();
+        // The pack owns user-prompt shaping; resolve it once for the run loop.
+        let pack: &'static dyn Pack = match locode_core::resolve(cli.harness.as_str()) {
+            Ok(pack) => pack,
+            Err(e) => {
+                let _ = msg_tx.send(EngineMsg::BuildFailed(e.to_string()));
+                return;
+            }
+        };
         let mut session = match build_session(&cli, &registry, msg_tx.clone()) {
             Ok((session, model, cwd)) => {
                 let _ = msg_tx.send(EngineMsg::Ready {
@@ -101,7 +109,7 @@ pub fn spawn(
                     let cancel = session.cancel_handle();
                     let _ = msg_tx.send(EngineMsg::RunStarted { cancel });
                     // Pack-faithful prompt shaping, as locode-exec does.
-                    let report = session.run_text(grok::prompt::user_query(&text)).await;
+                    let report = session.run_text(pack.shape_user_prompt(&text)).await;
                     let _ = msg_tx.send(EngineMsg::RunFinished(Box::new(report)));
                 }
                 UiCommand::NewSession => match build_session(&cli, &registry, msg_tx.clone()) {

@@ -72,6 +72,8 @@ pub struct Cli {
 pub enum Harness {
     /// Grok Build's toolset + system prompt (ADR-0012).
     Grok,
+    /// Claude Code's toolset + system prompt (ADR-0012, ADR-0023).
+    Claude,
 }
 
 impl Harness {
@@ -80,6 +82,7 @@ impl Harness {
     pub fn as_str(self) -> &'static str {
         match self {
             Harness::Grok => "grok",
+            Harness::Claude => "claude",
         }
     }
 }
