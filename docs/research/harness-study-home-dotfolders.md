@@ -218,9 +218,22 @@ authoritative, no DB for v0.** Rationale:
   5 `session_*` migrations in one month to settle its model).
 
 Concretely:
-- **Path:** `~/.locode/sessions/YYYY/MM/DD/rollout-<timestamp>-<sessionId>.jsonl` (Codex's date-bucketed
-  scheme; colons→dashes). Prefer this over Claude's `projects/<sanitized-cwd>/` because the cwd
-  sanitization is **lossy/non-invertible** and forces a hash-fallback resolver.
+- **Path (user decision 2026-07-24 — Claude's structure, with a bijective encoding):**
+  `~/.locode/sessions/<encoded-cwd>/rollout-<timestamp>-<sessionId>.jsonl`. Grouping by cwd makes
+  `--continue` an O(1) "list one directory, take newest" (Claude's win) instead of a date-tree scan
+  with per-file header reads or a SQLite index (Codex's cost). The earlier draft preferred Codex's
+  date buckets *because* Claude's encoding is lossy — that objection is fixed by making the encoding
+  a **bijection** instead (spec below; implement with the persistence P0):
+  - `/` → `+` (readable separator); literal `+` → `%2B`; literal `%` → `%25`; **everything else
+    verbatim** (non-ASCII preserved — Claude's `[^a-zA-Z0-9]`→`-` collides `foo-bar`/`foo_bar`/
+    `foo.bar`/`foo/bar` and any two same-length CJK names; ours collides nothing).
+  - Fully reversible: decoding recovers the real cwd from the dirname, so a resume
+    picker needs no file reads (grok's URL-encode benefit, prettier names).
+  - Over the 255-byte filename limit: a stable `<fnv1a64-hex16>-<tail>` fallback (starts with a hex
+    digit, never `+`, so it is never mistaken for a decodable name) + a `.cwd` sidecar written by
+    the store (grok's scheme). Callers pass a canonicalized cwd.
+  The `rollout-<timestamp>-<id>.jsonl` filename keeps reverse-chron name-sorting within the dir and
+  the id in the name for `--resume` scans.
 - **Line 1 = SessionMeta header:** `{session_id, parent_id?, timestamp, cwd, git:{root,branch,head,remote},
   cli_version, model, provider, harness, base_instructions?}` — grok's `summary.json` field set shows
   what a resume picker needs; codex's SessionMeta shows the header form. Carry `harness`/`agent_name`
@@ -229,9 +242,10 @@ Concretely:
   user_message | assistant_message | tool_use | tool_result | turn_context | compacted`. Keep the
   variant set small; include `turn_context` (per-turn cwd/model) and `compacted` (summary +
   replacement history) so resume survives compaction — both proven load-bearing in Codex.
-- **`--continue`** = newest rollout by mtime **scoped to cwd**; **`--resume <id>`** = scan the date
-  tree for `*-<id>.jsonl` (Codex/Claude both do a scoped-then-global scan). A `parent_id` on the
-  header gives fork/branch lineage cheaply.
+- **`--continue`** = list the current cwd's encoded dir, take the newest rollout (O(1) scoping —
+  the point of the cwd-in-path structure); **`--resume <id>`** = check the cwd dir first, then a
+  global scan across cwd dirs for `*-<id>.jsonl` (Claude's scoped-then-global resolver). A
+  `parent_id` on the header gives fork/branch lineage cheaply.
 - **Durability:** newline-guarantee on reopen + torn-tail-tolerant reader (Codex+Grok); write under a
   sibling `.lock`; `0600`.
 - **Listing index:** for v0, scan headers (line 1 only) — cheap enough for a personal history. If a
@@ -335,8 +349,11 @@ day one. Defer the `allow_implicit_invocation`-in-sidecar (Codex) and the remote
 ├── settings.json                       # user config (JSON); < project .locode/settings.json < .local < --settings
 ├── AGENTS.md (+ AGENTS.override.md)     # home-level global instructions — SHIPPED (ADR-0023)
 ├── sessions/
-│   ├── YYYY/MM/DD/rollout-<timestamp>-<sessionId>.jsonl  # authoritative trace; line1=SessionMeta,
-│   │                                                     # then {timestamp,type,payload} records
+│   ├── <encoded-cwd>/                                    # bijective cwd encoding (§3.5):
+│   │   │                                                 # `/`→`+`, `+`→`%2B`, `%`→`%25`, rest verbatim
+│   │   ├── rollout-<timestamp>-<sessionId>.jsonl         # authoritative trace; line1=SessionMeta,
+│   │   │                                                 # then {timestamp,type,payload} records
+│   │   └── .cwd                                          # sidecar, only for >255-byte hash-fallback dirs
 │   └── history.jsonl                    # cross-session INPUT history {session_id,timestamp,text} (0600)
 │                                        # — the composer's up-arrow/reverse-search recall (shell-history
 │                                        # analog), NOT the transcript; needed only once the TUI does recall
