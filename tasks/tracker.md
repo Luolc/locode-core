@@ -38,14 +38,16 @@ The immediate queue, ahead of the remaining packs:
   2026-07-24 (PRs #173–#176) under
   [ADR-0024](../docs/decisions/ADR-0024-locode-home-settings-and-traces.md); see the
   Home-dotfolder section below.
-- **P0 (next) — Task 32: Skills.** Full skills implementation (discovery + invocation +
-  the skill markdown loading). Roots + `skills.extra` are fixed by ADR-0024 §3/§1.4
-  (the loader already parses+validates `skills.extra` into `SkillsExtraEntry`); everything
-  else is decided in
-  [ADR-0025](../docs/decisions/ADR-0025-agent-skills.md) (**Proposed**, 2026-07-24 —
-  five-key frontmatter, budgeted `User` `<system-reminder>` listing, body as the result of
-  a **grok-pack-only** `Skill` tool, default `--harness` → `grok`). Needs a plan doc, then
-  implementation — **the immediate next task** now that Task 31 is done.
+- **P0 (next) — Task 32: Skills.** Full skills implementation, decided in
+  [ADR-0025](../docs/decisions/ADR-0025-agent-skills.md) (Accepted, 2026-07-24):
+  shared discovery in `locode-host`, five-key frontmatter, a budgeted `User`
+  `<system-reminder>` listing compared as a **whole body** (change → re-send all),
+  rescanned **after each run completes**, and **no new tool** — the listing carries
+  absolute paths and the model reads `SKILL.md` with the pack's own read tool. Rides
+  along per the same ADR: an ADR-0008 **read-only** jail exception for the locode home
+  + external skill roots (§4.1), and `extends` becoming a **dotfolder** pointer whose
+  `settings.json` + `skills/` + `AGENTS.md` all merge (§6) with the settings-first load
+  order (§6.1). Needs a plan doc, then implementation — **the immediate next task**.
 - **P0.5 — Background Bash + Subagents.** Background/async bash commands, and subagents /
   agent-groups (their distinctions + implementations are hard to read off the UIs — needs a
   source dig). After the two P0s. Also unblocks codex `shell_command` → unified exec.

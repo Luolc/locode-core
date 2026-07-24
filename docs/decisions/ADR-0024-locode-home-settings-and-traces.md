@@ -11,7 +11,7 @@ Accepted (user review 2026-07-24)
   **loop/engine machinery** on ADR-0023's shared side of the fidelity boundary: identical
   for every `--harness`; a pack varies tools + prompt, never where settings or traces
   live. The global `AGENTS.md` (+ `$LOCODE_HOME`, amendment 2026-07-24) already ships.
-- [ADR-0009](ADR-0009-headless-first.md) / [ADR-0014](ADR-0014-stdout-artifacts.md) — the
+- [ADR-0009](ADR-0009-headless-io-contract.md) / [ADR-0014](ADR-0014-streaming-event-protocol.md) — the
   trace complements (does not replace) the stdout report/stream artifacts.
 - Source study: [`../research/harness-study-home-dotfolders.md`](../research/harness-study-home-dotfolders.md)
   (the four-harness dossier all rationale below cites). User decisions resolved
@@ -74,15 +74,31 @@ capability. `settings.json` matches Claude Code and opencode. *(User decision.)*
 Lowest → highest precedence:
 
 1. `~/.locode/settings.json` — user
-2. **`extends` files** — external settings files the *user layer* points at
-   (amendment 2026-07-24; e.g. a team-shared `team-settings.json`), in list order
-   (later wins within the layer)
+2. **`extends` dotfolders** — external locode configuration homes the *user layer*
+   points at (amendments 2026-07-24; e.g. a team-shared `~/team-locode/`), each
+   contributing its `settings.json` here, in list order (later wins within the layer)
 3. `<repo>/.locode/settings.json` — project, committed
 4. `<repo>/.locode/settings.local.json` — project-local, gitignored
 5. `--settings <file-or-inline-json>` — flag
 
+> **Amendment (2026-07-24, later the same day): an `extends` entry is a
+> *dotfolder*, not a settings file.** *(User decision, recorded in
+> [ADR-0025](ADR-0025-agent-skills.md) §6.)* Each entry now points at a whole
+> locode configuration home — a team's `~/team-locode/` — and **three** of its
+> contents merge: `<dir>/settings.json` as the settings layer described below,
+> `<dir>/skills/` as a skill root (ADR-0025 §2, tier 3), and `<dir>/AGENTS.md` as
+> an instruction entry below the global one (ADR-0023 amendment, same date). A
+> missing sub-path is simply absent; a missing *entry* keeps the warning below.
+> This **replaces** the settings-file form rather than joining it: a file-valued
+> entry is a config error with an explicit message, because §1.5 forbids silently
+> reinterpreting an existing key. It also makes load order structural — settings
+> and their `extends` must resolve **before** instructions and skills are
+> discovered (ADR-0025 §6.1). Everything below still describes the settings half,
+> which is unchanged.
+
 **The `extends` layer** (amendment 2026-07-24): the user file may carry
-`"extends": ["<path>", …]` — each entry an ordinary settings JSON file merged
+`"extends": ["<path>", …]` — each entry contributing an ordinary settings JSON
+file (`<dir>/settings.json`, per the amendment above) merged
 *above* the user layer and *below* the project layers, so a shared team file can
 override personal defaults while any repo still overrides the team. Rules:
 
@@ -127,7 +143,7 @@ existing or imminent run parameter; a flag always wins):
 | `harness` | string | Default pack (`--harness`'s durable default). |
 | `instructions.root_stop_pattern` | string (regex) | Activates ADR-0023's dormant root-detection seam: a directory whose absolute path matches is the project root (the escape hatch for VCS-less trees — monorepo segments, `/workspace/<project>`). Activation requires the `regex` dependency — an ask-first item, approved by accepting this ADR. |
 | `skills.extra` | list of paths | Manual skill entries beyond the standard roots (§3). Entry semantics below. |
-| `extends` | list of paths | User-layer-only pointer(s) to external settings files merged between the user and project layers (§1.2, amendment 2026-07-24) — the team-shared-settings hook. |
+| `extends` | list of paths | User-layer-only pointer(s) to external **locode dotfolders** whose `settings.json` merges between the user and project layers, and whose `skills/` and `AGENTS.md` also merge (§1.2 amendments 2026-07-24; ADR-0025 §6) — the team-shared-config hook. |
 
 **`skills.extra` semantics** *(user decision)*:
 
@@ -167,15 +183,14 @@ empty and `instructions.root_stop_pattern` null. The **built-in** fallbacks (use
 when no settings file exists at all) match: `claude` / `anthropic` / the wire's
 default model.
 
-> **Amendment (2026-07-24, later the same day): default `harness` → `grok`.**
-> *(User decision.)* Both the scaffolded default and the built-in fallback for
-> `harness` become **`grok`**; `api_schema` (`anthropic`) and `model`
-> (`claude-sonnet-5`) are unchanged, so the default configuration is grok's
-> toolset on a Claude model — legal because the grok pack is wire-agnostic (only
-> the codex pack pins a schema). The reason is
-> [ADR-0025](ADR-0025-agent-skills.md): the `Skill` tool is carried by the grok
-> pack, and skills are meant to be used daily. Existing `settings.json` files are
-> untouched — the scaffold only writes when the user file is absent.
+> **Withdrawn amendment (2026-07-24): default `harness` → `grok`.** An amendment
+> added earlier the same day flipped the default `harness` to `grok`, on the
+> grounds that the skills `Skill` tool would live in the grok pack. That premise is
+> gone — [ADR-0025](ADR-0025-agent-skills.md) ships **no skill tool**, and skills
+> work identically under every pack — so the flip has no reason and is
+> **withdrawn before shipping**. The scaffolded default and the built-in fallback
+> remain **`claude`** / `anthropic` / `claude-sonnet-5`, exactly as stated above.
+> No code ever carried the change.
 
 **Reserved (shapes defined by their own features, later)**: `env` (session
 environment variables), `permissions` `{allow, deny, ask, default_mode}` (the
@@ -395,11 +410,13 @@ P0 design (per ADR-0023 they are one shared-engine implementation, `User`-role
 `<system-reminder>` listing).
 
 > **Resolved (2026-07-24) by [ADR-0025](ADR-0025-agent-skills.md).** The roots
-> above are adopted unchanged, with precedence **project → user → `skills.extra`**.
-> The frontmatter set is exactly five keys, the two-switch gate is
-> `disable-model-invocation` (live) + `user-invocable` (parsed, inert until slash
-> invocation exists), and the body reaches the model as the `Skill` tool's own
-> result — a grok-pack tool, not a shared injection path.
+> above are adopted, with one added tier and the precedence
+> **project → user → `extends` dotfolders → `skills.extra`**. The frontmatter set
+> is exactly five keys; the two-switch gate is `disable-model-invocation` (live —
+> it removes the skill from the listing) + `user-invocable` (parsed, inert until
+> slash invocation exists). There is **no skill tool**: the listing carries each
+> `SKILL.md`'s absolute path and the model reads it with the pack's ordinary read
+> tool, which is why ADR-0008 gained a read-only exception for the locode home.
 
 ## 4. What `~/.locode` deliberately does NOT contain
 
