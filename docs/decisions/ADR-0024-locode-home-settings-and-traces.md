@@ -199,6 +199,11 @@ not stable across Rust releases and a hashing dependency is an ask-first item).
 The filename keeps `rollout-<timestamp>-<session_id>` (colons → dashes): name-sorting
 within a directory is reverse-chronological for free, and the id in the name lets
 `--resume <id>` scan without opening files. `session_id` is UUIDv7 (time-sortable).
+*(Amendment 2026-07-24, Task 31 S3: v1 keeps the engine's existing
+`sess-<millis>-<rand>` ids — equally time-sortable and unique-enough for a personal
+store; UUIDv7 would add a `uuid` dependency (ask-first) for no v1 capability. Switch
+when that dependency is otherwise justified — the format carries ids opaquely, so the
+change is non-breaking.)*
 
 **The directory key is the session's *start* cwd, immutably.** A session belongs to
 the directory it was launched from; a (future) mid-session persistent `cd` appends a

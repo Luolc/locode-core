@@ -1220,7 +1220,9 @@ dependencies = [
 name = "locode-host"
 version = "0.1.9"
 dependencies = [
+ "chrono",
  "ignore",
+ "locode-protocol",
  "nix",
  "regex",
  "serde",

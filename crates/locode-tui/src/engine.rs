@@ -225,7 +225,7 @@ fn build_session(
         api_schema: provider.api_schema().to_string(),
         model: model.clone(),
         cwd: cwd.clone(),
-        workspace_root: cwd,
+        workspace_root: cwd.clone(),
         max_turns: None,
         sampling_args: SamplingArgs::default(),
         cache_hint: CacheHint::Standard,
@@ -247,12 +247,56 @@ fn build_session(
         events.clone(),
     ));
 
+    // Session trace (ADR-0024 §2): decoration on the sink, same as the headless
+    // path. Interactive mode has no stderr surface; a trace failure silently
+    // disables the writer (the headless path warns).
+    let mut trace = locode_core::locode_home().ok().map(|home| {
+        locode_core::TraceWriter::new(
+            home.join("sessions"),
+            locode_core::TraceExtras {
+                cli_version: env!("CARGO_PKG_VERSION").to_string(),
+                git: git_meta(&cwd),
+                ..Default::default()
+            },
+        )
+    });
     let sink: Box<dyn EventSink> = Box::new(FnSink(move |event| {
+        if let Some(trace) = trace.as_mut() {
+            trace.on_event(&event);
+        }
         let _ = events.send(EngineMsg::Event(Box::new(event)));
     }));
     let session =
         Session::new(provider, registry_tools, preamble, config, sink).with_approver(approver);
     Ok((session, model, cwd_display))
+}
+
+/// Best-effort git provenance for the trace header (ADR-0024 §2.3) — mirrors
+/// `locode-exec`'s helper (the same deliberate duplication as `detect_shell`/
+/// `detect_os_version` between the two front-ends).
+fn git_meta(cwd: &std::path::Path) -> Option<locode_core::GitMeta> {
+    if !cwd.ancestors().any(|dir| dir.join(".git").exists()) {
+        return None;
+    }
+    let run = |args: &[&str]| -> Option<String> {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(cwd)
+            .args(args)
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        (!s.is_empty()).then_some(s)
+    };
+    Some(locode_core::GitMeta {
+        root: run(&["rev-parse", "--show-toplevel"]).map(std::path::PathBuf::from),
+        branch: run(&["rev-parse", "--abbrev-ref", "HEAD"]),
+        head: run(&["rev-parse", "HEAD"]),
+        remote: run(&["remote", "get-url", "origin"]),
+    })
 }
 
 /// Shorten a path for display by replacing a leading `$HOME` with `~`.

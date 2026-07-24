@@ -52,9 +52,9 @@ pub use locode_packs::{GrokPack, Pack, PackContext, UnknownHarness, available, g
 
 // ---- host: the side-effect seam ----
 pub use locode_host::{
-    ExecLimits, Host, HostConfig, InstructionEntry, InstructionsConfig, PathPolicy,
-    ProjectInstructions, Settings, SettingsLoad, SkillsExtraEntry, load_project_instructions,
-    load_settings, locode_home,
+    ExecLimits, GitMeta, Host, HostConfig, InstructionEntry, InstructionsConfig, PathPolicy,
+    ProjectInstructions, Settings, SettingsLoad, SkillsExtraEntry, TraceExtras, TraceWriter,
+    decode_cwd_dirname, encode_cwd_dirname, load_project_instructions, load_settings, locode_home,
 };
 
 // ---- tools: the full tool surface (SPEC Users #4) ----

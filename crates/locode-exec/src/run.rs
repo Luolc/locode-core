@@ -6,8 +6,8 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use locode_core::{
-    CacheHint, EngineConfig, EventSink, FnSink, Host, HostConfig, InstructionsConfig, NullSink,
-    PackContext, PathPolicy, ProviderInit, ProviderRegistry, SamplingArgs, Session,
+    CacheHint, EngineConfig, EventSink, FnSink, Host, HostConfig, InstructionsConfig, PackContext,
+    PathPolicy, ProviderInit, ProviderRegistry, SamplingArgs, Session,
 };
 
 use crate::cli::{Cli, OutputFormat};
@@ -144,17 +144,22 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
         },
         ..EngineConfig::default()
     };
-    let sink: Box<dyn EventSink> = match cli.output_format {
-        // stream-json writes each event live; the terminal `result` event
-        // carries the same Report as json mode.
-        OutputFormat::StreamJson => Box::new(FnSink(|event| {
-            if in_whole_message_trace(&event) {
-                output::write_json_line(&event);
-            }
-        })),
-        // json/text only want the final report — events are dropped.
-        OutputFormat::Json | OutputFormat::Text => Box::new(NullSink),
-    };
+    // ---- 5b. Session trace (ADR-0024 §2): every run appends a rollout under
+    //          `<locode home>/sessions/<encoded-cwd>/`. Tracing is decoration on
+    //          the event sink — zero engine changes — and a failure disables the
+    //          writer with a warning, never the run. No home ⇒ no tracing.
+    let mut trace = locode_core::locode_home().ok().map(|home| {
+        locode_core::TraceWriter::new(
+            home.join("sessions"),
+            locode_core::TraceExtras {
+                cli_version: env!("CARGO_PKG_VERSION").to_string(),
+                git: git_meta(&config.cwd),
+                ..Default::default()
+            },
+        )
+    });
+
+    let sink = make_sink(cli.output_format, trace.take());
 
     // ---- 6. Drive to a terminal state (infallible) and emit the artifact. ----
     let mut session = Session::new(provider, registry, preamble, config, sink);
@@ -168,6 +173,28 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
         OutputFormat::StreamJson => {} // the result event already streamed
     }
     Ok(output::exit_code(report.status))
+}
+
+/// The event sink for `output_format`, decorated with the session-trace writer
+/// (ADR-0024 §2): every event feeds the trace first; a trace failure warns once
+/// and disables tracing, never the run. `stream-json` additionally writes the
+/// whole-message JSONL to stdout; `json`/`text` emit nothing per-event.
+fn make_sink(
+    output_format: OutputFormat,
+    mut trace: Option<locode_core::TraceWriter>,
+) -> Box<dyn EventSink> {
+    let stream = matches!(output_format, OutputFormat::StreamJson);
+    Box::new(FnSink(move |event| {
+        if let Some(writer) = trace.as_mut() {
+            writer.on_event(&event);
+            if let Some(e) = writer.take_error() {
+                output::warning_line(&format!("trace: {e}; tracing disabled"));
+            }
+        }
+        if stream && in_whole_message_trace(&event) {
+            output::write_json_line(&event);
+        }
+    }))
 }
 
 /// Reject a `--api-schema` a pack's tools can't round-trip on (codex's freeform
@@ -206,6 +233,34 @@ fn resolve_prompt(arg: Option<&str>) -> Result<String, PreRunError> {
         ));
     }
     Ok(prompt)
+}
+
+/// Best-effort git provenance for the trace header (ADR-0024 §2.3) — one
+/// `git rev-parse` + one `remote get-url`, all fields optional; `None` when not
+/// in a repo at all.
+fn git_meta(cwd: &std::path::Path) -> Option<locode_core::GitMeta> {
+    if !detect_git_repo(cwd) {
+        return None;
+    }
+    let run = |args: &[&str]| -> Option<String> {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(cwd)
+            .args(args)
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        (!s.is_empty()).then_some(s)
+    };
+    Some(locode_core::GitMeta {
+        root: run(&["rev-parse", "--show-toplevel"]).map(std::path::PathBuf::from),
+        branch: run(&["rev-parse", "--abbrev-ref", "HEAD"]),
+        head: run(&["rev-parse", "HEAD"]),
+        remote: run(&["remote", "get-url", "origin"]),
+    })
 }
 
 /// Whether `cwd` is inside a git repository — walk up looking for a `.git` entry
