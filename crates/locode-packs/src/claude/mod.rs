@@ -3,10 +3,10 @@
 //! highest-value A/B counterpart to the grok pack: same engine, same wire,
 //! genuinely different tool surface.
 //!
-//! Current state (through Slice 5): `Bash`, `Read`, `Edit`, `Write` (the middle
-//! three sharing the `ClaudeSessionState` read-before-write + staleness gate),
-//! and `Glob` + a minimal system prompt (identity + intro). `Grep` and the full
-//! byte-exact prompt land in later slices — see `docs/claude-pack-dev-process.md`.
+//! Current state (through Slice 6): all six tools — `Bash`, `Read`, `Edit`,
+//! `Write` (the middle three sharing the `ClaudeSessionState` read-before-write +
+//! staleness gate), `Glob`, and `Grep` — plus a minimal system prompt (identity +
+//! intro). The full byte-exact prompt lands in Slice 7 — see `docs/claude-pack-dev-process.md`.
 //!
 //! Fidelity boundary (ADR-0023): the pack reproduces tools + prompt + static
 //! preamble only. Loop-adjacent machinery (project-instruction loading, reminder
@@ -15,6 +15,7 @@
 mod bash;
 mod edit;
 mod glob;
+mod grep;
 pub mod prompt;
 mod read;
 mod state;
@@ -30,6 +31,7 @@ use crate::pack::{Pack, PackContext};
 use bash::ClaudeBash;
 use edit::ClaudeEdit;
 use glob::ClaudeGlob;
+use grep::ClaudeGrep;
 use read::ClaudeRead;
 use state::ClaudeSessionState;
 use write::ClaudeWrite;
@@ -63,6 +65,7 @@ impl Pack for ClaudePack {
             ClaudeWrite::new(Arc::clone(host), Arc::clone(&state)),
         );
         registry.register("Glob", ClaudeGlob::new(Arc::clone(host)));
+        registry.register("Grep", ClaudeGrep::new(Arc::clone(host)));
     }
 
     fn preamble(&self, ctx: &PackContext) -> Vec<Message> {
@@ -132,7 +135,7 @@ mod tests {
         let (_dir, registry, _root) = setup();
         let mut names: Vec<&str> = registry.names().collect();
         names.sort_unstable();
-        assert_eq!(names, vec!["Bash", "Edit", "Glob", "Read", "Write"]);
+        assert_eq!(names, vec!["Bash", "Edit", "Glob", "Grep", "Read", "Write"]);
         assert_eq!(
             registry.kind_of("Bash"),
             Some(locode_tools::ToolKind::Shell)
@@ -144,6 +147,7 @@ mod tests {
             Some(locode_tools::ToolKind::Write)
         );
         assert_eq!(registry.kind_of("Glob"), Some(locode_tools::ToolKind::Glob));
+        assert_eq!(registry.kind_of("Grep"), Some(locode_tools::ToolKind::Grep));
     }
 
     #[test]
@@ -763,6 +767,144 @@ mod tests {
             result_text(&out.tool_result),
             "Path is not a directory: f.txt"
         );
+    }
+
+    // ---- Grep (needs `rg`; happy paths gated on its presence) ----
+
+    #[tokio::test]
+    async fn grep_files_with_matches_default() {
+        if !rg_present() {
+            return;
+        }
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("a.txt"), "needle here\n").unwrap();
+        std::fs::write(root.join("b.txt"), "nothing\n").unwrap();
+        let out = registry
+            .dispatch("Grep", json!({ "pattern": "needle" }), &ctx(&root))
+            .await;
+        assert!(out.record.ok, "{}", result_text(&out.tool_result));
+        let text = result_text(&out.tool_result);
+        assert!(text.starts_with("Found 1 file"), "{text}");
+        assert!(text.contains("a.txt"), "{text}");
+        assert!(!text.contains("b.txt"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn grep_no_match_files_mode() {
+        if !rg_present() {
+            return;
+        }
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("a.txt"), "hello\n").unwrap();
+        let out = registry
+            .dispatch("Grep", json!({ "pattern": "zzznope" }), &ctx(&root))
+            .await;
+        assert!(out.record.ok);
+        assert_eq!(result_text(&out.tool_result), "No files found");
+    }
+
+    #[tokio::test]
+    async fn grep_content_mode_with_line_numbers() {
+        if !rg_present() {
+            return;
+        }
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("a.txt"), "one\nneedle two\nthree\n").unwrap();
+        let out = registry
+            .dispatch(
+                "Grep",
+                json!({ "pattern": "needle", "output_mode": "content" }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(out.record.ok);
+        let text = result_text(&out.tool_result);
+        // Line numbers on by default in content mode; path relativized.
+        assert!(text.contains("a.txt:2:needle two"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn grep_content_no_match() {
+        if !rg_present() {
+            return;
+        }
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("a.txt"), "hello\n").unwrap();
+        let out = registry
+            .dispatch(
+                "Grep",
+                json!({ "pattern": "zzz", "output_mode": "content" }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(out.record.ok);
+        assert_eq!(result_text(&out.tool_result), "No matches found");
+    }
+
+    #[tokio::test]
+    async fn grep_count_mode_summary() {
+        if !rg_present() {
+            return;
+        }
+        let (_dir, registry, root) = setup();
+        std::fs::write(root.join("a.txt"), "x\nx\nx\n").unwrap();
+        let out = registry
+            .dispatch(
+                "Grep",
+                json!({ "pattern": "x", "output_mode": "count" }),
+                &ctx(&root),
+            )
+            .await;
+        assert!(out.record.ok);
+        let text = result_text(&out.tool_result);
+        assert!(
+            text.contains("Found 3 total occurrences across 1 file."),
+            "{text}"
+        );
+        assert_eq!(out.record.output["num_matches"], json!(3));
+    }
+
+    #[test]
+    fn grep_schema_is_faithful() {
+        let (_dir, registry, _root) = setup();
+        let specs = registry.specs();
+        let grep = specs.iter().find(|s| s.name == "Grep").expect("Grep spec");
+        let params = match &grep.input {
+            locode_protocol::ToolInputFormat::JsonSchema { parameters } => parameters,
+            locode_protocol::ToolInputFormat::Freeform { .. } => panic!("Grep is JSON-schema"),
+        };
+        assert_eq!(params["additionalProperties"], json!(false));
+        let props = params["properties"].as_object().unwrap();
+        // The rg-flag-named fields keep their exact wire keys.
+        for key in [
+            "pattern",
+            "path",
+            "glob",
+            "output_mode",
+            "-A",
+            "-B",
+            "-C",
+            "context",
+            "-n",
+            "-i",
+            "type",
+            "head_limit",
+            "offset",
+            "multiline",
+        ] {
+            assert!(props.contains_key(key), "missing schema field {key}");
+        }
+        assert_eq!(
+            props["pattern"]["description"],
+            json!("The regular expression pattern to search for in file contents")
+        );
+        let required: Vec<&str> = params["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(required, vec!["pattern"]);
     }
 
     #[test]
