@@ -40,6 +40,9 @@ pub struct Session {
     pub(crate) turns_run: u32,
     /// The pre-dispatch approval gate (ADR-0017); [`AllowAll`] by default.
     pub(crate) approver: Arc<dyn Approver>,
+    /// Hash of the currently-applied project instructions (ADR-0023 per-turn rescan):
+    /// `None` = none apply, `Some(h)` = these apply. Drives the replace/remove banner.
+    pub(crate) last_instructions: Option<u64>,
 }
 
 impl Session {
@@ -66,6 +69,7 @@ impl Session {
             cancel: CancellationToken::new(),
             turns_run: 0,
             approver: Arc::new(AllowAll),
+            last_instructions: None,
         }
     }
 
