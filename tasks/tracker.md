@@ -51,6 +51,11 @@ and resolve the plan's open-questions section first.
   model only speaks chat-completions. Plan: [`plans/task-17-openai-chat-wire.md`](plans/task-17-openai-chat-wire.md). Scope L.
 
 ### TUI backlog
+- [ ] **Comprehensive wide-char wrapping upgrade** — the CJK truncation bug got a *surgical*
+  display-width fix (`unicode-width`; 2026-07-23). The full upgrade adopts the codex/grok
+  `textwrap` 0.16 + UAX#14 (`unicode-linebreak`) + grapheme-cluster stack for punctuation-aware
+  breaks, ZWJ/emoji clusters, optimal-fit, and table clip-vs-wrap. Research + migration plan +
+  TODO checklist: [`../docs/research/tui-text-wrapping-cjk.md`](../docs/research/tui-text-wrapping-cjk.md).
 - [ ] **OSC-8 hyperlinks** (P2) — clickable links (iTerm2 etc.).
 - [ ] **Built-in slash commands** — deferred pending a *holistic* design pass
   (discovery/registry, syntax, pure-UI vs. seam- or persistence-backed), not piecemeal.

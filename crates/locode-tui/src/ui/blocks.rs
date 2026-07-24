@@ -6,6 +6,13 @@
 use locode_core::{Report, Status};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthChar;
+
+/// Terminal display width of a char in cells (CJK/emoji = 2, zero-width = 0). Wrapping
+/// must measure cells, not char count, or CJK overflows and is truncated on the right.
+fn ch_width(ch: char) -> usize {
+    UnicodeWidthChar::width(ch).unwrap_or(0)
+}
 
 /// Rows of tool-result body kept before head/tail truncation kicks in
 /// (codex keeps 5 for agent commands; `exec_cell/render.rs:33`).
@@ -203,41 +210,58 @@ fn render_user_prompt(text: &str, width: u16) -> Vec<Line<'static>> {
     lines
 }
 
-/// Greedy word-wrap of plain text to `width` columns, preserving the user's hard
-/// line breaks (`\n`) and hard-splitting any word longer than `width`. Runs of
-/// intra-line whitespace collapse to single spaces (this is an echo, not an
-/// editor). Operates on `char`s so multi-byte input never slices mid-codepoint.
+/// Greedy word-wrap of plain text to `width` **display columns** (CJK = 2 cells each),
+/// preserving the user's hard line breaks (`\n`) and hard-splitting any run wider than
+/// `width` on the display-width boundary. Runs of intra-line whitespace collapse to
+/// single spaces (this is an echo, not an editor).
+///
+/// TODO(wide-char upgrade): surgical display-width fix; the comprehensive
+/// textwrap/UAX#14/grapheme upgrade is tracked in `docs/research/tui-text-wrapping-cjk.md`.
 fn wrap_plain(text: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
+    // Display width of a slice of chars (CJK = 2 cells each).
+    let run_width = |cs: &[char]| -> usize { cs.iter().map(|&c| ch_width(c)).sum() };
     let mut out = Vec::new();
     for src in text.split('\n') {
         let mut cur = String::new();
-        let mut cur_len = 0usize;
-        let flush = |cur: &mut String, cur_len: &mut usize, out: &mut Vec<String>| {
+        let mut cur_w = 0usize; // display width of `cur`
+        let flush = |cur: &mut String, cur_w: &mut usize, out: &mut Vec<String>| {
             out.push(std::mem::take(cur));
-            *cur_len = 0;
+            *cur_w = 0;
         };
         for word in src.split_whitespace() {
             let mut word: Vec<char> = word.chars().collect();
-            while word.len() > width {
-                if cur_len > 0 {
-                    flush(&mut cur, &mut cur_len, &mut out);
+            // Hard-split a run wider than the whole width (e.g. a space-less CJK
+            // sentence) on the display-width boundary — at least one char per slice.
+            while run_width(&word) > width {
+                if cur_w > 0 {
+                    flush(&mut cur, &mut cur_w, &mut out);
                 }
-                out.push(word[..width].iter().collect());
-                word.drain(..width);
+                let mut take = 0usize;
+                let mut cols = 0usize;
+                for &c in &word {
+                    let w = ch_width(c);
+                    if take >= 1 && cols + w > width {
+                        break;
+                    }
+                    cols += w;
+                    take += 1;
+                }
+                out.push(word[..take].iter().collect());
+                word.drain(..take);
             }
-            let wlen = word.len();
-            if cur_len == 0 {
+            let wlen = run_width(&word);
+            if cur_w == 0 {
                 cur.extend(&word);
-                cur_len = wlen;
-            } else if cur_len + 1 + wlen <= width {
+                cur_w = wlen;
+            } else if cur_w + 1 + wlen <= width {
                 cur.push(' ');
                 cur.extend(&word);
-                cur_len += 1 + wlen;
+                cur_w += 1 + wlen;
             } else {
-                flush(&mut cur, &mut cur_len, &mut out);
+                flush(&mut cur, &mut cur_w, &mut out);
                 cur.extend(&word);
-                cur_len = wlen;
+                cur_w = wlen;
             }
         }
         out.push(cur);
@@ -395,9 +419,32 @@ pub fn turn_end(report: &Report, elapsed_secs: u64) -> Block {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use unicode_width::UnicodeWidthStr;
 
     fn text_of(lines: &[Line<'_>]) -> Vec<String> {
         lines.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn wrap_plain_cjk_respects_display_width() {
+        // A space-less Chinese prompt: han chars are 2 cells. Char-count wrapping
+        // overflowed and the frame clipped the right side (the reported bug).
+        let out = wrap_plain("这是一段用来测试用户输入换行的中文提示没有空格", 8);
+        assert!(out.len() > 1, "must wrap: {out:?}");
+        for line in &out {
+            assert!(
+                line.width() <= 8,
+                "line over display width: {line:?} ({})",
+                line.width()
+            );
+        }
+    }
+
+    #[test]
+    fn wrap_plain_ascii_unchanged() {
+        // Regression: ASCII behavior (char count == display width) is identical.
+        let out = wrap_plain("one two three four five", 9);
+        assert!(out.iter().all(|l| l.width() <= 9), "{out:?}");
     }
 
     #[test]

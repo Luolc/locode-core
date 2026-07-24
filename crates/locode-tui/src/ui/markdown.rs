@@ -17,6 +17,36 @@
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
+/// Terminal display width of a char in cells: CJK/fullwidth = 2, emoji = 2,
+/// zero-width/control = 0. All wrapping math measures cells, never char/byte count —
+/// counting characters truncates CJK on the right (each han char is 2 cells).
+fn ch_width(ch: char) -> usize {
+    UnicodeWidthChar::width(ch).unwrap_or(0)
+}
+
+/// Display width of a run of style-tagged chars.
+fn word_width(word: &[(char, Style)]) -> usize {
+    word.iter().map(|&(ch, _)| ch_width(ch)).sum()
+}
+
+/// How many leading chars of `chars` fit in `max_cols` display columns — always at
+/// least 1, so a lone wide char in a too-narrow column still makes progress (no
+/// infinite loop; codex's `take_prefix_by_width` guard).
+fn prefix_by_width(chars: &[(char, Style)], max_cols: usize) -> usize {
+    let mut cols = 0usize;
+    let mut n = 0usize;
+    for &(ch, _) in chars {
+        let w = ch_width(ch);
+        if n >= 1 && cols + w > max_cols {
+            break;
+        }
+        cols += w;
+        n += 1;
+    }
+    n.max(1)
+}
 
 /// Render markdown `text` to word-wrapped styled lines at `width`.
 #[must_use]
@@ -303,8 +333,8 @@ impl Writer {
             let mut rw = Vec::with_capacity(n_cols);
             for (c, natural_w) in col_natural.iter_mut().enumerate() {
                 let words = row.get(c).map(|s| segs_to_words(s)).unwrap_or_default();
-                let natural =
-                    words.iter().map(Vec::len).sum::<usize>() + words.len().saturating_sub(1);
+                let natural = words.iter().map(|w| word_width(w)).sum::<usize>()
+                    + words.len().saturating_sub(1);
                 *natural_w = (*natural_w).max(natural);
                 rw.push(words);
             }
@@ -395,12 +425,12 @@ impl Writer {
             let depth = self.list_stack.len() - 1;
             let indent = "  ".repeat(depth);
             if let Some(marker) = self.item_marker.take() {
-                let width = marker.chars().count();
+                let width = marker.width();
                 first.push(Span::raw(marker));
                 cont.push(Span::raw(" ".repeat(width)));
             } else {
                 // A continuation paragraph inside an item aligns under the text.
-                let width = indent.chars().count() + 2;
+                let width = indent.width() + 2;
                 first.push(Span::raw(" ".repeat(width)));
                 cont.push(Span::raw(" ".repeat(width)));
             }
@@ -462,7 +492,13 @@ fn segs_to_words(segs: &[Seg]) -> Vec<Vec<(char, Style)>> {
 }
 
 /// Greedy word-wrap over style-tagged words with distinct first-line and
-/// continuation prefixes. Words wider than the available width hard-split.
+/// continuation prefixes. Words wider than the available width hard-split, on the
+/// **display-width** boundary (CJK = 2 cells) so wide text isn't truncated.
+///
+/// TODO(wide-char upgrade): this is a surgical display-width fix over a bespoke wrapper.
+/// A future task adopts the codex/grok `textwrap` 0.16 + UAX#14 + grapheme-cluster stack
+/// for punctuation-aware breaks, ZWJ/emoji clusters, and optimal-fit — see
+/// `docs/research/tui-text-wrapping-cjk.md`.
 fn wrap_words(
     words: &[Vec<(char, Style)>],
     first_lead: &[Span<'static>],
@@ -470,12 +506,13 @@ fn wrap_words(
     width: usize,
 ) -> Vec<Line<'static>> {
     let lead_width =
-        |lead: &[Span<'static>]| -> usize { lead.iter().map(|s| s.content.chars().count()).sum() };
+        |lead: &[Span<'static>]| -> usize { lead.iter().map(|s| s.content.width()).sum() };
     let first_w = lead_width(first_lead);
     let cont_w = lead_width(cont_lead);
 
     let mut out: Vec<Line<'static>> = Vec::new();
     let mut line: Vec<(char, Style)> = Vec::new();
+    let mut line_w = 0usize; // display width of `line`
     for word in words {
         let mut rest: &[(char, Style)] = word;
         loop {
@@ -484,22 +521,31 @@ fn wrap_words(
                 .saturating_sub(if is_first { first_w } else { cont_w })
                 .max(1);
             if line.is_empty() {
-                if rest.len() <= avail {
+                let rest_w = word_width(rest);
+                if rest_w <= avail {
                     line.extend_from_slice(rest);
+                    line_w = rest_w;
                     break;
                 }
-                // Over-long word: hard-split at the width boundary.
-                line.extend_from_slice(&rest[..avail]);
+                // Over-wide run (e.g. a space-less CJK sentence): hard-split on the
+                // display-width boundary, not a char-count boundary.
+                let take = prefix_by_width(rest, avail);
+                line.extend_from_slice(&rest[..take]);
                 let lead = if is_first { first_lead } else { cont_lead };
                 out.push(build_line(lead, &std::mem::take(&mut line)));
-                rest = &rest[avail..];
-            } else if line.len() + 1 + rest.len() <= avail {
-                line.push((' ', Style::default()));
-                line.extend_from_slice(rest);
-                break;
+                line_w = 0;
+                rest = &rest[take..];
             } else {
+                let rest_w = word_width(rest);
+                if line_w + 1 + rest_w <= avail {
+                    line.push((' ', Style::default()));
+                    line.extend_from_slice(rest);
+                    line_w += 1 + rest_w;
+                    break;
+                }
                 let lead = if is_first { first_lead } else { cont_lead };
                 out.push(build_line(lead, &std::mem::take(&mut line)));
+                line_w = 0;
                 // Retry placing the whole word on a fresh line.
             }
         }
@@ -539,7 +585,7 @@ fn build_line(lead: &[Span<'static>], chars: &[(char, Style)]) -> Line<'static> 
 
 /// Push a table cell's `line` spans into `out`, padded to `width` per `align`.
 fn pad_into(out: &mut Vec<Span<'static>>, line: &Line<'static>, width: usize, align: Alignment) {
-    let content: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+    let content: usize = line.spans.iter().map(|s| s.content.width()).sum();
     let pad = width.saturating_sub(content);
     let (left, right) = match align {
         Alignment::Right => (pad, 0),
@@ -663,6 +709,67 @@ mod tests {
             lines.iter().all(|l| l.to_string().chars().count() <= 12),
             "{:?}",
             texts(&lines)
+        );
+    }
+
+    #[test]
+    fn cjk_paragraph_wraps_by_display_width_not_char_count() {
+        // A space-less Chinese run: each han char is 2 cells, so width 10 holds at most
+        // 5 chars. Char-count wrapping packed 10 (= 20 cells) → overflow → right-edge
+        // truncation (the reported bug). Assert every line's DISPLAY width fits.
+        let md = "这是一段没有空格的中文文本用来测试换行是否按显示宽度处理";
+        let lines = render(md, 10);
+        assert!(
+            lines.len() > 1,
+            "must wrap onto several lines: {:?}",
+            texts(&lines)
+        );
+        for l in &lines {
+            let w = l.to_string().width();
+            assert!(
+                w <= 10,
+                "line over display width ({w}): {:?}",
+                l.to_string()
+            );
+        }
+        // Nothing dropped: every source char survives somewhere in the output.
+        let joined = joined(&lines);
+        for ch in md.chars() {
+            assert!(joined.contains(ch), "char {ch:?} lost in wrapping");
+        }
+    }
+
+    #[test]
+    fn mixed_cjk_ascii_wraps_by_display_width() {
+        // ASCII words break at spaces; the space-less CJK run hard-splits by width.
+        let md = "sample dispatch append 的循环类型化的工具注册表以及统一契约";
+        let lines = render(md, 16);
+        for l in &lines {
+            let w = l.to_string().width();
+            assert!(
+                w <= 16,
+                "line over display width ({w}): {:?}",
+                l.to_string()
+            );
+        }
+    }
+
+    #[test]
+    fn cjk_table_cells_align_by_display_width() {
+        // A CJK-content table: columns are sized and padded by display width, so the
+        // border glyphs line up (char-count padding would desync by a cell per han char).
+        let md = "| 名称 | 说明 |\n| --- | --- |\n| 循环 | 采样调度追加 |";
+        let lines = texts(&render(md, 40));
+        // Every rendered table row has the same display width (borders aligned).
+        let widths: Vec<usize> = lines
+            .iter()
+            .filter(|l| l.contains('│') || l.contains('├') || l.contains('┌') || l.contains('└'))
+            .map(|l| l.width())
+            .collect();
+        assert!(!widths.is_empty(), "table rendered: {lines:?}");
+        assert!(
+            widths.iter().all(|&w| w == widths[0]),
+            "all border rows equal display width: {widths:?}\n{lines:#?}"
         );
     }
 
