@@ -36,6 +36,10 @@ pub enum EngineMsg {
     },
     /// Session assembly failed pre-run (bad schema, missing key, …).
     BuildFailed(String),
+    /// A recovered user prompt from a resumed session's transcript — rendered
+    /// like a live submit echo (the generic event path deliberately drops
+    /// plain user text because live submits echo it themselves).
+    ReplayedPrompt(String),
     /// A run is about to start; carries the run's cancel handle (ADR-0018 —
     /// per-run token, cloned before the run, retired at run end so a late
     /// fire is a harmless no-op).
@@ -102,10 +106,13 @@ pub fn spawn(
             shell: shell.clone(),
         });
         // A resumed session replays its recovered transcript into the UI.
+        // Assistant messages + tool results ride the normal event path (tool
+        // cells pair up exactly as live); plain user prompts need the
+        // submit-echo path instead, and machinery text (the pack preamble,
+        // injected `<system-reminder>`s, pack prompt wrappers) is unwrapped or
+        // skipped — it was never rendered live either.
         for message in built.replay.drain(..) {
-            let _ = msg_tx.send(EngineMsg::Event(Box::new(locode_core::Event::Message {
-                message,
-            })));
+            replay_message(&msg_tx, message);
         }
         while let Some(command) = cmd_rx.recv().await {
             match command {
@@ -151,6 +158,58 @@ pub fn spawn(
 /// Assemble the session exactly as `locode-exec` does (canonical cwd shared
 /// by jail/engine/pack; --yolo lifts the jail). Duplication flagged in the
 /// slice plan; a facade helper is a future core proposal.
+/// Send one recovered message to the UI the way it would have rendered live.
+fn replay_message(
+    msg_tx: &tokio::sync::mpsc::UnboundedSender<EngineMsg>,
+    message: locode_core::Message,
+) {
+    use locode_core::{ContentBlock, Event, Message, Role};
+    match message.role {
+        // The pack preamble is never rendered.
+        Role::System | Role::Developer => {}
+        Role::Assistant => {
+            let _ = msg_tx.send(EngineMsg::Event(Box::new(Event::Message { message })));
+        }
+        Role::User => {
+            // Split: tool results pair with the already-replayed tool calls via
+            // the normal event path; plain text is a prompt echo — minus the
+            // engine-injected reminders and the pack's prompt wrapper.
+            let mut tool_results = Vec::new();
+            for block in message.content {
+                match block {
+                    ContentBlock::ToolResult { .. } => tool_results.push(block),
+                    ContentBlock::Text { text } => {
+                        if text.trim_start().starts_with("<system-reminder>") {
+                            continue; // injected machinery, never rendered live
+                        }
+                        let _ = msg_tx.send(EngineMsg::ReplayedPrompt(unwrap_user_query(&text)));
+                    }
+                    _ => {}
+                }
+            }
+            if !tool_results.is_empty() {
+                let _ = msg_tx.send(EngineMsg::Event(Box::new(Event::Message {
+                    message: Message {
+                        role: Role::User,
+                        content: tool_results,
+                    },
+                })));
+            }
+        }
+    }
+}
+
+/// Strip grok's `<user_query>` shaping wrapper for display (the live UI echoes
+/// the raw prompt *before* `shape_user_prompt`; the trace holds the shaped
+/// form). Claude/codex shape verbatim, so this is a no-op for them.
+fn unwrap_user_query(text: &str) -> String {
+    let trimmed = text.trim();
+    trimmed
+        .strip_prefix("<user_query>")
+        .and_then(|rest| rest.strip_suffix("</user_query>"))
+        .map_or_else(|| text.to_string(), |inner| inner.trim().to_string())
+}
+
 /// One built session plus its resolved identity and (for resume) the recovered
 /// transcript to replay into the UI.
 struct BuiltSession {
@@ -455,4 +514,78 @@ fn new_session_id() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis());
     format!("sess-{now}-{}", std::process::id())
+}
+
+#[cfg(test)]
+mod replay_tests {
+    use super::*;
+    use locode_core::{ContentBlock, Message, Role};
+
+    fn text_msg(role: Role, text: &str) -> Message {
+        Message {
+            role,
+            content: vec![ContentBlock::Text {
+                text: text.to_string(),
+            }],
+        }
+    }
+
+    fn drain(rx: &mut tokio::sync::mpsc::UnboundedReceiver<EngineMsg>) -> Vec<EngineMsg> {
+        let mut out = Vec::new();
+        while let Ok(msg) = rx.try_recv() {
+            out.push(msg);
+        }
+        out
+    }
+
+    #[test]
+    fn replay_routes_prompts_reminders_and_tools() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        // System preamble: dropped.
+        replay_message(&tx, text_msg(Role::System, "base prompt"));
+        // Injected reminder: dropped.
+        replay_message(
+            &tx,
+            text_msg(Role::User, "<system-reminder>\nrules\n</system-reminder>"),
+        );
+        // A grok-shaped prompt: unwrapped and echoed.
+        replay_message(
+            &tx,
+            text_msg(Role::User, "<user_query>\nfix the bug\n</user_query>"),
+        );
+        // An assistant turn: forwarded as a normal event.
+        replay_message(&tx, text_msg(Role::Assistant, "done"));
+        // A tool result: forwarded as a normal event (pairs with pending calls).
+        replay_message(
+            &tx,
+            Message {
+                role: Role::User,
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id: "t1".into(),
+                    content: vec![],
+                    is_error: false,
+                }],
+            },
+        );
+
+        let msgs = drain(&mut rx);
+        assert_eq!(msgs.len(), 3, "system + reminder dropped");
+        assert!(
+            matches!(&msgs[0], EngineMsg::ReplayedPrompt(p) if p == "fix the bug"),
+            "prompt unwrapped"
+        );
+        assert!(matches!(&msgs[1], EngineMsg::Event(e)
+            if matches!(&**e, locode_core::Event::Message { message } if message.role == Role::Assistant)));
+        assert!(matches!(&msgs[2], EngineMsg::Event(e)
+            if matches!(&**e, locode_core::Event::Message { message } if message.role == Role::User)));
+    }
+
+    #[test]
+    fn unwrap_user_query_is_a_noop_for_verbatim_packs() {
+        assert_eq!(
+            unwrap_user_query("plain claude prompt"),
+            "plain claude prompt"
+        );
+        assert_eq!(unwrap_user_query("<user_query>\nhi\n</user_query>"), "hi");
+    }
 }

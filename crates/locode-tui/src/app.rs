@@ -290,6 +290,12 @@ impl App {
                 self.hint = None;
                 vec![]
             }
+            EngineMsg::ReplayedPrompt(text) => {
+                // A resumed transcript's user prompt — same cell as a live
+                // submit echo.
+                self.outbox.push(Block::UserPrompt(text));
+                vec![]
+            }
             EngineMsg::Event(event) => {
                 self.on_event(*event);
                 vec![]
