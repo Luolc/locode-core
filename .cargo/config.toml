@@ -1,0 +1,10 @@
+# Workspace-local cargo environment.
+[env]
+# Redirect ~/.locode to a committed, gitignored-contents dev home for EVERYTHING
+# cargo launches (tests, `cargo run`): the TUI/exec trace writer is on by
+# default (ADR-0024 §2), and without this, in-process test sessions pollute the
+# developer's real `~/.locode/sessions` with tempdir-cwd rollouts (found during
+# the Task 31 smoke test — 216 junk dirs). Not forced: an explicit LOCODE_HOME
+# in the shell still wins, and a binary run outside cargo (target/debug/locode,
+# an installed locode) uses the real home as usual.
+LOCODE_HOME = { value = "dev/locode-home", relative = true }

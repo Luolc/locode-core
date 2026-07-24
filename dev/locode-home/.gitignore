@@ -1,0 +1,4 @@
+# The dev-time ~/.locode stand-in (.cargo/config.toml [env]); traces/settings
+# written by cargo-launched runs land here and stay out of git.
+*
+!.gitignore
