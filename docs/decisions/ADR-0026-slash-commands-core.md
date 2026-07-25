@@ -203,6 +203,40 @@ yet.
 > that describes the command set has to see it. That is the ADR's own rule for growing
 > the context — a command genuinely needed more.
 
+> **Amendment (2026-07-25b): `/model <id>` switches, and the list is curated, not
+> discovered.** *(User decision, after a source study of both references.)* The amendment
+> above stopped at read-only because switching looked blocked on a provider seam. It is
+> not: `ProviderRegistry::build` already takes a model override, so a switch is a rebuilt
+> provider swapped into the live session — no registry change.
+>
+> **Where it persists: the user-global settings file**, matching both references, neither
+> of which has a project-scoped model. Claude Code's `/model` sets in-memory app state and
+> a subscriber writes `updateSettingsForSource('userSettings', { model })`
+> (`state/onChangeAppState.ts:104-111`); `userSettings` is `~/.claude/settings.json`,
+> documented in-source as "not project-specific". Grok emits **two** effects,
+> `PersistSetting { key: "default_model" }` into `~/.grok/config.toml` and a session-level
+> `SwitchModel` (`dispatch/settings/setters.rs:1472`).
+>
+> Concurrent sessions do **not** fight: each holds its model in memory and never re-reads
+> the file, so the global value only decides what the *next* session starts with —
+> last-writer-wins, which both references accept.
+>
+> **The write must be atomic** *(user requirement)*: temp file beside the target, flushed,
+> then `rename(2)` over it. A half-written `settings.json` is worse than no write — the
+> next run would silently fall back to defaults.
+>
+> **The stale system prompt is announced, not rewritten.** A pack's preamble may name the
+> model (our claude port's env block does). Rewriting the `System` message would desync the
+> conversation from the trace, whose `Init` record already captured the original preamble —
+> a resumed session would replay one preamble while the live session had another. So the
+> switch appends a `<system-reminder>`, the same never-mutate-history discipline project
+> instructions and skills follow.
+>
+> The offered list is four ids held in the command. Not a catalog — locode keeps none, and
+> anything unlisted can still be typed, since the argument menu closes when nothing matches
+> and Enter submits what was written. They are Anthropic ids; on another wire they fail at
+> request time, which is the user's call *(user decision: "承担错误的责任交给 user 就可以了")*.
+
 ### 7. Where the code lives — three layers, most of it in the TUI
 
 *(User decision.)* The registry belongs in the core; the skill-specific parts belong

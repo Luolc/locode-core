@@ -1651,6 +1651,51 @@ mod tests {
         assert_eq!(report.usage.output_tokens, 12);
     }
 
+    /// Switching the model swaps the provider and **announces** the change instead of
+    /// rewriting the preamble.
+    ///
+    /// A pack's system prompt may name the model, and after a switch that line is
+    /// stale — but rewriting the `System` message would desync the conversation from
+    /// the trace, whose `Init` record already captured the original preamble. Appending
+    /// is the same discipline project instructions and skills follow.
+    #[tokio::test]
+    async fn setting_the_model_announces_it_without_touching_the_preamble() {
+        let preamble = vec![Message {
+            role: Role::System,
+            content: vec![ContentBlock::Text {
+                text: "You are powered by the model old-1.".into(),
+            }],
+        }];
+        let provider = Arc::new(MockProvider::with_results(vec![Ok(text_turn("ok"))]));
+        let mut s = Session::new(
+            provider.clone(),
+            Registry::new(),
+            preamble.clone(),
+            config(),
+            Box::new(NullSink),
+        );
+
+        let notice = s.set_model(provider, "new-2");
+        s.announce(notice);
+
+        assert_eq!(
+            s.history()[0],
+            preamble[0],
+            "the preamble is untouched — the trace already recorded it"
+        );
+        let last = s.history().last().expect("announcement appended");
+        assert_eq!(last.role, Role::User);
+        let ContentBlock::Text { text } = &last.content[0] else {
+            panic!("text block")
+        };
+        assert!(text.starts_with("<system-reminder>"), "{text}");
+        assert!(text.contains("is now new-2"), "{text}");
+        assert!(
+            text.contains("out of date"),
+            "corrects the stale line: {text}"
+        );
+    }
+
     /// `context_usage` is the **final** turn's, not the sum.
     ///
     /// Every turn's request re-sends the whole conversation, so summing counts the same

@@ -51,6 +51,9 @@ pub enum Cmd {
     Submit(String),
     /// Discard the session and build a fresh one (`/new`).
     NewSession,
+    /// Switch the running session's model, and persist it as the next session's
+    /// default (`/model <id>`).
+    SetModel(String),
     /// Resolve and run this `/name args` line, then feed the result back through
     /// [`App::apply_command_result`].
     ///
@@ -379,6 +382,14 @@ impl App {
                     self.context_tokens = 0;
                     self.context_estimated = false;
                 }
+                vec![]
+            }
+            // `/model` finished. The status bar takes the model the engine actually
+            // resolved, so a refused or redirected switch cannot leave it claiming one
+            // the session is not on.
+            EngineMsg::ModelChanged { model, message } => {
+                self.model = Some(model);
+                self.outbox.push(Block::Notice(message));
                 vec![]
             }
             EngineMsg::BuildFailed(message) => {
@@ -938,6 +949,11 @@ impl App {
                 self.should_quit = true;
                 vec![Cmd::Quit]
             }
+            // Not applied here: the swap rebuilds a provider, which is IO. The footer
+            // follows when the engine task reports the model it actually resolved,
+            // so a failed build never leaves the status bar claiming a model that is
+            // not in use.
+            CommandResult::Action(UiAction::SetModel(model)) => vec![Cmd::SetModel(model)],
         }
     }
 
@@ -2296,6 +2312,61 @@ mod tests {
         assert_eq!(cmds, vec![], "a report, not a prompt");
         assert!(
             matches!(app.outbox.last(), Some(Block::Notice(n)) if n.starts_with("/quit ")),
+            "{:?}",
+            app.outbox.last()
+        );
+    }
+
+    /// `/model <id>` asks the loop to switch — the reducer never applies it itself,
+    /// because rebuilding a provider is IO.
+    #[tokio::test]
+    async fn switching_the_model_goes_out_as_a_command() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        type_str(&mut app, "/model claude-opus-5", t0);
+        assert_eq!(
+            drive(&mut app, key(KeyCode::Enter), t0).await,
+            vec![Cmd::SetModel("claude-opus-5".into())]
+        );
+        assert_eq!(
+            app.model.as_deref(),
+            Some("mock-1"),
+            "the status bar has not moved yet — the engine has not answered"
+        );
+    }
+
+    /// The status bar follows the model the engine **resolved**, so a refused switch
+    /// cannot leave it claiming one the session is not on.
+    #[test]
+    fn the_status_bar_follows_the_engine_not_the_request() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::ModelChanged {
+                model: "claude-opus-5".into(),
+                message: "model: claude-opus-5 (also saved as the default)".into(),
+            })),
+            t0,
+        );
+        assert_eq!(app.model.as_deref(), Some("claude-opus-5"));
+        assert!(
+            matches!(app.outbox.last(), Some(Block::Notice(n)) if n.contains("saved as the default")),
+            "{:?}",
+            app.outbox.last()
+        );
+
+        // A failed switch reports the model still in use.
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::ModelChanged {
+                model: "claude-opus-5".into(),
+                message: "cannot switch to nope: unknown".into(),
+            })),
+            t0,
+        );
+        assert_eq!(app.model.as_deref(), Some("claude-opus-5"), "unchanged");
+        assert!(
+            matches!(app.outbox.last(), Some(Block::Notice(n)) if n.contains("cannot switch")),
             "{:?}",
             app.outbox.last()
         );

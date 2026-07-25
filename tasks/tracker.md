@@ -177,13 +177,6 @@ and resolve the plan's open-questions section first.
   - **Prerequisite for resume:** the trace's `usage` record holds context occupancy, not
     a running total, so a cost readout needs its own record (or a re-read of every
     `usage` line, which only covers runs traced in this session's file).
-- [ ] **`/model` switching** — persistence half is **done** (Task 31 shipped
-  `~/.locode/settings.json` with a `model` field + a `--model` flag; there is no model env
-  var). Still blocked on the other seam: model-selection on the ADR-0015
-  `ProviderRegistry`/factory (public surface → ask-first). Read-only `/model` becomes
-  Tier-A once that seam exists.
-
-### Tier B/C future capability (short ADR, then mostly-autonomous)
 - [ ] Custom slash-command files · plugins. *(Everything else once listed here has been
   promoted and is tracked above: background bash + subagents → **P0.5**; settings/trace →
   **Task 31**; skills → **Task 32**; shared AGENTS.md loading → shipped as Task 30.)*
@@ -217,6 +210,12 @@ One line per task. Design detail is the matching file under [`plans/`](plans/) (
 [`plans/README.md`](plans/README.md)); rationale is in the cited ADRs.
 
 ### slash commands (Task 34 · autonomous 7-slice workstream, 2026-07-25)
+- [x] **`/model` switching** — `/model <id>` swaps the provider on the live session and
+  writes the id to `~/.locode/settings.json` (atomically) as the next session's default,
+  matching both references, neither of which has a project-scoped model. The stale
+  model line in a pack's preamble is corrected by an appended `<system-reminder>`, never
+  by rewriting history (which would desync the trace). Decisions + source citations in
+  [ADR-0026](../docs/decisions/ADR-0026-slash-commands-core.md) §6 amendment 2026-07-25b.
 - [x] **Task 34** — slash commands, core contract + grok's dropdown. `SlashCommand` is a
   trait with a value-returning `CommandResult` (the reducer applies the effect; the loop
   owns the one awaiting step), so **every `user-invocable` skill is now reachable as

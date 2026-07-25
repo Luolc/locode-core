@@ -24,7 +24,10 @@ pub use path::PathError;
 pub use rg::rg_program;
 pub use root::find_root_from_markers;
 pub use session_dirs::{decode_cwd_dirname, encode_cwd_dirname};
-pub use settings::{Settings, SettingsLoad, SkillsExtraEntry, load_settings, load_settings_from};
+pub use settings::{
+    Settings, SettingsLoad, SkillsExtraEntry, load_settings, load_settings_from,
+    update_user_setting,
+};
 pub use shell::{
     ExecError, ExecOutput, ExecRequest, FrontBackCapture, FrontBackSpec, SPILL_RETAIN_MAX,
     ShellSpec,

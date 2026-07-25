@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use locode_protocol::{ContentBlock, Message, Report};
+use locode_protocol::{ContentBlock, Event, Message, Report, Role};
 use locode_provider::Provider;
 use locode_tools::Registry;
 use tokio_util::sync::CancellationToken;
@@ -81,6 +81,43 @@ impl Session {
     pub fn with_approver(mut self, approver: Arc<dyn Approver>) -> Self {
         self.approver = approver;
         self
+    }
+
+    /// Switch the model this session samples with, mid-conversation.
+    ///
+    /// The caller rebuilds the provider (the registry's factory already takes a model
+    /// override) and hands it in; this swaps it and updates the config so the trace's
+    /// later records name the model actually in use.
+    ///
+    /// **The preamble is not rewritten.** A pack's system prompt may name the model —
+    /// Claude Code's env block does, and so does our port — and after a switch that line
+    /// is stale. Rewriting the `System` message would desync the transcript from the
+    /// trace, whose `Init` record already captured the original preamble: a resumed
+    /// session would replay one preamble while the live session had another. So the
+    /// change is **announced instead**, as an appended `<system-reminder>` — the same
+    /// never-mutate-history discipline project instructions and skills already follow.
+    ///
+    /// Returns the announcement, which the caller appends and emits like any other
+    /// message. (Doing it here would bypass the sink the caller owns.)
+    pub fn set_model(&mut self, provider: Arc<dyn Provider>, model: &str) -> Message {
+        self.provider = provider;
+        self.config.model = model.to_string();
+        Message {
+            role: Role::User,
+            content: vec![ContentBlock::Text {
+                text: format!(
+                    "<system-reminder>\nThe model for this conversation is now {model}. \
+                     Any earlier statement about which model you are is out of date.\n\
+                     </system-reminder>"
+                ),
+            }],
+        }
+    }
+
+    /// Append a message to the conversation and emit it, exactly as a turn would.
+    pub fn announce(&mut self, message: Message) {
+        self.history.push(message.clone());
+        self.sink.emit(Event::Message { message });
     }
 
     /// The conversation so far: the preamble plus every appended turn across all
