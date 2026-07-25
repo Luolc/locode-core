@@ -15,6 +15,8 @@ workspace = true
 
 [dependencies]
 locode-core = { workspace = true }
+# Skill-backed slash commands read and assemble a `SKILL.md` (ADR-0026 §4).
+locode-skills = { workspace = true }
 # The headless one-shot engine, reused by `locode -p` (Task 28). `locode-exec`
 # stays a standalone library (NOT collapsed into this crate) so headless-only
 # consumers can depend on it without pulling in the TUI (ADR-0019 amendment

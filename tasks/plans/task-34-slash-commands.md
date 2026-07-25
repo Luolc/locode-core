@@ -22,9 +22,9 @@
 - **Trait, not enum**: runtime registration (skills are discovered per run) and
   per-command `suggest_args` are both impossible in codex's enum.
 - **`execute` is async** from day 0; `/model` hardcodes its list for v1.
-- **Three layers**: `locode-commands` (trait/result/registry) → `locode-skills`
-  (invocation assembly) → `locode-tui` (everything visible). Dependency runs
-  commands → skills, never the reverse.
+- **Two layers** (ADR-0026 §7 amendment 2026-07-25): the trait/result/registry and
+  everything visible live in `locode-tui`; `locode-skills` supplies invocation assembly.
+  Dependency runs commands → skills, never the reverse.
 - **Arguments are plain text appended**, no `$ARGUMENTS`/`${SKILL_DIR}` — the model's
   path cannot substitute, so any template scheme would make one skill behave two ways.
 - **Unknown `/foo` is an error**, not a pass-through; a message merely *starting* with
@@ -33,9 +33,9 @@
 
 ## Slices
 
-### S1 — `locode-commands`: trait, result, registry (M)
+### S1 — trait, result, registry (M)
 
-- New crate. `SlashCommand` (name/aliases/description/usage, `takes_args`/
+- `locode-tui::commands`. `SlashCommand` (name/aliases/description/usage, `takes_args`/
   `args_required`, `suggest_args`, `visible`, async `execute`), `CommandResult`
   (Handled/Message/Error/Prompt/InjectSkill/Action), `ArgItem`.
 - `CommandRegistry`: register, alias resolution, per-query `visible` filtering, ordered
@@ -49,7 +49,7 @@
 - `locode-skills`: `invocation_text(skill_body, args) -> String` — body verbatim, then
   a blank line and `**ARGUMENTS:** <args>` when args are non-empty. Pure; skills stays
   unaware that commands exist.
-- `locode-commands`: register one command per discovered `user-invocable` skill;
+- `locode-tui::commands`: register one command per discovered `user-invocable` skill;
   `execute` reads the `SKILL.md`, assembles, returns `InjectSkill`.
 - Collisions: builtin wins, skill reachable as `user:name` (ADR-0025 §2's qualifiers,
   not a second scheme).

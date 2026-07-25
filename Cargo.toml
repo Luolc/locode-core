@@ -25,7 +25,6 @@ locode-provider = { path = "crates/locode-provider", version = "0.1.11" }
 locode-host = { path = "crates/locode-host", version = "0.1.11" }
 locode-instructions = { path = "crates/locode-instructions", version = "0.1.11" }
 locode-skills = { path = "crates/locode-skills", version = "0.1.11" }
-locode-commands = { path = "crates/locode-commands", version = "0.1.11" }
 locode-engine = { path = "crates/locode-engine", version = "0.1.11" }
 locode-core = { path = "crates/locode-core", version = "0.1.11" }
 locode-tui = { path = "crates/locode-tui", version = "0.1.11" }

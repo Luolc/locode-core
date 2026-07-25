@@ -10,6 +10,7 @@
 mod discover;
 mod frontmatter;
 mod inject;
+mod invoke;
 mod listing;
 
 pub use discover::{
@@ -17,4 +18,5 @@ pub use discover::{
     ambiguous_names, discover, normalize_name,
 };
 pub use inject::{already_delivered, any_listing_delivered, listing_message, removal_message};
+pub use invoke::{ARGUMENTS_MARKER, invocation_text, read_body};
 pub use listing::{NO_SKILLS_BODY, char_budget, render_body};

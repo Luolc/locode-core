@@ -33,7 +33,6 @@ and — since the 2026-07-18 rename below — the facade crate as well.
 | `locode-host` | fs/shell/path-jail/truncation/rg-resolution (injectable side-effect seam) |
 | `locode-instructions` | project instructions (`AGENTS.md`): discovery, assembly, and the injected `<system-reminder>` message (added 2026-07-24) |
 | `locode-skills` | agent skills (`SKILL.md`): discovery and the model-facing listing (added 2026-07-24) |
-| `locode-commands` | slash commands: the `SlashCommand` trait, `CommandResult`, and the registry (added 2026-07-25, ADR-0026) |
 | `locode-engine` | sample→dispatch→append loop + `Session` driving API |
 | `locode-core` (was `locode`) | thin facade re-exporting the public surface |
 | `locode-exec` | headless runner **library** (`run_headless` + `main_with`); binary target removed 2026-07-23 — kept standalone (not collapsed into `locode-tui`) so headless-only consumers avoid the TUI dep (ADR-0019 amendment) |
