@@ -9,8 +9,10 @@
 
 mod discover;
 mod frontmatter;
+mod listing;
 
 pub use discover::{
     DiscoveredSkills, SKILL_FILE, Skill, SkillScope, SkillsConfig, ambiguous_names, discover,
     normalize_name,
 };
+pub use listing::{NO_SKILLS_BODY, char_budget, render_body};
