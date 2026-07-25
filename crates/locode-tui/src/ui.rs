@@ -418,6 +418,51 @@ mod tests {
         );
     }
 
+    /// The fuzzy matcher's indices reach the screen: the letters the query matched are
+    /// blue, and their neighbours are not.
+    #[test]
+    fn the_letters_a_query_matched_render_blue() {
+        let mut terminal = FrameTerminal::new(TestBackend::new(50, 12)).unwrap();
+        let mut app = App::new();
+        app.model = Some("mock-1".into());
+        // `qt` is a subsequence of `quit`, not a substring — this only matches at all
+        // because the ranking is fuzzy.
+        for ch in "/qt".chars() {
+            let _ = app.update(
+                crate::app::Msg::Input(Box::new(crossterm::event::Event::Key(
+                    crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char(ch)),
+                ))),
+                Instant::now(),
+            );
+        }
+        assert_eq!(
+            app.slash.matches.len(),
+            1,
+            "precondition: only /quit matches"
+        );
+
+        let (cr, _) = live_rows(&app, 50, 12);
+        terminal.draw(|frame| draw(frame, &app, &[], cr)).unwrap();
+        let buf = terminal.backend().buffer();
+        let row = (0..12)
+            .find(|&y| {
+                (0..50)
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect::<String>()
+                    .contains("/quit")
+            })
+            .expect("the menu row is on screen");
+
+        // Label starts at column 4 (2 margin + 2 prefix): `/ q u i t`.
+        let at = |x: u16| (buf[(x, row)].symbol().to_string(), buf[(x, row)].style().fg);
+        let blue = Some(Color::LightBlue);
+        assert_eq!(at(5), ("q".into(), blue), "matched");
+        assert_eq!(at(8), ("t".into(), blue), "matched");
+        assert_eq!(at(6).0, "u");
+        assert_ne!(at(6).1, blue, "unmatched letter is not blue");
+        assert_ne!(at(4).1, blue, "the slash is not blue");
+    }
+
     #[test]
     fn footer_is_two_rows_cwd_time_over_model_tokens() {
         let mut app = App::new();

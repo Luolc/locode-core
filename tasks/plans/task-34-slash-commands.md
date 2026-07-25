@@ -122,6 +122,24 @@
 - `indices()` → highlight spans grouped into **consecutive runs** of matched/unmatched
   (grok's `build_highlighted_spans`), styled accent vs primary. Runs, not per-character.
 
+**Decisions taken while implementing:**
+
+- **`nucleo-matcher`, not the `nucleo` umbrella.** Same Helix project and the same two
+  calls grok uses (`score`, `indices`); the umbrella adds a threaded multi-pattern
+  search engine (rayon + parking_lot) built for streaming millions of candidates, and
+  the menu ranks a handful of names per keystroke.
+- **Score on `match_text`, take indices for `display`.** The label carries a leading
+  slash the query never does; asking nucleo for the label's indices with the same
+  pattern handles the offset instead of arithmetic that has to stay in sync.
+- **One row per command**, so an alias and its canonical name cannot list the same
+  command twice: better score wins, then exact match, then the canonical name (grok's
+  tiebreak chain).
+- **"Did you mean" is fuzzy too**, sharing the ranker, so `/nw` suggests `/new`. Its
+  matcher is built on the spot — it runs once, on the error path.
+- **The matcher lives on `App`**, not inside `SlashState`: it owns a ~100 KB scoring
+  slab, cheap to reuse and wasteful to rebuild per keystroke (grok's controller keeps
+  one for the same reason).
+
 ### S6 — argument submenu + `/model` (M)
 
 - When a command is recognized and takes args, the dropdown switches to its

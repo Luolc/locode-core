@@ -94,6 +94,14 @@ unicode-width = "0.2"
 # Multiline composer widget (grok forked one; the stock crate suffices for v1
 # behind our own Composer wrapper).
 tui-textarea = "0.7"
+# Fuzzy matching + match indices for the slash-command menu (ADR-0026's approved
+# `nucleo` dependency). We take **`nucleo-matcher`**, the matcher crate of the same
+# Helix project, rather than the `nucleo` umbrella: the umbrella adds a threaded
+# multi-pattern search engine (rayon + parking_lot) built for streaming millions of
+# candidates, and our menu ranks a handful of command names per keystroke. Same
+# algorithm and the same `indices()` that drive the highlighted letters — grok's
+# `slash/matcher.rs` uses exactly those two calls.
+nucleo-matcher = "0.3"
 # Assistant markdown -> styled lines (no syntect in v1).
 pulldown-cmark = { version = "0.13", default-features = false }
 # Code-block syntax highlighting for the TUI markdown renderer (markdown study
