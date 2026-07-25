@@ -91,6 +91,30 @@
 - **This is the slice that makes the feature real** — everything after it is ranking
   and polish.
 
+**Decisions taken while implementing:**
+
+- **Execution belongs to the loop, not the reducer.** `execute` is async *and* a
+  skill-backed command reads its `SKILL.md` from disk, so `App::update` cannot run one
+  and stay sans-IO. It returns `Cmd::RunCommand { line }`; the loop awaits
+  `commands::execute` and feeds the result back through `App::apply_command_result`.
+  `run_reducer` becomes a **worklist** rather than a `for`, since running a command
+  produces further commands.
+- **A queued prompt carries display *and* wire text.** A queued skill invocation must
+  preview as `/commit fix the typo` while the engine receives the body — grok's
+  `QueuedPrompt { wire_blocks, display }`. Un-queueing (Esc) restores the *invocation*,
+  so re-submitting runs the command again rather than pasting the body.
+- **A path is not a mistyped command.** `parse_invocation` now rejects a name containing
+  a second slash, so `/usr/bin/env …` is ordinary text everywhere — one rule for the
+  menu and dispatch, resolving ADR-0026 §5's two sentences into a single behavior. (S1
+  had pinned the opposite in a test; that test is updated with the reason.)
+- **Commands run even when the session failed to build**, so `/quit` still works on a
+  broken engine. They also enter prompt history, so ↑ brings back `/commit foo`.
+- **Skills reach the menu via `EngineMsg::Ready`.** The engine task discovers them from
+  the same resolved settings it gives the model, so the two never disagree. Registry is
+  *rebuilt* on every Ready, not appended to, so a deleted skill stops being offered.
+  **Known gap:** a skill added mid-session reaches the model on the next turn
+  (ADR-0025 §3.2's rescan) but the menu only on the next `/new`.
+
 ### S5 — `nucleo` ranking and blue matched letters (M)
 
 - Rank rows with nucleo (`CaseMatching::Smart`, `Normalization::Smart`); empty query =

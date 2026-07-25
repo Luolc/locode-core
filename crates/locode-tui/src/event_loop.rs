@@ -139,7 +139,7 @@ pub async fn run(cli: Cli, registry: ProviderRegistry) -> Result<ExitCode, RunEr
             biased;
             _ = signal_rx.recv() => {
                 let mut io = LoopIo { engine_tx: &engine_tx, current_cancel: current_cancel.as_ref(), approvals: &mut approvals };
-                run_reducer(&mut app, Msg::SignalQuit, &mut io);
+                run_reducer(&mut app, Msg::SignalQuit, &mut io).await;
             }
             // Engine arm gated on an empty input queue so a busy engine can
             // never starve keystrokes; bounded batch drain (grok's rule).
@@ -149,13 +149,23 @@ pub async fn run(cli: Cli, registry: ProviderRegistry) -> Result<ExitCode, RunEr
                     // app stays usable for quit keys.
                     continue;
                 };
-                route_engine(&mut app, first, &engine_tx, &mut current_cancel, &mut approvals);
+                route_engine(&mut app, first, &engine_tx, &mut current_cancel, &mut approvals)
+                    .await;
                 for _ in 1..ENGINE_DRAIN_MAX {
                     if !input_rx.is_empty() {
                         break;
                     }
                     match engine_rx.try_recv() {
-                        Ok(msg) => route_engine(&mut app, msg, &engine_tx, &mut current_cancel, &mut approvals),
+                        Ok(msg) => {
+                            route_engine(
+                                &mut app,
+                                msg,
+                                &engine_tx,
+                                &mut current_cancel,
+                                &mut approvals,
+                            )
+                            .await;
+                        }
                         Err(_) => break,
                     }
                 }
@@ -170,7 +180,7 @@ pub async fn run(cli: Cli, registry: ProviderRegistry) -> Result<ExitCode, RunEr
                     continue;
                 }
                 let mut io = LoopIo { engine_tx: &engine_tx, current_cancel: current_cancel.as_ref(), approvals: &mut approvals };
-                run_reducer(&mut app, Msg::Input(Box::new(event)), &mut io);
+                run_reducer(&mut app, Msg::Input(Box::new(event)), &mut io).await;
             }
             () = sleep_until(timer), if timer.is_some() => {
                 let now = Instant::now();
@@ -185,7 +195,7 @@ pub async fn run(cli: Cli, registry: ProviderRegistry) -> Result<ExitCode, RunEr
                 if next_tick.is_some_and(|at| now >= at) {
                     next_tick = None; // rescheduled at loop top while running
                     let mut io = LoopIo { engine_tx: &engine_tx, current_cancel: current_cancel.as_ref(), approvals: &mut approvals };
-                    run_reducer(&mut app, Msg::Tick, &mut io);
+                    run_reducer(&mut app, Msg::Tick, &mut io).await;
                 }
                 // A due deferred draw is handled by the top-of-loop paint.
             }
@@ -346,7 +356,7 @@ struct LoopIo<'a> {
 
 /// Route an engine message: manage the loop-owned cancel handle + approval
 /// oneshots around the run lifecycle, then dispatch a reducer-visible message.
-fn route_engine(
+async fn route_engine(
     app: &mut App,
     msg: EngineMsg,
     engine_tx: &tokio::sync::mpsc::UnboundedSender<UiCommand>,
@@ -362,7 +372,8 @@ fn route_engine(
                 engine_tx,
                 current_cancel.as_ref(),
                 approvals,
-            );
+            )
+            .await;
         }
         EngineMsg::RunFinished(report) => {
             *current_cancel = None;
@@ -373,7 +384,8 @@ fn route_engine(
                 engine_tx,
                 current_cancel.as_ref(),
                 approvals,
-            );
+            )
+            .await;
         }
         // Take the responder into the loop's map; forward the display view.
         EngineMsg::Approval(ask) => {
@@ -384,13 +396,13 @@ fn route_engine(
                 current_cancel: current_cancel.as_ref(),
                 approvals,
             };
-            run_reducer(app, Msg::Approval(view), &mut io);
+            run_reducer(app, Msg::Approval(view), &mut io).await;
         }
-        other => dispatch_engine(app, other, engine_tx, current_cancel.as_ref(), approvals),
+        other => dispatch_engine(app, other, engine_tx, current_cancel.as_ref(), approvals).await,
     }
 }
 
-fn dispatch_engine(
+async fn dispatch_engine(
     app: &mut App,
     msg: EngineMsg,
     engine_tx: &tokio::sync::mpsc::UnboundedSender<UiCommand>,
@@ -402,15 +414,23 @@ fn dispatch_engine(
         current_cancel,
         approvals,
     };
-    run_reducer(app, Msg::Engine(Box::new(msg)), &mut io);
+    run_reducer(app, Msg::Engine(Box::new(msg)), &mut io).await;
 }
 
 /// Run the reducer and execute the returned commands (all IO lives here).
-fn run_reducer(app: &mut App, msg: Msg, io: &mut LoopIo<'_>) {
+async fn run_reducer(app: &mut App, msg: Msg, io: &mut LoopIo<'_>) {
     debug_log(&format!("msg: {msg:?}"));
-    let cmds = app.update(msg, Instant::now());
-    for cmd in cmds {
+    // A worklist rather than a `for`: running a command produces further commands, and
+    // the reducer cannot run one itself (`execute` is async and a skill-backed command
+    // reads its file from disk).
+    let mut work: std::collections::VecDeque<Cmd> = app.update(msg, Instant::now()).into();
+    while let Some(cmd) = work.pop_front() {
         match cmd {
+            Cmd::RunCommand { line } => {
+                let ctx = app.command_ctx();
+                let result = crate::commands::execute(&app.registry, &ctx, &line).await;
+                work.extend(app.apply_command_result(result));
+            }
             Cmd::Quit => app.should_quit = true,
             Cmd::Submit(text) => {
                 let _ = io.engine_tx.send(UiCommand::Submit(text));
