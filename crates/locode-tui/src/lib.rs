@@ -18,6 +18,7 @@ use locode_core::ProviderRegistry;
 pub mod app;
 pub mod approval;
 pub mod cli;
+pub mod commands;
 pub mod engine;
 pub mod frame_terminal;
 pub mod term;

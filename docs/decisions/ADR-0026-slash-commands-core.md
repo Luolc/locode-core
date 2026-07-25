@@ -188,17 +188,27 @@ with skills; everything else is UI and should stay there.
 
 | Layer | Contents |
 |---|---|
-| **`locode-commands`** (new crate) | the `SlashCommand` trait, `CommandResult`, `ArgItem`, and the registry (registration, provenance, visibility filtering, ordered lookup) |
 | **`locode-skills`** | building a skill *invocation*: read the `SKILL.md`, assemble the body + arguments block (§8). A pure function — skills stay unaware that commands exist |
-| **`locode-tui`** | everything visible: the dropdown, ranking and its highlight spans, ghost text, key handling, and the UI-only commands (`/new`, `/quit`) |
+| **`locode-tui`** | the `SlashCommand` trait, `CommandResult`, `ArgItem`, the registry — **and** everything visible: the dropdown, ranking and its highlight spans, ghost text, key handling, and the UI-only commands (`/new`, `/quit`) |
 
-The dependency runs `locode-commands → locode-skills`, not the reverse: the registry
-needs to enumerate skill-backed commands, while skills has no reason to know the
-command trait. Both harnesses put the whole thing in their TUI; we split only because
-`InjectSkill` genuinely needs skill loading, and a UI crate is the wrong home for it.
+The dependency runs commands → skills, never the reverse: the registry enumerates
+skill-backed commands, while skills has no reason to know the command trait exists.
 
-**Release consequence:** an eleventh crate, published after `skills` in dependency
-order (`… → host → instructions → skills → commands → provider → …`).
+> **Amendment (2026-07-25): the trait and registry live in `locode-tui`, not a crate of
+> their own.** *(User decision.)* An earlier draft of this section gave them a
+> `locode-commands` crate, justified by "`InjectSkill` needs skill loading, and a UI
+> crate is the wrong home for it". That justification does not survive scrutiny: the
+> dependency runs **downward** (commands → skills) and the **only** consumer is the TUI,
+> which makes a separate crate a module in disguise — `locode-tui` can depend on
+> `locode-skills` directly, exactly as it already depends on `locode-core`. Both
+> reference harnesses put the whole thing in their TUI for the same reason.
+>
+> It earns its own crate the day a **non-TUI surface needs commands**. The concrete
+> candidate is headless `locode -p "/commit fix the typo"`, which would put the registry
+> behind the published `locode-exec`; nothing in this ADR commits to that. Collapsing it
+> now costs nothing externally — the crate was never published.
+>
+> **Release consequence:** none. The published set stays at 10.
 
 ### 8. Arguments are plain text appended after the body
 

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::command::{CommandCtx, SlashCommand};
+use super::command::{CommandCtx, SlashCommand};
 
 /// Where a command came from. Kept from registration so precedence and later sources
 /// (plugins, server-advertised) have somewhere to land — grok's `CommandSource`.
@@ -266,8 +266,8 @@ impl CommandRegistry {
 
 #[cfg(test)]
 mod tests {
+    use crate::commands::command::{ArgItem, CommandResult, UiAction};
     use super::*;
-    use crate::command::{ArgItem, CommandResult, UiAction};
 
     struct Fake {
         name: &'static str,

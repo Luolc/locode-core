@@ -19,8 +19,7 @@ Current release: **0.1.11**. Sizes: XS = 1 file · S = 1–2 · M = 3–5 · L =
 locode-protocol   (pure types)
     ├── locode-host       (fs / shell / path-jail / truncation / rg)
     │       ├── locode-instructions  (AGENTS.md discovery + its <system-reminder>)
-    │       ├── locode-skills        (SKILL.md discovery + the skills listing)
-    │       └── locode-commands      (slash-command trait + registry)
+    │       └── locode-skills        (SKILL.md discovery + the skills listing)
     ├── locode-tools      (Tool trait, registry, dispatch door — framework)
     │       └── locode-packs   (grok pack: real per-harness tools, over tools + host)
     ├── locode-provider   (Provider trait + wires: mock · anthropic · openai-responses)
@@ -173,10 +172,11 @@ and resolve the plan's open-questions section first.
   decision 2026-07-24). The holistic design pass this entry was waiting for is done:
   study [`../docs/research/harness-study-slash-commands.md`](../docs/research/harness-study-slash-commands.md),
   core decisions in [ADR-0026](../docs/decisions/ADR-0026-slash-commands-core.md)
-  (**Accepted** — `nucleo` approved; `execute` async from day 0; a new
-  **`locode-commands`** crate for the trait + registry, skill *invocation* assembly in
-  `locode-skills`, everything visible in `locode-tui`; arguments are plain text
-  appended after the body, no template syntax).
+  (**Accepted** — `nucleo` approved; `execute` async from day 0; the trait, registry and
+  everything visible live in **`locode-tui`** (§7 amendment 2026-07-25 — no separate
+  crate: the dependency runs commands → skills and the TUI is the only consumer), skill
+  *invocation* assembly in `locode-skills`; arguments are plain text appended after the
+  body, no template syntax).
   - **Why first:** it is the missing half of skills — ADR-0025 parses `user-invocable`
     but has no user-invocation channel, so a shipped skill can only be reached by the
     model choosing to read it.
