@@ -1288,6 +1288,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "locode-skills"
+version = "0.1.10"
+dependencies = [
+ "locode-host",
+ "locode-protocol",
+ "serde",
+ "tempfile",
+]
+
+[[package]]
 name = "locode-tools"
 version = "0.1.10"
 dependencies = [

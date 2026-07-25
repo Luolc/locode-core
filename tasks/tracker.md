@@ -18,7 +18,8 @@ Current release: **0.1.10**. Sizes: XS = 1 file · S = 1–2 · M = 3–5 · L =
 ```
 locode-protocol   (pure types)
     ├── locode-host       (fs / shell / path-jail / truncation / rg)
-    │       └── locode-instructions  (AGENTS.md discovery + its <system-reminder>)
+    │       ├── locode-instructions  (AGENTS.md discovery + its <system-reminder>)
+    │       └── locode-skills        (SKILL.md discovery + the skills listing)
     ├── locode-tools      (Tool trait, registry, dispatch door — framework)
     │       └── locode-packs   (grok pack: real per-harness tools, over tools + host)
     ├── locode-provider   (Provider trait + wires: mock · anthropic · openai-responses)
@@ -82,7 +83,7 @@ The immediate queue, ahead of the remaining packs:
   [`plans/task-32-skills.md`](plans/task-32-skills.md)):
   - [x] **S1** — `extends` becomes a dotfolder (`settings.json` + `skills/` + `AGENTS.md`)
     and settings-before-discovery becomes a load-order invariant.
-  - [ ] **S2** — new `locode-skills` crate: discovery, five-key frontmatter, precedence,
+  - [x] **S2** — new `locode-skills` crate: discovery, five-key frontmatter, precedence,
     three-scope collisions.
   - [ ] **S3** — listing body: grok's verbatim format, 50 % budget, three-tier degrade.
   - [ ] **S4** — injection: whole-body diff, previous state read off the transcript,
