@@ -157,8 +157,8 @@ fn streaming_cell(app: &App, width: u16, screen_h: u16, composer_rows: u16) -> V
 fn queue_lines(app: &App) -> Vec<Line<'static>> {
     app.prompt_queue
         .iter()
-        .map(|text| {
-            let one_line = text.replace('\n', " ");
+        .map(|queued| {
+            let one_line = queued.display.replace('\n', " ");
             Line::styled(
                 format!("  queued: {one_line}"),
                 Style::default().add_modifier(Modifier::DIM),

@@ -11,12 +11,14 @@
 
 mod builtin;
 mod command;
+mod dispatch;
 mod registry;
 mod skill;
 mod state;
 
 pub use builtin::register_builtins;
 pub use command::{ArgItem, CommandCtx, CommandResult, SlashCommand, UiAction};
+pub use dispatch::execute;
 pub use registry::{
     CommandRegistry, CommandSource, CommandTrigger, Invocation, LookupError, parse_invocation,
 };

@@ -71,8 +71,11 @@ pub struct Invocation<'a> {
 
 /// Split `/name rest` (grok's `parse_invocation`, `slash/mod.rs:1124-1147`).
 ///
-/// `None` when the line does not start with `/`, or the token is empty — which is what
-/// keeps a leading-slash *path* out of the command machinery.
+/// `None` when the line does not start with `/`, when the token is empty, or when the
+/// token contains a **second slash** — that last rule is what keeps `/usr/bin/env` and
+/// `/dev/null` out of the command machinery entirely. ADR-0026 §5 wants a path sent as
+/// ordinary text, not answered with "unknown command, did you mean…", and no command
+/// name can contain a slash, so one rule covers both the menu and dispatch.
 #[must_use]
 pub fn parse_invocation(line: &str) -> Option<Invocation<'_>> {
     let remainder = line.strip_prefix('/')?;
@@ -84,7 +87,7 @@ pub fn parse_invocation(line: &str) -> Option<Invocation<'_>> {
         .find(|(_, c)| c.is_whitespace())
         .map_or(remainder.len(), |(i, _)| i);
     let name = remainder[..end].trim();
-    if name.is_empty() {
+    if name.is_empty() || name.contains('/') {
         return None;
     }
     Some(Invocation {
@@ -365,12 +368,10 @@ mod tests {
         assert!(parse_invocation("/").is_none());
         assert!(parse_invocation("/ spaced").is_none());
         assert!(parse_invocation("no slash").is_none());
-        // A path *does* parse as a name — the registry rejects it as unknown, which is
-        // where the "did you mean" lives. Pinned so the split stays deliberate.
-        assert_eq!(
-            parse_invocation("/usr/bin/env").unwrap().name,
-            "usr/bin/env"
-        );
+        // A path is ordinary text, not a mistyped command (ADR-0026 §5): the second
+        // slash rules it out here, so nothing downstream has to special-case it.
+        assert!(parse_invocation("/usr/bin/env").is_none());
+        assert!(parse_invocation("/dev/null is empty").is_none());
     }
 
     #[test]

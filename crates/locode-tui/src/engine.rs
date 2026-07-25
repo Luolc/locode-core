@@ -38,6 +38,8 @@ pub struct RecoveredContext {
 pub enum EngineMsg {
     /// Session assembled; the app is ready to accept prompts.
     Ready {
+        /// User-invocable skills, to register as slash commands (ADR-0026 §4).
+        skills: Vec<locode_skills::Skill>,
         /// Resolved model id (for the status display).
         model: String,
         /// Working directory, home-shortened (for the status display).
@@ -120,6 +122,7 @@ pub fn spawn(
             cwd: built.cwd_display.clone(),
             shell: shell.clone(),
             context: built.context,
+            skills: built.skills.clone(),
         });
         // A resumed session replays its recovered transcript into the UI.
         // Assistant messages + tool results ride the normal event path (tool
@@ -159,6 +162,7 @@ pub fn spawn(
                                 cwd: built.cwd_display.clone(),
                                 shell: shell.clone(),
                                 context: None,
+                                skills: built.skills.clone(),
                             });
                         }
                         Err(message) => {
@@ -261,6 +265,10 @@ struct BuiltSession {
     replay: Vec<locode_core::Message>,
     /// Recovered context occupancy (`None` for a fresh session).
     context: Option<RecoveredContext>,
+    /// Skills discovered for this session, so the UI can offer the user-invocable
+    /// ones as slash commands (ADR-0026 §4). Discovered here rather than in the UI so
+    /// both halves see the *same* resolved settings.
+    skills: Vec<locode_skills::Skill>,
 }
 
 #[allow(clippy::too_many_lines)] // linear assembly, mirrored from locode-exec
@@ -414,6 +422,15 @@ fn build_session(
         ..EngineConfig::default()
     };
 
+    // The command menu offers the same skills the model is told about, from the same
+    // resolved settings — discovered once here rather than re-walked by the UI.
+    // Warnings stay with the engine, which reports them on every run.
+    let skills = if config.skills.enabled {
+        locode_skills::discover(&config.cwd, &config.skills).skills
+    } else {
+        Vec::new()
+    };
+
     // The approver surfaces asks on the same channel; --yolo makes it
     // auto-allow without ever surfacing UI (ADR-0017 client-side stickiness).
     let approver = Arc::new(crate::approval::TuiApprover::new(
@@ -462,6 +479,7 @@ fn build_session(
         harness: harness_name,
         replay,
         context,
+        skills,
     })
 }
 

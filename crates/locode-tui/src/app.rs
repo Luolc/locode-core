@@ -10,7 +10,10 @@ use crossterm::event::{Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers}
 use locode_core::{ContentBlock, Event, Report, ResultChunk, Role};
 
 use crate::approval::{ApprovalOutcome, ApprovalView};
-use crate::commands::{CommandCtx, CommandRegistry, SlashState, register_builtins};
+use crate::commands::{
+    CommandCtx, CommandRegistry, CommandResult, SlashState, UiAction, parse_invocation,
+    register_builtins, register_skills,
+};
 use crate::engine::EngineMsg;
 use crate::ui::blocks::{Block, turn_end};
 use crate::ui::composer::Composer;
@@ -48,6 +51,15 @@ pub enum Cmd {
     Submit(String),
     /// Discard the session and build a fresh one (`/new`).
     NewSession,
+    /// Resolve and run this `/name args` line, then feed the result back through
+    /// [`App::apply_command_result`].
+    ///
+    /// The reducer cannot run it itself: `execute` is async and a skill-backed command
+    /// reads its `SKILL.md` from disk, so execution belongs to the loop that owns IO.
+    RunCommand {
+        /// The whole line, leading slash included.
+        line: String,
+    },
     /// Fire the current run's cancel handle (the loop holds it — ADR-0018).
     CancelRun,
     /// Resolve a pending approval (the loop holds the oneshot, keyed by id).
@@ -85,6 +97,30 @@ pub enum RunState {
         /// The cancel handle was fired; awaiting the terminal report.
         cancelling: bool,
     },
+}
+
+/// A prompt waiting for the current run to finish.
+///
+/// `display` and `wire` differ for a skill invocation: the transcript shows
+/// `/commit fix the typo` while the model receives the whole skill body (grok's
+/// `QueuedPrompt { wire_blocks, display }`). For an ordinary prompt they are the same
+/// text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueuedPrompt {
+    /// What the queue preview and the transcript show.
+    pub display: String,
+    /// What the engine receives.
+    pub wire: String,
+}
+
+impl QueuedPrompt {
+    /// A prompt whose display text *is* what the model sees.
+    fn plain(text: String) -> Self {
+        Self {
+            display: text.clone(),
+            wire: text,
+        }
+    }
 }
 
 /// An assistant tool call whose result hasn't arrived yet (shown in the
@@ -133,7 +169,7 @@ pub struct App {
     stashed_draft: Option<String>,
     /// Prompts submitted while a run was active — drained one per turn end
     /// (codex's queue-and-drain).
-    pub prompt_queue: VecDeque<String>,
+    pub prompt_queue: VecDeque<QueuedPrompt>,
     /// Prompt history, most-recent-first (move-to-front dedup, cap 200).
     history: Vec<String>,
     /// History browse cursor (`None` = not browsing); index into `history`.
@@ -319,10 +355,12 @@ impl App {
                 cwd,
                 shell,
                 context,
+                skills,
             } => {
                 self.model = Some(model);
                 self.cwd = Some(cwd);
                 self.shell = Some(shell);
+                self.register_skill_commands(&skills);
                 // Fresh session: context resets to 0. Resumed: exact when the
                 // rollout carried usage records, else a `~` estimate — either
                 // way replaced by the first real usage report.
@@ -561,9 +599,9 @@ impl App {
     /// Pop and submit the next queued prompt, if any (called at turn end).
     fn drain_queued_prompt(&mut self) -> Vec<Cmd> {
         match self.prompt_queue.pop_front() {
-            Some(text) => {
-                self.outbox.push(Block::UserPrompt(text.clone()));
-                vec![Cmd::Submit(text)]
+            Some(queued) => {
+                self.outbox.push(Block::UserPrompt(queued.display));
+                vec![Cmd::Submit(queued.wire)]
             }
             None => vec![],
         }
@@ -727,10 +765,12 @@ impl App {
                 if self.is_running() {
                     return vec![self.begin_cancel()];
                 }
-                if let Some(text) = self.prompt_queue.pop_back() {
+                if let Some(queued) = self.prompt_queue.pop_back() {
                     // Un-queue the most recently queued prompt (codex's
-                    // edit-queued gesture, mapped to Esc per our spec).
-                    self.composer.set_text(&text);
+                    // edit-queued gesture, mapped to Esc per our spec). The *display*
+                    // text goes back, so an un-queued `/commit foo` is the command
+                    // again rather than the skill body it expanded to.
+                    self.composer.set_text(&queued.display);
                     self.disarm();
                     return vec![];
                 }
@@ -788,49 +828,106 @@ impl App {
         if text.trim().is_empty() {
             return vec![];
         }
-        // Slash commands intercept before submit/queue.
-        if let Some(cmds) = self.try_slash(&text) {
+        self.record_history(&text);
+        // Slash commands intercept before submit/queue — including when the engine is
+        // not ready, so `/quit` still works on a session that failed to build.
+        if let Some(cmds) = Self::try_slash(&text) {
             return cmds;
         }
         if self.engine_failed || self.model.is_none() {
             self.composer.set_text(&text); // engine not ready; keep it
             return vec![];
         }
-        self.record_history(&text);
-        // Running ⇒ queue (drained one per turn end); else submit.
-        if self.is_running() {
-            self.prompt_queue.push_back(text);
-            return vec![];
-        }
-        self.outbox.push(Block::UserPrompt(text.clone()));
-        vec![Cmd::Submit(text)]
+        self.send(QueuedPrompt::plain(text))
     }
 
-    /// Slash-command dispatch (`/quit`, `/new`); `None` if `text` isn't a
-    /// recognized command shape (falls through to submit/queue).
-    fn try_slash(&mut self, text: &str) -> Option<Vec<Cmd>> {
-        let trimmed = text.trim();
-        if !trimmed.starts_with('/') {
-            return None;
+    /// Send a prompt: straight to the engine when idle, onto the queue while a run is
+    /// active (codex's queue-and-drain). Either way the transcript echoes it once.
+    fn send(&mut self, prompt: QueuedPrompt) -> Vec<Cmd> {
+        if self.is_running() {
+            self.prompt_queue.push_back(prompt);
+            return vec![];
         }
-        match trimmed {
-            "/quit" | "/exit" => {
-                self.should_quit = true;
-                Some(vec![Cmd::Quit])
+        self.outbox.push(Block::UserPrompt(prompt.display));
+        vec![Cmd::Submit(prompt.wire)]
+    }
+
+    /// Hand a `/name args` line to the registry; `None` when `text` is not an
+    /// invocation at all (a path, a bare slash) and should ride the ordinary prompt
+    /// path — ADR-0026 §5.
+    fn try_slash(text: &str) -> Option<Vec<Cmd>> {
+        let trimmed = text.trim();
+        parse_invocation(trimmed)?;
+        Some(vec![Cmd::RunCommand {
+            line: trimmed.to_string(),
+        }])
+    }
+
+    /// Rebuild the registry with the builtins plus this session's skills.
+    ///
+    /// Rebuilt rather than appended to, because `/new` reports a fresh set and a
+    /// deleted skill must stop being offered. Builtins go first: registration is
+    /// first-wins, which is what makes builtins beat skills (ADR-0026 §4).
+    ///
+    /// The list is the one the engine discovered when it assembled the session, so the
+    /// menu and the model's listing never disagree. A skill added mid-session reaches
+    /// the model on the next turn (ADR-0025 §3.2's rescan) but the menu only on the
+    /// next `/new` — recorded as the known gap rather than a second rescan path.
+    fn register_skill_commands(&mut self, skills: &[locode_skills::Skill]) {
+        let mut registry = CommandRegistry::new();
+        register_builtins(&mut registry);
+        register_skills(&mut registry, skills);
+        self.registry = registry;
+    }
+
+    /// The read-only view commands get of the session.
+    #[must_use]
+    pub fn command_ctx(&self) -> CommandCtx<'_> {
+        CommandCtx {
+            model: self.model.as_deref(),
+            is_running: matches!(self.run, RunState::Running { .. }),
+        }
+    }
+
+    /// Apply what a command returned. The command itself touched nothing
+    /// (ADR-0026 §2); this is where its effect actually happens.
+    pub fn apply_command_result(&mut self, result: CommandResult) -> Vec<Cmd> {
+        self.dirty = true;
+        match result {
+            CommandResult::Handled => vec![],
+            // Both land as a notice; the difference is the wording the command chose,
+            // not a second rendering path (grok pushes a system block for either).
+            CommandResult::Message(text) | CommandResult::Error(text) => {
+                self.outbox.push(Block::Notice(text));
+                vec![]
             }
-            "/new" => {
-                if self.is_running() {
+            CommandResult::Prompt(text) => {
+                if self.engine_failed || self.model.is_none() {
                     self.outbox
-                        .push(Block::Notice("finish or cancel the run before /new".into()));
-                    Some(vec![])
-                } else {
-                    Some(vec![Cmd::NewSession])
+                        .push(Block::Notice("the session is not ready yet".into()));
+                    return vec![];
                 }
+                self.send(QueuedPrompt::plain(text))
             }
-            other => {
-                self.outbox
-                    .push(Block::Notice(format!("unknown command: {other}")));
-                Some(vec![])
+            // The transcript shows the invocation; the model receives the body.
+            CommandResult::InjectSkill {
+                display_text,
+                prompt_text,
+            } => {
+                if self.engine_failed || self.model.is_none() {
+                    self.outbox
+                        .push(Block::Notice("the session is not ready yet".into()));
+                    return vec![];
+                }
+                self.send(QueuedPrompt {
+                    display: display_text,
+                    wire: prompt_text,
+                })
+            }
+            CommandResult::Action(UiAction::NewSession) => vec![Cmd::NewSession],
+            CommandResult::Action(UiAction::Quit) => {
+                self.should_quit = true;
+                vec![Cmd::Quit]
             }
         }
     }
@@ -977,6 +1074,23 @@ mod tests {
             let _ = app.update(key(KeyCode::Char(ch)), now);
         }
     }
+    /// Drive one message the way the event loop does (`event_loop::run_reducer`): run
+    /// the reducer, execute whatever command it asked for, apply the result, and return
+    /// only the commands that actually reach the loop's IO.
+    async fn drive(app: &mut App, msg: Msg, now: Instant) -> Vec<Cmd> {
+        let mut out = Vec::new();
+        let mut work: VecDeque<Cmd> = app.update(msg, now).into();
+        while let Some(cmd) = work.pop_front() {
+            if let Cmd::RunCommand { line } = cmd {
+                let ctx = app.command_ctx();
+                let result = crate::commands::execute(&app.registry, &ctx, &line).await;
+                work.extend(app.apply_command_result(result));
+            } else {
+                out.push(cmd);
+            }
+        }
+        out
+    }
     fn ready_app() -> App {
         let mut app = App::new();
         let _ = app.update(
@@ -985,6 +1099,7 @@ mod tests {
                 model: "mock-1".into(),
                 cwd: "~/proj".into(),
                 shell: "zsh".into(),
+                skills: Vec::new(),
             })),
             Instant::now(),
         );
@@ -1564,8 +1679,10 @@ mod tests {
     fn esc_at_idle_pops_the_last_queued_prompt() {
         let mut app = ready_app();
         let t0 = Instant::now();
-        app.prompt_queue.push_back("first".into());
-        app.prompt_queue.push_back("second".into());
+        app.prompt_queue
+            .push_back(QueuedPrompt::plain("first".into()));
+        app.prompt_queue
+            .push_back(QueuedPrompt::plain("second".into()));
         let _ = app.update(key(KeyCode::Esc), t0);
         assert_eq!(app.composer.text(), "second", "last queued popped back");
         assert_eq!(app.prompt_queue.len(), 1);
@@ -1611,32 +1728,160 @@ mod tests {
         assert!(app.history_nav.is_none());
     }
 
-    #[test]
-    fn slash_quit_and_new_and_unknown() {
+    #[tokio::test]
+    async fn slash_quit_and_new_and_unknown() {
         let mut app = ready_app();
         let t0 = Instant::now();
 
         type_str(&mut app, "/quit", t0);
-        assert_eq!(app.update(key(KeyCode::Enter), t0), vec![Cmd::Quit]);
+        assert_eq!(
+            drive(&mut app, key(KeyCode::Enter), t0).await,
+            vec![Cmd::Quit]
+        );
         assert!(app.should_quit);
 
         let mut app = ready_app();
         type_str(&mut app, "/new", t0);
-        assert_eq!(app.update(key(KeyCode::Enter), t0), vec![Cmd::NewSession]);
-
-        // Unknown slash → notice, no command, not submitted.
-        type_str(&mut app, "/bogus", t0);
-        assert_eq!(app.update(key(KeyCode::Enter), t0), vec![]);
-        assert!(
-            matches!(app.outbox.last(), Some(Block::Notice(n)) if n.contains("unknown command"))
+        assert_eq!(
+            drive(&mut app, key(KeyCode::Enter), t0).await,
+            vec![Cmd::NewSession]
         );
 
-        // /new while running → notice, no reset.
+        // Unknown slash → notice naming the near miss, no command, not submitted.
+        type_str(&mut app, "/nwe", t0);
+        assert_eq!(drive(&mut app, key(KeyCode::Enter), t0).await, vec![]);
+        let Some(Block::Notice(notice)) = app.outbox.last() else {
+            panic!("expected a notice, got {:?}", app.outbox.last());
+        };
+        assert!(notice.contains("unknown command: /nwe"), "{notice}");
+
+        // /new while running → the command refuses itself, no reset.
         let _ = app.update(run_started(), t0);
         type_str(&mut app, "/new", t0);
-        assert_eq!(app.update(key(KeyCode::Enter), t0), vec![]);
+        assert_eq!(drive(&mut app, key(KeyCode::Enter), t0).await, vec![]);
         assert!(
             matches!(app.outbox.last(), Some(Block::Notice(n)) if n.contains("cancel the run"))
+        );
+    }
+
+    /// A path is ordinary text, not a mistyped command (ADR-0026 §5).
+    #[tokio::test]
+    async fn a_leading_path_is_submitted_as_a_prompt() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        type_str(&mut app, "/usr/bin/env is the one I mean", t0);
+        assert_eq!(
+            drive(&mut app, key(KeyCode::Enter), t0).await,
+            vec![Cmd::Submit("/usr/bin/env is the one I mean".into())]
+        );
+    }
+
+    /// End to end: a skill the engine discovered is offered in the menu, and invoking
+    /// it sends the body while the transcript shows the invocation.
+    #[tokio::test]
+    async fn a_discovered_skill_is_offered_and_injects_its_body() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let skill_dir = dir.path().join("commit");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        let path = skill_dir.join("SKILL.md");
+        std::fs::write(
+            &path,
+            "---\nname: commit\ndescription: d\n---\nStage, then commit.\n",
+        )
+        .unwrap();
+
+        let mut app = App::new();
+        let t0 = Instant::now();
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::Ready {
+                context: None,
+                model: "mock-1".into(),
+                cwd: "~/proj".into(),
+                shell: "zsh".into(),
+                skills: vec![locode_skills::Skill {
+                    name: "commit".into(),
+                    scope: locode_skills::SkillScope::Project,
+                    description: "make a commit".into(),
+                    when_to_use: None,
+                    path,
+                    disable_model_invocation: false,
+                    user_invocable: true,
+                }],
+            })),
+            t0,
+        );
+
+        type_str(&mut app, "/com", t0);
+        assert_eq!(menu(&app), vec!["/commit"], "offered in the menu");
+
+        type_str(&mut app, "mit fix the typo", t0);
+        let cmds = drive(&mut app, key(KeyCode::Enter), t0).await;
+        assert_eq!(
+            cmds,
+            vec![Cmd::Submit(
+                "Stage, then commit.\n\n**ARGUMENTS:** fix the typo".into()
+            )],
+            "the model receives the body plus the arguments block"
+        );
+        assert_eq!(
+            app.outbox.last(),
+            Some(&Block::UserPrompt("/commit fix the typo".into())),
+            "the transcript shows the invocation"
+        );
+    }
+
+    /// A skill invocation splits what the transcript shows from what the model gets.
+    #[tokio::test]
+    async fn injecting_a_skill_echoes_the_invocation_and_sends_the_body() {
+        let mut app = ready_app();
+        let cmds = app.apply_command_result(CommandResult::InjectSkill {
+            display_text: "/commit fix the typo".into(),
+            prompt_text: "the skill body\n\n**ARGUMENTS:** fix the typo".into(),
+        });
+        assert_eq!(
+            cmds,
+            vec![Cmd::Submit(
+                "the skill body\n\n**ARGUMENTS:** fix the typo".into()
+            )],
+            "the model receives the body"
+        );
+        assert_eq!(
+            app.outbox.last(),
+            Some(&Block::UserPrompt("/commit fix the typo".into())),
+            "the transcript shows the invocation"
+        );
+    }
+
+    /// Queued mid-run, the split survives: the preview shows the invocation and the
+    /// engine still gets the body when the queue drains.
+    #[tokio::test]
+    async fn a_queued_skill_keeps_its_display_and_wire_texts_apart() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        let _ = app.update(run_started(), t0);
+        let cmds = app.apply_command_result(CommandResult::InjectSkill {
+            display_text: "/commit x".into(),
+            prompt_text: "BODY".into(),
+        });
+        assert_eq!(cmds, vec![], "queued, not submitted");
+        assert_eq!(app.prompt_queue.len(), 1);
+        assert_eq!(app.prompt_queue[0].display, "/commit x");
+
+        // When the run ends and the queue drains, the transcript still shows the
+        // invocation while the engine receives the body.
+        let cmds = app.update(
+            Msg::Engine(Box::new(EngineMsg::RunFinished(Box::new(report(
+                Status::Completed,
+            ))))),
+            t0,
+        );
+        assert!(cmds.contains(&Cmd::Submit("BODY".into())), "{cmds:?}");
+        assert!(
+            app.outbox
+                .iter()
+                .any(|b| matches!(b, Block::UserPrompt(p) if p == "/commit x")),
+            "the transcript shows the invocation: {:?}",
+            app.outbox
         );
     }
 
@@ -1645,7 +1890,7 @@ mod tests {
         let mut app = ready_app();
         let t0 = Instant::now();
         let _ = app.update(run_started(), t0);
-        app.prompt_queue.push_back("q".into());
+        app.prompt_queue.push_back(QueuedPrompt::plain("q".into()));
         app.pending_tools.push(PendingTool {
             id: "c".into(),
             name: "grep".into(),
@@ -1950,22 +2195,28 @@ mod tests {
     }
 
     /// Enter on a partially typed command completes it *and* runs it.
-    #[test]
-    fn enter_completes_the_selection_then_submits_it() {
+    #[tokio::test]
+    async fn enter_completes_the_selection_then_submits_it() {
         let mut app = ready_app();
         let t0 = Instant::now();
         type_str(&mut app, "/qu", t0);
-        assert_eq!(app.update(key(KeyCode::Enter), t0), vec![Cmd::Quit]);
+        assert_eq!(
+            drive(&mut app, key(KeyCode::Enter), t0).await,
+            vec![Cmd::Quit]
+        );
     }
 
     /// The alias is a row of its own and resolves to the same command.
-    #[test]
-    fn an_alias_is_offered_and_runs_the_command_it_names() {
+    #[tokio::test]
+    async fn an_alias_is_offered_and_runs_the_command_it_names() {
         let mut app = ready_app();
         let t0 = Instant::now();
         type_str(&mut app, "/exi", t0);
         assert_eq!(menu(&app), vec!["/exit"]);
-        assert_eq!(app.update(key(KeyCode::Enter), t0), vec![Cmd::Quit]);
+        assert_eq!(
+            drive(&mut app, key(KeyCode::Enter), t0).await,
+            vec![Cmd::Quit]
+        );
     }
 
     /// A submitted prompt leaves nothing behind: the emptied composer closes the menu.
