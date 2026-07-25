@@ -174,6 +174,31 @@
 - grok's second ghost renderer was **not traced** in the study — confirm against source
   before implementing rather than assuming it shares the first's path.
 
+**Traced during implementation** (`views/prompt_widget/mod.rs:3030-3068`) — the two
+ghosts are separate, and neither shares the first's path in the way the plan guessed:
+
+- The **argument hint** is `snap.args_placeholder`, written straight into the buffer at
+  the caret in `theme.gray` when the argument query is empty. Its source is
+  `command.arg_placeholder()` — the *argument part* only (`<question>`, `[filename]`),
+  **not** the full `usage()` line. Rendering our `/help [command]` after `/help ` would
+  have read `/help /help [command]`.
+- The **name ghost** is written at `token_range.end`, also in gray.
+
+**Decisions taken while implementing:**
+
+- **`arg_placeholder` defaults to the argument part of `usage()`** rather than being a
+  second string per command. A command with an accurate usage line gets an accurate hint
+  for free, and the two cannot drift.
+- **Both ghosts are only offered at the end of the draft**, so the composer never paints
+  over text the user can see. grok needs the general case for mid-text `/tokens`; we
+  have none.
+- **Tab needs no ghost-specific path.** grok's ghost-Tab exists for mid-text tokens with
+  the dropdown closed; our Tab already accepts the same selected row, which produces the
+  identical edit.
+- **Deferred, traced but not built:** grok also recolours a recognized `/command` token
+  in the composer (`paint_slash_token_highlight`, teal). Worth having; it is a composer
+  span-splitting change rather than a menu one, so it is not smuggled into this slice.
+
 ## Preset targets (gate per slice + final)
 
 - **S1**: `/model gpt` parses to `("model", "gpt")`; `/nope` returns not-found listing

@@ -86,6 +86,18 @@ pub struct SlashState {
     pub args_range: Option<Range<usize>>,
     /// Which phase the menu is in: `true` = offering commands, `false` = arguments.
     pub cursor_in_command: bool,
+    /// Dim text the composer draws at the caret, from one of two sources (grok keeps
+    /// them separate too, `views/prompt_widget/mod.rs:3030-3068`):
+    ///
+    /// - **command phase** — the rest of the selected command's name, so `/comm` with
+    ///   `commit` selected shows `it`. Only when the typed text is a genuine *prefix*
+    ///   of it: a fuzzy hit like `/mdl` → `model` has no suffix to offer.
+    /// - **argument phase** — the command's [`crate::commands::SlashCommand::arg_placeholder`], while no
+    ///   argument has been typed yet.
+    ///
+    /// Set independently of `open`: a command with no argument suggestions still shows
+    /// what it expects.
+    pub ghost: Option<String>,
     /// The draft the user pressed Esc on.
     ///
     /// Everything else here is a pure function of the composer, so without this the
@@ -130,6 +142,29 @@ impl SlashState {
         self.cursor_in_command = input.cursor_in_command;
         self.command_range = Some(0..input.command_end);
         self.args_range = input.args_range;
+        self.ghost = if input.cursor_in_command {
+            // Only when the token ends the line: the hint is drawn at the caret, and
+            // there is nothing there to overwrite.
+            (input.command_end == text.chars().count())
+                .then(|| self.name_suffix())
+                .flatten()
+        } else {
+            argument_hint(registry, text, &input.args_query)
+        };
+    }
+
+    /// The rest of the selected command's name after what has been typed.
+    ///
+    /// `None` unless the query is a genuine prefix of it (grok's
+    /// `command_prefix_matches_smart`): the ranking is fuzzy, so the selected row may
+    /// match letters scattered through the name, and there is no "rest" to offer then.
+    fn name_suffix(&self) -> Option<String> {
+        let name = self.selection()?.display.strip_prefix('/')?;
+        if self.query.is_empty() || !smart_prefix(name, &self.query) {
+            return None;
+        }
+        let suffix: String = name.chars().skip(self.query.chars().count()).collect();
+        (!suffix.is_empty()).then_some(suffix)
     }
 
     /// An open menu over `rows` — a fixture for the renderer's tests, which have no
@@ -278,6 +313,28 @@ fn analyze_input(text: &str, cursor: usize) -> Option<Input> {
         args_range,
         args_query,
     })
+}
+
+/// Whether `query` is a prefix of `name` under the matcher's smart-case rule: an
+/// all-lowercase query ignores case, any uppercase character demands an exact match
+/// (grok's `command_prefix_matches_smart`).
+fn smart_prefix(name: &str, query: &str) -> bool {
+    if query.chars().any(char::is_uppercase) {
+        return name.starts_with(query);
+    }
+    let mut chars = name.chars();
+    query
+        .chars()
+        .all(|q| chars.next().is_some_and(|n| n.eq_ignore_ascii_case(&q)))
+}
+
+/// The hint for a recognized command that has been given no argument yet.
+fn argument_hint(registry: &CommandRegistry, text: &str, query: &str) -> Option<String> {
+    if !query.trim().is_empty() {
+        return None;
+    }
+    let (command, _) = registry.resolve(text).ok()?;
+    command.arg_placeholder().map(str::to_string)
 }
 
 /// The rows for the argument phase: whatever the recognized command suggests, ranked
@@ -776,6 +833,91 @@ mod tests {
             "still on /quit after the list narrowed"
         );
         assert_eq!(s.selected, 0);
+    }
+
+    // ── Ghost text ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn the_ghost_completes_the_selected_command_name() {
+        let r = registry(vec![Fake::new("commit"), Fake::new("compact")]);
+        let mut s = state(&r, "/comm");
+        assert_eq!(s.selection().unwrap().display, "/commit");
+        assert_eq!(s.ghost.as_deref(), Some("it"));
+
+        // It follows the selection, not the ranking.
+        s.move_selection(1);
+        // The selection moved but the ghost is derived at refresh time, so re-derive.
+        s.refresh(
+            &r,
+            &mut FuzzyMatcher::new(),
+            &CommandCtx::default(),
+            "/compa",
+            6,
+        );
+        assert_eq!(s.ghost.as_deref(), Some("ct"));
+    }
+
+    /// A fuzzy hit is not a prefix, so there is no "rest of the name" to offer — the
+    /// guard grok's `command_prefix_matches_smart` exists for.
+    #[test]
+    fn a_scattered_match_offers_no_ghost() {
+        let r = registry(vec![Fake::new("model")]);
+        let s = state(&r, "/mdl");
+        assert_eq!(labels(&s), vec!["/model"], "it still matches");
+        assert_eq!(s.ghost, None, "but `mdl` is not a prefix of `model`");
+    }
+
+    #[test]
+    fn a_fully_typed_name_has_nothing_left_to_ghost() {
+        let r = registry(vec![Fake::new("new")]);
+        assert_eq!(state(&r, "/new").ghost, None);
+        assert_eq!(state(&r, "/").ghost, None, "nothing typed yet");
+    }
+
+    /// The command-name ghost is drawn at the caret, so it is only offered when the
+    /// token ends the line — never over text the user can see.
+    #[test]
+    fn no_ghost_when_text_follows_the_command_token() {
+        let r = registry(vec![Fake::new("commit")]);
+        let mut s = SlashState::default();
+        // `/comm foo` with the caret still inside `comm`.
+        s.refresh(
+            &r,
+            &mut FuzzyMatcher::new(),
+            &CommandCtx::default(),
+            "/comm foo",
+            5,
+        );
+        assert!(s.open, "the menu is still offering commands");
+        assert_eq!(s.ghost, None);
+    }
+
+    /// In the argument phase the hint is what the command expects, derived from its
+    /// usage line — and it disappears once an argument is typed.
+    #[test]
+    fn the_argument_hint_shows_what_the_command_expects() {
+        let r = registry(vec![Fake::new("model").suggesting(&["fast"])]);
+        // `Fake::usage` is "/fake", which has no argument part…
+        assert_eq!(state(&r, "/model ").ghost, None);
+
+        // …so use a real builtin, whose usage line does.
+        let mut real = CommandRegistry::new();
+        crate::commands::register_builtins(&mut real);
+        assert_eq!(
+            state(&real, "/help ").ghost.as_deref(),
+            Some("[command]"),
+            "the argument part of `/help [command]`"
+        );
+        assert_eq!(
+            state(&real, "/help n").ghost,
+            None,
+            "an argument was typed; the hint has done its job"
+        );
+        assert_eq!(
+            state(&real, "/quit ").ghost,
+            None,
+            "a command taking no arguments hints nothing"
+        );
     }
 
     #[test]

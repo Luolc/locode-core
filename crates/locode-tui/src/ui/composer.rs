@@ -182,6 +182,21 @@ impl Composer {
     /// the view scrolls to keep the caret on the bottom row once the draft
     /// overflows the (capped) editor height (ADR-0022 caret-follows-bottom).
     pub fn render(&self, frame: &mut crate::frame_terminal::Frame<'_>, area: Rect) {
+        self.render_with_ghost(frame, area, None);
+    }
+
+    /// Render with dim `ghost` text at the caret — the command menu's completion hint.
+    ///
+    /// Drawn only when the caret sits at the very end of the draft, which is the only
+    /// place the menu ever offers one; anywhere else it would paint over text the user
+    /// can see. The caret keeps its cell, landing on the ghost's first character
+    /// (grok draws it the same way, at the token's end position).
+    pub fn render_with_ghost(
+        &self,
+        frame: &mut crate::frame_terminal::Frame<'_>,
+        area: Rect,
+        ghost: Option<&str>,
+    ) {
         use ratatui::layout::{Constraint, Layout};
         use ratatui::widgets::Paragraph;
 
@@ -205,7 +220,7 @@ impl Composer {
         .areas(mid);
         frame.render_widget(Paragraph::new(Line::from("  ❯ ")), gutter);
         frame.render_widget(
-            Paragraph::new(self.editor_lines(editor.width, editor.height)),
+            Paragraph::new(self.editor_lines(editor.width, editor.height, ghost)),
             editor,
         );
         frame.render_widget(Paragraph::new(Line::styled(rule, dim)), bottom);
@@ -215,7 +230,12 @@ impl Composer {
     /// soft-wrapped text scrolled so the caret stays visible (glued to the bottom
     /// row on overflow), with a block caret on the cursor row and the dim
     /// placeholder when empty.
-    fn editor_lines(&self, editor_width: u16, editor_height: u16) -> Vec<Line<'static>> {
+    fn editor_lines(
+        &self,
+        editor_width: u16,
+        editor_height: u16,
+        ghost: Option<&str>,
+    ) -> Vec<Line<'static>> {
         let eh = usize::from(editor_height);
         if eh == 0 {
             return Vec::new();
@@ -243,12 +263,25 @@ impl Composer {
         } else {
             layout.cursor_row.saturating_sub(eh - 1).min(content_h - eh)
         };
+        // The ghost is only ever offered for a caret parked at the end of the draft.
+        let at_end = self.cursor_offset() == Some(self.text().chars().count());
+        let ghost = ghost.filter(|g| !g.is_empty() && at_end);
         let mut out = Vec::with_capacity(eh);
         for i in 0..eh {
             let vrow = offset + i;
             let text = layout.visual.get(vrow).map_or("", String::as_str);
             if vrow == layout.cursor_row {
-                out.push(caret_line(text, layout.cursor_col, caret));
+                match ghost {
+                    Some(ghost) => out.push(ghost_line(
+                        text,
+                        layout.cursor_col,
+                        ghost,
+                        usize::from(editor_width),
+                        caret,
+                        dim,
+                    )),
+                    None => out.push(caret_line(text, layout.cursor_col, caret)),
+                }
             } else {
                 out.push(Line::raw(text.to_string()));
             }
@@ -349,6 +382,42 @@ fn caret_line(row: &str, vcol: usize, caret: Style) -> Line<'static> {
         Span::raw(before),
         Span::styled(caret_txt, caret),
         Span::raw(after),
+    ])
+}
+
+/// A caret row with dim `ghost` text following the caret, truncated to what is left of
+/// the editor width. The caret takes the ghost's first cell, so the hint reads as text
+/// the caret is sitting in front of rather than a second cursor.
+fn ghost_line(
+    row: &str,
+    vcol: usize,
+    ghost: &str,
+    width: usize,
+    caret: Style,
+    dim: Style,
+) -> Line<'static> {
+    let room = width.saturating_sub(vcol);
+    if room == 0 {
+        return caret_line(row, vcol, caret);
+    }
+    let mut shown = String::new();
+    let mut used = 0usize;
+    for ch in ghost.chars() {
+        let w = char_width(ch);
+        if used + w > room {
+            break;
+        }
+        shown.push(ch);
+        used += w;
+    }
+    let mut chars = shown.chars();
+    let Some(first) = chars.next() else {
+        return caret_line(row, vcol, caret);
+    };
+    Line::from(vec![
+        Span::raw(row.to_string()),
+        Span::styled(first.to_string(), caret),
+        Span::styled(chars.collect::<String>(), dim),
     ])
 }
 
@@ -492,6 +561,77 @@ mod tests {
                 "row within the right margin (no overflow): {r:?}"
             );
         }
+    }
+
+    /// The ghost is dim, follows the text, and the caret sits on its first character
+    /// rather than duplicating it.
+    #[test]
+    fn ghost_text_renders_dim_after_the_caret() {
+        let mut c = Composer::new();
+        c.insert_text("/comm");
+        let area = Rect::new(0, 0, 40, 3);
+        let mut t = FrameTerminal::new(TestBackend::new(40, 3)).unwrap();
+        t.draw(|f| c.render_with_ghost(f, area, Some("it")))
+            .unwrap();
+        let buf = t.backend().buffer();
+        let row: String = (0..40).map(|x| buf[(x, 1)].symbol()).collect();
+        assert!(row.starts_with("  ❯ /commit"), "{row:?}");
+
+        // Text column starts at 4; `/comm` occupies 4..9, so the ghost is at 9..11.
+        assert!(
+            buf[(9, 1)].modifier.contains(Modifier::REVERSED),
+            "the caret takes the ghost's first cell"
+        );
+        assert_eq!(buf[(10, 1)].symbol(), "t");
+        assert!(
+            buf[(10, 1)].modifier.contains(Modifier::DIM),
+            "the rest of the ghost is dim"
+        );
+        assert!(
+            !buf[(8, 1)].modifier.contains(Modifier::DIM),
+            "the typed text is not dim"
+        );
+    }
+
+    /// A ghost is only ever offered at the end of the draft; anywhere else it would
+    /// paint over text the user can see, so the caret renders normally instead.
+    #[test]
+    fn a_ghost_is_ignored_when_the_caret_is_not_at_the_end() {
+        let mut c = Composer::new();
+        c.insert_text("/comm foo");
+        c.replace_range(0..9, "/comm foo"); // caret lands at the end…
+        c.input(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Left,
+        )); // …then steps back
+        let area = Rect::new(0, 0, 40, 3);
+        let mut t = FrameTerminal::new(TestBackend::new(40, 3)).unwrap();
+        t.draw(|f| c.render_with_ghost(f, area, Some("it")))
+            .unwrap();
+        let buf = t.backend().buffer();
+        let row: String = (0..40).map(|x| buf[(x, 1)].symbol()).collect();
+        assert_eq!(row.trim_end(), "  ❯ /comm foo", "no ghost spliced in");
+    }
+
+    /// A ghost longer than the room left is truncated rather than wrapped, so the hint
+    /// never changes the composer's height.
+    #[test]
+    fn a_ghost_is_truncated_to_the_editor_width() {
+        let mut c = Composer::new();
+        c.insert_text("/a");
+        // area 20 → editor width 20 - 4 - 2 = 14; `/a` uses 2, so 12 cells remain.
+        let before = c.desired_height(20);
+        let area = Rect::new(0, 0, 20, before);
+        let mut t = FrameTerminal::new(TestBackend::new(20, before)).unwrap();
+        t.draw(|f| c.render_with_ghost(f, area, Some(&"x".repeat(50))))
+            .unwrap();
+        let buf = t.backend().buffer();
+        let row: String = (0..20).map(|x| buf[(x, 1)].symbol()).collect();
+        assert_eq!(
+            row.trim_end().chars().count(),
+            18,
+            "fills the editor, no further: {row:?}"
+        );
+        assert_eq!(c.desired_height(20), before, "the hint costs no rows");
     }
 
     /// The slash menu needs a single-line character offset, and explicitly nothing on
