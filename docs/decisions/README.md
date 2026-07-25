@@ -33,3 +33,4 @@ live in `~/dev/coding-cli-survey`.
 | [0023](ADR-0023-fidelity-boundary-and-agents-md-loading.md) | Fidelity boundary (packs = tools + prompt); shared `AGENTS.md` loading with `User`-role injection (amends 0012, 0013) | Accepted |
 | [0024](ADR-0024-locode-home-settings-and-traces.md) | `~/.locode` — layered JSON settings + resumable JSONL session trace (cwd-keyed, open extension contract) | Accepted (skills §3 resolved by 0025; default `harness` → `grok`) |
 | [0025](ADR-0025-agent-skills.md) | Agent Skills — shared discovery + whole-body-diffed `<system-reminder>` listing (rescanned post-run); no tool — the model reads `SKILL.md` (amends 0008, 0023, 0024) | Accepted |
+| [0026](ADR-0026-slash-commands-core.md) | Slash commands — the **core** contract: a `SlashCommand` trait, a value-returning result, every `user-invocable` skill becomes a command (UI is a later plan) | Proposed |
