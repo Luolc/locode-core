@@ -218,4 +218,28 @@ ghosts are separate, and neither shares the first's path in the way the plan gue
 
 ## Result
 
-_(pending)_
+**Shipped 2026-07-25** across PRs #211–#218 (S1 landed in #211; #212 folded the registry
+into `locode-tui` along with S2). All seven slices are in `main`; every preset target
+above is covered by a test.
+
+What the user gets: `/` opens a fuzzily-ranked menu above the composer with the matched
+letters in blue and a banded selected row; ↑/↓ move, Tab completes, Esc dismisses, Enter
+runs. `/help` `/model` `/new` `/quit`(+`/exit`) ship as builtins, and **every
+`user-invocable` skill is reachable as `/<name> [args]`** — the channel ADR-0025 left
+missing, which is why this task was sequenced ahead of background work.
+
+Two ADR amendments came out of implementing rather than planning, both recorded in
+ADR-0026 before the code changed:
+
+- **§7** — the trait and registry live in `locode-tui`, not a crate of their own: the
+  dependency runs commands → skills and the TUI is the only consumer *(user decision)*.
+- **§6** — v1 ships **no model list**, because locode keeps no model catalog and a
+  hardcoded one would be invented ids; `/model` is read-only and `/help` carries the
+  argument submenu instead.
+
+Known gaps, all recorded in the slice notes above: a skill added mid-session reaches the
+menu only on the next `/new` (the model sees it a turn earlier, via ADR-0025 §3.2's
+rescan); MRU ordering is not implemented (ADR-0026 §3); grok's teal recolouring of a
+recognized `/command` token in the composer is traced but not built; and mid-text
+`/token` completion — grok's largest remaining slash feature — is deliberately out of
+scope, since our menu only opens on a `/` at position 0.
