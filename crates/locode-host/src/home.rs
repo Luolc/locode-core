@@ -32,9 +32,17 @@ pub fn default_locode_home() -> Option<PathBuf> {
     Some(PathBuf::from(home).join(".locode"))
 }
 
-/// The env-free core of [`locode_home`] (tests inject values — env is process-global
-/// and this crate forbids `unsafe` env mutation).
-pub(crate) fn resolve_home_from(
+/// The env-free core of [`locode_home`]: resolve the home from explicit environment
+/// values instead of the process environment.
+///
+/// Public so callers can resolve deterministically — env is process-global and this
+/// crate forbids `unsafe` env mutation, so tests in dependent crates (e.g.
+/// `locode-instructions`) cannot set it and inject the values here instead.
+///
+/// # Errors
+/// A message when an explicitly set `$LOCODE_HOME` does not exist or is not a
+/// directory, or when neither variable is set.
+pub fn resolve_home_from(
     locode_home: Option<OsString>,
     home: Option<OsString>,
 ) -> Result<PathBuf, String> {

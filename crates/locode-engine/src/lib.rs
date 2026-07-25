@@ -9,7 +9,6 @@
 
 mod approve;
 mod config;
-mod instructions;
 mod run;
 mod session;
 mod sink;
@@ -125,7 +124,7 @@ mod tests {
             // crate dir, so a live loader would inject this repo's own AGENTS.md and
             // perturb the exact event/message assertions. The injection path has its own
             // dedicated tests below (`project_instructions_*`).
-            instructions: locode_host::InstructionsConfig {
+            instructions: locode_instructions::InstructionsConfig {
                 enabled: false,
                 ..Default::default()
             },
@@ -1063,7 +1062,7 @@ mod tests {
     fn instr_config(cwd: std::path::PathBuf) -> EngineConfig {
         EngineConfig {
             cwd,
-            instructions: locode_host::InstructionsConfig {
+            instructions: locode_instructions::InstructionsConfig {
                 global_file: false,
                 ..Default::default()
             },

@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::instructions::find_root_from_markers;
+use crate::root::find_root_from_markers;
 
 /// Keys stripped from the project layers before merging (ADR-0024 §1.3 — a
 /// reviewed list: extending it is a normal change, shrinking needs an amendment).

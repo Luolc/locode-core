@@ -31,6 +31,7 @@ and — since the 2026-07-18 rename below — the facade crate as well.
 | `locode-packs` (was `locode-dialects`) | harness packs — faithful per-harness toolsets over `locode-tools` (ADR-0012) |
 | `locode-provider` | `Provider` trait + API-agnostic `ConversationRequest` + Anthropic wire impl |
 | `locode-host` | fs/shell/path-jail/truncation/rg-resolution (injectable side-effect seam) |
+| `locode-instructions` | project instructions (`AGENTS.md`): discovery, assembly, and the injected `<system-reminder>` message (added 2026-07-24) |
 | `locode-engine` | sample→dispatch→append loop + `Session` driving API |
 | `locode-core` (was `locode`) | thin facade re-exporting the public surface |
 | `locode-exec` | headless runner **library** (`run_headless` + `main_with`); binary target removed 2026-07-23 — kept standalone (not collapsed into `locode-tui`) so headless-only consumers avoid the TUI dep (ADR-0019 amendment) |
@@ -50,3 +51,43 @@ and — since the 2026-07-18 rename below — the facade crate as well.
 - Dependency direction is explicit and acyclic: `protocol` is the shared base; `engine` composes `tools`/`packs`/`provider`/`host`; `locode-core` re-exports; `locode-exec` depends only on `locode-core`.
 - Tools **never** touch `std::fs`/`Command` directly — only through `locode-host` — making them trivially testable and sandbox-ready.
 - More Cargo manifests and a `[workspace.lints]` table to maintain; accepted cost.
+
+## Amendment (2026-07-24): one crate per injected-context feature — `locode-instructions`, and `locode-skills` to follow
+
+Project-instruction (`AGENTS.md`) loading was split across two crates — the loader in
+`locode-host`, the renderer in `locode-engine` — and skills (ADR-0025) were about to
+add a second copy of the same shape. Both now get **their own crate** *(user
+decision)*:
+
+- **`locode-instructions`** (this change): discovery, assembly, and the `User`
+  `<system-reminder>` message. Depends on `locode-host` (for the shared cwd→root
+  marker walk) and `locode-protocol` (for `Message`); nothing depends on it but
+  `locode-engine` and the facade.
+- **`locode-skills`** (Task 32): the same shape for skills.
+
+**Why two crates rather than one.** A single `locode-context` crate was drafted and
+rejected as too broad: "context" names no feature, and the two have almost nothing in
+common beyond riding the same envelope — different roots, different file formats,
+different refresh rules, different budgets. Codex draws the line the same way: skills
+are a crate (`codex-core-skills`, plus `ext/skills`) while `AGENTS.md` lives in
+`core/src/agents_md_manager.rs`, and the *envelope* abstraction is its own small crate
+(`codex-context-fragments`). Grok splits by layer instead — skills under
+`xai-grok-tools/src/implementations/skills/`, `AGENTS.md` under
+`xai-grok-agent/src/prompt/` — which is the same refusal to merge them.
+
+**Why not in `locode-host`.** The loader never used `Host`; it reads with `std::fs`
+directly (ADR-0023's implementation note explains why: discovery legitimately spans
+ancestors above the tool jail). It sat there for want of a better home, not by design.
+The one genuine host primitive it needs — `find_root_from_markers`, the cwd→root walk
+that the settings loader also uses — **stays in `locode-host`** (now
+`locode_host::find_root_from_markers`), which keeps the dependency one-way and avoids
+a cycle.
+
+**We do not adopt codex's third crate.** The shared envelope machinery (render a
+`User` `<system-reminder>`, diff it, decide when to re-inject) stays in
+`locode-engine`, which already owns injection. It becomes its own crate only if a
+third consumer appears.
+
+**Consequence for releases:** the published set grows from 8 crates to 9 (and to 10
+when `locode-skills` lands). Publish order gains `instructions` after `host`:
+`protocol → tools → host → instructions → provider → packs → engine → core → exec`.

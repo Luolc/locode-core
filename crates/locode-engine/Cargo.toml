@@ -17,6 +17,7 @@ locode-protocol = { workspace = true }
 locode-tools = { workspace = true }
 locode-provider = { workspace = true }
 locode-host = { workspace = true }
+locode-instructions = { workspace = true }
 async-trait = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["time", "macros"] }

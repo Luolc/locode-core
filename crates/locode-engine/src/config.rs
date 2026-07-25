@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use locode_host::InstructionsConfig;
+use locode_instructions::InstructionsConfig;
 use locode_provider::{CacheHint, SamplingArgs};
 
 /// Everything the loop needs that isn't the provider, registry, preamble, or sink.

@@ -5,14 +5,20 @@
 //! and returns a neutral [`ProjectInstructions`]. The engine renders that into a single
 //! `User`-role `<system-reminder>` message and injects it (ADR-0023 §2).
 //!
-//! This lives in `locode-host` — the trusted OS seam (ADR-0008) — and **reads the
-//! discovered files directly**, deliberately bypassing the tool path-jail: discovery
-//! legitimately spans ancestors *above* the cwd-rooted jail, and the jail governs
+//! Discovery **reads the files directly**, deliberately bypassing the tool path-jail:
+//! it legitimately spans ancestors *above* the cwd-rooted jail, and the jail governs
 //! *tools*, not engine machinery (ADR-0023 implementation note, 2026-07-23). Reads are
 //! bounded to the `AGENTS.md`/`AGENTS.override.md` names along the bounded ancestor walk.
+//! This module lived in `locode-host` until the crate split (ADR-0002 amendment
+//! 2026-07-24); the one host primitive it still needs — the cwd→root marker walk, shared
+//! with the settings loader — stays there as `locode_host::find_root_from_markers`.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+
+#[cfg(test)]
+use locode_host::resolve_home_from;
+use locode_host::{find_root_from_markers, locode_home};
 
 /// The canonical project-instruction filename.
 const AGENTS_FILE: &str = "AGENTS.md";
@@ -157,9 +163,7 @@ fn global_dir_of(global_file: &Path) -> PathBuf {
 /// `$HOME/.locode`); `None` when no home resolves. Dependency-free — the shipped
 /// targets are macOS/Linux.
 fn global_instruction_path() -> Option<PathBuf> {
-    crate::home::locode_home()
-        .ok()
-        .map(|dir| dir.join(AGENTS_FILE))
+    locode_home().ok().map(|dir| dir.join(AGENTS_FILE))
 }
 
 /// The env-free core of [`global_instruction_path`] (tests inject the values — `HOME`/
@@ -169,33 +173,9 @@ fn global_path_from(
     locode_home: Option<std::ffi::OsString>,
     home: Option<std::ffi::OsString>,
 ) -> Option<PathBuf> {
-    crate::home::resolve_home_from(locode_home, home)
+    resolve_home_from(locode_home, home)
         .ok()
         .map(|dir| dir.join(AGENTS_FILE))
-}
-
-/// Ascend from `start`; the nearest ancestor containing any `markers` entry **or whose
-/// absolute path matches `stop_pattern`** is the root (ADR-0023 rules 1+2). No hit up
-/// to the filesystem root ⇒ cwd-only (returns `start`). The filesystem root is only a
-/// backstop, never itself the project root.
-///
-/// Shared with the settings loader (which passes `stop_pattern = None` — the settings
-/// files' own location is marker-detected only, avoiding a settings→pattern cycle).
-pub(crate) fn find_root_from_markers(
-    start: &Path,
-    markers: &[String],
-    stop_pattern: Option<&regex::Regex>,
-) -> PathBuf {
-    let mut dir = Some(start);
-    while let Some(d) = dir {
-        if markers.iter().any(|m| d.join(m).exists())
-            || stop_pattern.is_some_and(|re| re.is_match(&d.to_string_lossy()))
-        {
-            return d.to_path_buf();
-        }
-        dir = d.parent();
-    }
-    start.to_path_buf()
 }
 
 /// The directories from `root` down to `leaf`, inclusive, in root→leaf order (deepest

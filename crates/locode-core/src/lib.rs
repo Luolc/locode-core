@@ -52,10 +52,14 @@ pub use locode_packs::{GrokPack, Pack, PackContext, UnknownHarness, available, g
 
 // ---- host: the side-effect seam ----
 pub use locode_host::{
-    ExecLimits, GitMeta, Host, HostConfig, InstructionEntry, InstructionsConfig, PathPolicy,
-    ProjectInstructions, RolloutContents, Settings, SettingsLoad, SkillsExtraEntry, TraceExtras,
-    TraceWriter, decode_cwd_dirname, encode_cwd_dirname, find_latest_rollout, find_rollout_by_id,
-    load_project_instructions, load_settings, locode_home, read_rollout,
+    ExecLimits, GitMeta, Host, HostConfig, PathPolicy, RolloutContents, Settings, SettingsLoad,
+    SkillsExtraEntry, TraceExtras, TraceWriter, decode_cwd_dirname, encode_cwd_dirname,
+    find_latest_rollout, find_rollout_by_id, load_settings, locode_home, read_rollout,
+};
+
+// ---- instructions: `AGENTS.md` discovery + its injected message ----
+pub use locode_instructions::{
+    InstructionEntry, InstructionsConfig, ProjectInstructions, load_project_instructions,
 };
 
 // ---- tools: the full tool surface (SPEC Users #4) ----
