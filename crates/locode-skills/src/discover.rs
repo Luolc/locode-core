@@ -10,6 +10,17 @@ use crate::frontmatter;
 
 /// The canonical per-skill file.
 pub const SKILL_FILE: &str = "SKILL.md";
+/// The **project** skills directory: `<repo>/.agents/skills`.
+///
+/// Deliberately not `<repo>/.locode/skills`, unlike every other project-scoped thing
+/// we read (ADR-0025 §2 amendment 2026-07-24). `.agents/` is the cross-agent
+/// convention: codex scans `<root>/.agents/skills` via its own `AGENTS_DIR_NAME`
+/// constant, and grok hard-codes `.agents` alongside `.grok` as an always-scanned
+/// config root (`.claude` is merely opt-in compat). A skill is a portable artifact —
+/// the format is the one thing all four harnesses converged on — so a repo's skills
+/// belong where any agent can find them. Settings stay under `.locode/`, because those
+/// are ours alone.
+pub const PROJECT_SKILLS_DIR: [&str; 2] = [".agents", "skills"];
 /// Slug cap, grok's `MAX_NAME_LEN` (`discovery.rs:16`).
 const MAX_NAME_LEN: usize = 64;
 
@@ -21,7 +32,7 @@ const MAX_NAME_LEN: usize = 64;
 /// in precedence — same qualifier, different tier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SkillScope {
-    /// `<repo>/.locode/skills/`
+    /// `<repo>/.agents/skills/` — the cross-agent location (see [`PROJECT_SKILLS_DIR`]).
     Project,
     /// `~/.locode/skills/`, and every `extends` dotfolder's `skills/`.
     User,
@@ -111,8 +122,9 @@ pub struct DiscoveredSkills {
 
 /// Discover every skill visible from `cwd`.
 ///
-/// Precedence, highest first: project → user → `extends` (list order) → `extra`
-/// (list order). Within one **qualifier**, a higher tier shadows a lower one and the
+/// Precedence, highest first: `<repo>/.agents/skills` → `~/.locode/skills` →
+/// `extends` dotfolders (list order) → `extra` entries (list order). Within one
+/// **qualifier**, a higher tier shadows a lower one and the
 /// loser is dropped; across qualifiers both survive and are rendered qualified.
 #[must_use]
 pub fn discover(cwd: &Path, cfg: &SkillsConfig) -> DiscoveredSkills {
@@ -136,7 +148,7 @@ fn discover_impl(cwd: &Path, cfg: &SkillsConfig, user_root: Option<&Path>) -> Di
 
     let root = find_root_from_markers(cwd, &cfg.root_markers, None);
     collect_root(
-        &root.join(".locode").join("skills"),
+        &root.join(PROJECT_SKILLS_DIR[0]).join(PROJECT_SKILLS_DIR[1]),
         SkillScope::Project,
         &mut found,
         &mut warnings,
@@ -350,7 +362,7 @@ mod tests {
     fn finds_project_skills_sorted_and_reads_the_five_keys() {
         let (_g, repo) = tmp();
         fs::create_dir(repo.join(".git")).unwrap();
-        let root = repo.join(".locode/skills");
+        let root = repo.join(".agents/skills");
         skill(&root, "zebra", "name: zebra\ndescription: Z");
         skill(
             &root,
@@ -372,7 +384,7 @@ mod tests {
     fn name_falls_back_to_the_directory_and_is_slugified() {
         let (_g, repo) = tmp();
         fs::create_dir(repo.join(".git")).unwrap();
-        let root = repo.join(".locode/skills");
+        let root = repo.join(".agents/skills");
         skill(&root, "My_Skill", "description: D"); // no frontmatter name
         skill(&root, "other", "name: Review PR\ndescription: D");
 
@@ -386,7 +398,7 @@ mod tests {
     fn disable_model_invocation_hides_the_skill_entirely() {
         let (_g, repo) = tmp();
         fs::create_dir(repo.join(".git")).unwrap();
-        let root = repo.join(".locode/skills");
+        let root = repo.join(".agents/skills");
         skill(&root, "shown", "description: D");
         skill(
             &root,
@@ -402,7 +414,7 @@ mod tests {
     fn a_broken_skill_is_skipped_with_a_warning_and_does_not_stop_the_others() {
         let (_g, repo) = tmp();
         fs::create_dir(repo.join(".git")).unwrap();
-        let root = repo.join(".locode/skills");
+        let root = repo.join(".agents/skills");
         skill(&root, "good", "description: D");
         // No frontmatter at all.
         let bad = root.join("bad");
@@ -425,7 +437,7 @@ mod tests {
         let (_g, repo) = tmp();
         fs::create_dir(repo.join(".git")).unwrap();
         skill(
-            &repo.join(".locode/skills"),
+            &repo.join(".agents/skills"),
             "commit",
             "description: project",
         );
@@ -477,7 +489,7 @@ mod tests {
     fn disabled_config_touches_nothing() {
         let (_g, repo) = tmp();
         fs::create_dir(repo.join(".git")).unwrap();
-        skill(&repo.join(".locode/skills"), "commit", "description: D");
+        skill(&repo.join(".agents/skills"), "commit", "description: D");
         let got = discover_no_home(&repo, &SkillsConfig::default());
         assert!(got.skills.is_empty() && got.warnings.is_empty());
     }
@@ -503,6 +515,23 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["home"],
             "same scope ⇒ the home root shadows the extended dotfolder"
+        );
+    }
+
+    /// Project skills live in the **cross-agent** `.agents/skills`, not `.locode/skills`
+    /// — a repo's skills should be findable by any agent, while settings stay ours.
+    #[test]
+    fn project_skills_come_from_dot_agents_not_dot_locode() {
+        let (_g, repo) = tmp();
+        fs::create_dir(repo.join(".git")).unwrap();
+        skill(&repo.join(".agents/skills"), "shared", "description: D");
+        skill(&repo.join(".locode/skills"), "ours", "description: D");
+
+        let got = discover_no_home(&repo, &cfg());
+        assert_eq!(
+            names(&got),
+            vec!["shared"],
+            "`.locode/skills` is not a project skills root"
         );
     }
 

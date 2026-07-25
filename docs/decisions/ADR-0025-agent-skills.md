@@ -39,7 +39,8 @@ Two prior decisions already fixed part of the answer, so this ADR inherits rathe
 than re-litigates them:
 
 - **ADR-0024 §3** fixed the roots: `~/.locode/skills/<name>/SKILL.md` (user),
-  `<repo>/.locode/skills/<name>/SKILL.md` (project), plus manual `skills.extra`
+  `<repo>/.agents/skills/<name>/SKILL.md` (project — moved out of `.locode/` by the
+  §2 amendment below), plus manual `skills.extra`
   entries from settings (§1.4). Explicitly **no `~/.claude/skills` compat root** —
   provenance over convenience. The settings loader already parses and validates
   `skills.extra` into `SkillsExtraEntry`.
@@ -88,7 +89,7 @@ loadSkillsDir.ts:424-428`); the directory is what lets a skill ship
 
 **Roots and precedence**, highest first:
 
-1. **project** — `<repo>/.locode/skills/`
+1. **project** — `<repo>/.agents/skills/` *(amended 2026-07-24 — see below)*
 2. **user** — `~/.locode/skills/` (`$LOCODE_HOME` honored, per ADR-0024)
 3. **user, via `extends`** — `<extended dotfolder>/skills/`, in `extends` list order (§6)
 4. **extra** — `skills.extra` entries from settings, in list order
@@ -100,6 +101,28 @@ user composes their own configuration, not a separate authority. Project wins be
 same root→cwd "deepest wins" rule ADR-0023 uses for instructions, and grok's own
 ordering (cwd → repo → home, `08-skills.md:15-35`). `extra` sits last because it
 is a manually-pointed grab-bag, not a tier of anything.
+
+> **Amendment (2026-07-24): project skills live in `<repo>/.agents/skills`, not
+> `<repo>/.agents/skills`.** *(User decision.)* This is the one project-scoped path we
+> do **not** put under `.locode/`, and the asymmetry is the point: a skill is a
+> **portable artifact** — `SKILL.md` with `name`/`description` frontmatter is the one
+> thing all four surveyed harnesses independently converged on — so a repo's skills
+> should be findable by whichever agent a contributor happens to run. Settings are
+> ours alone and stay under `.locode/`.
+>
+> `.agents/` is the established cross-agent location, verified in source rather than
+> assumed: **codex** scans `<root>/.agents/skills` through its own `AGENTS_DIR_NAME` +
+> `SKILLS_DIR_NAME` constants (`core-skills/src/loader_tests.rs:119,2217`), and
+> **grok** hard-codes `vec![".grok", ".agents"]` as its always-scanned config roots,
+> with `.claude` merely opt-in compat (`discovery.rs:829-854`). The live wire probe
+> corroborates it: grok's listing carried a skill resolved from
+> `~/.agents/skills/find-skills/SKILL.md`.
+>
+> Only the **project** root moves. `~/.locode/skills` (user), each `extends`
+> dotfolder's `skills/`, and `skills.extra` are unchanged — those are locode's own
+> configuration home, not a shared repo surface. This does **not** reopen the rejected
+> `~/.claude/skills` compat root (ADR-0024 §3): `.agents/` is a neutral convention, not
+> another vendor's tree.
 
 **Name identity.** The name is the frontmatter `name`, **normalized to a slug**
 (lowercase; every character outside `[a-z0-9]` → `-`; consecutive hyphens
@@ -381,7 +404,7 @@ the trace is not silent about it either.
 > no jail for skill reads to trip over and the exception below buys nothing today.
 > It is retained as the recorded design for the moment `--restricted` becomes a
 > real mode; **Task 32 does not implement it**, and until it does, skills under
-> `--restricted` reach only the project-local `<repo>/.locode/skills`.
+> `--restricted` reach only the project-local `<repo>/.agents/skills`.
 
 The design, for when it is needed:
 
@@ -558,7 +581,7 @@ contributes a *root* inherits the same rule.
   live there; with no tool, the reason is gone.
 - **No jail change ships** — §4.1's read-only exception is deferred behind
   ADR-0008's default flip. Under `--restricted`, skills reach only
-  `<repo>/.locode/skills`; that limitation is the accepted cost of not building an
+  `<repo>/.agents/skills`; that limitation is the accepted cost of not building an
   exception no one currently needs.
 - **A new engine seam: post-run work.** §3.2 needs a hook that fires after a run
   reaches its terminal state, so the rescan lands off the user's critical path.

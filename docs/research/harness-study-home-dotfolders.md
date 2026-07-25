@@ -357,7 +357,9 @@ day one. Defer the `allow_implicit_invocation`-in-sidecar (Codex) and the remote
 │   └── history.jsonl                    # cross-session INPUT history {session_id,timestamp,text} (0600)
 │                                        # — the composer's up-arrow/reverse-search recall (shell-history
 │                                        # analog), NOT the transcript; needed only once the TUI does recall
-├── skills/<name>/SKILL.md               # user skills; + <repo>/.locode/skills/ (project)
+├── skills/<name>/SKILL.md               # user skills; project skills live in
+│                                        # <repo>/.agents/skills/ (ADR-0025 §2 amendment
+│                                        # 2026-07-24 — the cross-agent tree)
 └── (defer) trusted_folders / models_cache / version / logs / a rebuildable sessions index
 ```
 

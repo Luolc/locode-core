@@ -53,7 +53,7 @@ Per repo (the project layers):
 <repo>/.locode/
 ├── settings.json                       # project settings (committed)
 ├── settings.local.json                 # personal overrides (gitignored)
-└── skills/<name>/SKILL.md              # project skills
+└── (project skills moved to <repo>/.agents/skills — ADR-0025 §2 amendment)
 ```
 
 Reserved names, defined by this ADR but **not shipped yet** (they slot in additively):
@@ -400,7 +400,10 @@ touching v1's shapes**. Mechanisms, fixed now:
 ## 3. Skills (roots only — format/loader are the skills P0's ADR)
 
 Discovery roots mirror the settings layers 1:1: `~/.locode/skills/<name>/SKILL.md`
-(user) and `<repo>/.locode/skills/<name>/SKILL.md` (project), plus the manual
+(user) and `<repo>/.agents/skills/<name>/SKILL.md` (project — **amended 2026-07-24**
+from `<repo>/.locode/skills`, ADR-0025 §2: a repo's skills go in the cross-agent
+`.agents/` tree so any agent can find them; only *our* settings stay in `.locode/`),
+plus the manual
 `skills.extra` entries from settings (§1.4 — single skills or `…skills` folders). **No `~/.claude/skills`
 compat root** *(user decision)* — grok reads Claude's tree for migration convenience,
 but importing skills written against another harness's tool names/conventions into an
