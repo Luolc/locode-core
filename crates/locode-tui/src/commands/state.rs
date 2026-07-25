@@ -14,6 +14,7 @@
 use std::ops::Range;
 
 use super::command::CommandCtx;
+use super::matcher::FuzzyMatcher;
 use super::registry::{CommandRegistry, CommandTrigger};
 
 /// Dropdown rows visible at once before it scrolls (grok's
@@ -86,6 +87,7 @@ impl SlashState {
     pub fn refresh(
         &mut self,
         registry: &CommandRegistry,
+        matcher: &mut FuzzyMatcher,
         ctx: &CommandCtx<'_>,
         text: &str,
         cursor: usize,
@@ -101,10 +103,10 @@ impl SlashState {
             // The argument phase; nothing to offer until `suggest_args` is wired.
             return;
         }
-        let matches = command_rows(registry, ctx, &input.query);
-        self.selected = carry_selection(&previous, &matches, &input.query);
-        self.open = !matches.is_empty();
-        self.matches = matches;
+        let rows = command_rows(registry, matcher, ctx, &input.query);
+        self.selected = carry_selection(&previous, &rows, &input.query);
+        self.open = !rows.is_empty();
+        self.matches = rows;
         self.query = input.query;
         self.command_range = Some(0..input.command_end);
     }
@@ -237,6 +239,7 @@ fn analyze_input(text: &str, cursor: usize) -> Option<Input> {
 /// for the same reason). With a query, aliases compete on their own.
 fn command_rows(
     registry: &CommandRegistry,
+    matcher: &mut FuzzyMatcher,
     ctx: &CommandCtx<'_>,
     query: &str,
 ) -> Vec<SuggestionRow> {
@@ -254,7 +257,7 @@ fn command_rows(
     if query.contains('/') {
         return Vec::new();
     }
-    rank(&visible, query)
+    rank(&visible, matcher, query)
         .into_iter()
         .map(|(trigger, indices)| SuggestionRow::from_trigger(trigger, indices))
         .collect()
@@ -262,32 +265,66 @@ fn command_rows(
 
 /// Rank visible triggers against a non-empty `query`.
 ///
-/// Substring matching for now — prefix hits first, then by source (builtins ahead of
-/// skills), then alphabetically. The fuzzy matcher replaces the body of this function
-/// and nothing else: everything above consumes `(trigger, indices)`.
-fn rank<'a>(triggers: &[&'a CommandTrigger], query: &str) -> Vec<(&'a CommandTrigger, Vec<u32>)> {
-    let needle = query.to_lowercase();
-    let mut hits: Vec<(&CommandTrigger, Vec<u32>, bool)> = triggers
-        .iter()
-        .filter_map(|t| {
-            // Indices are positions in `display` (`/model`), which is what the renderer
-            // highlights; the leading slash shifts them by one.
-            let hay = t.match_text.to_lowercase();
-            let at = hay.find(&needle)?;
-            let start = hay[..at].chars().count() + 1;
-            let len = needle.chars().count();
-            let indices = (start..start + len)
-                .map(|i| u32::try_from(i).unwrap_or(u32::MAX))
-                .collect();
-            Some((*t, indices, at == 0))
+/// Fuzzy, so `/mdl` finds `model`. Scoring runs on `match_text` (the bare name) while
+/// the highlight indices are taken for `display` (`/model`) — the same two calls in
+/// grok's `command_suggestions`, and the reason the leading slash never has to be
+/// accounted for by hand.
+///
+/// **One row per command.** An alias and its canonical name are separate triggers, so
+/// `/e` could otherwise list `/exit` and `/quit` as if they were two commands; the
+/// better trigger wins, preferring an exact match, then the canonical name (grok's
+/// tiebreak chain).
+fn rank<'a>(
+    triggers: &[&'a CommandTrigger],
+    matcher: &mut FuzzyMatcher,
+    query: &str,
+) -> Vec<(&'a CommandTrigger, Vec<u32>)> {
+    let hits = matcher.rank(triggers, query, |t| t.match_text.as_str());
+    let mut best: Vec<(usize, u32)> = Vec::new();
+    for (i, score) in hits {
+        let trigger = triggers[i];
+        match best
+            .iter_mut()
+            .find(|(j, _)| triggers[*j].command_index == trigger.command_index)
+        {
+            Some(slot) => {
+                if beats(trigger, triggers[slot.0], score, slot.1, query) {
+                    *slot = (i, score);
+                }
+            }
+            None => best.push((i, score)),
+        }
+    }
+    // `matcher.rank` already ordered by score then key text; keeping `best` in that
+    // order preserves it, so only the per-command choice happens here.
+    best.into_iter()
+        .map(|(i, _)| {
+            let trigger = triggers[i];
+            (trigger, matcher.indices(&trigger.display))
         })
-        .collect();
-    hits.sort_by(|a, b| {
-        b.2.cmp(&a.2)
-            .then_with(|| a.0.source.cmp(&b.0.source))
-            .then_with(|| a.0.display.cmp(&b.0.display))
-    });
-    hits.into_iter().map(|(t, i, _)| (t, i)).collect()
+        .collect()
+}
+
+/// Whether `new` should replace `old` as the row standing for their shared command.
+fn beats(
+    new: &CommandTrigger,
+    old: &CommandTrigger,
+    new_score: u32,
+    old_score: u32,
+    query: &str,
+) -> bool {
+    if new_score != old_score {
+        return new_score > old_score;
+    }
+    let (new_exact, old_exact) = (new.match_text == query, old.match_text == query);
+    if new_exact != old_exact {
+        return new_exact;
+    }
+    let (new_canonical, old_canonical) = (new.alias.is_none(), old.alias.is_none());
+    if new_canonical != old_canonical {
+        return new_canonical;
+    }
+    new.display < old.display
 }
 
 /// Keep the highlight on the same row across a refresh when it survived; otherwise
@@ -368,7 +405,13 @@ mod tests {
     /// `text` with the cursor at its end.
     fn state(registry: &CommandRegistry, text: &str) -> SlashState {
         let mut s = SlashState::default();
-        s.refresh(registry, &CommandCtx::default(), text, text.chars().count());
+        s.refresh(
+            registry,
+            &mut FuzzyMatcher::new(),
+            &CommandCtx::default(),
+            text,
+            text.chars().count(),
+        );
         s
     }
 
@@ -405,6 +448,44 @@ mod tests {
         assert_eq!(s.query, "new");
     }
 
+    /// Fuzzy, not substring: the letters of the query only have to appear in order.
+    #[test]
+    fn a_scattered_query_still_finds_its_command() {
+        let r = registry(vec![
+            Fake::new("model"),
+            Fake::new("compact"),
+            Fake::new("new"),
+        ]);
+        assert_eq!(labels(&state(&r, "/mdl")), vec!["/model"]);
+        assert_eq!(labels(&state(&r, "/cmpt")), vec!["/compact"]);
+        assert!(
+            !"model".contains("mdl"),
+            "a substring matcher found neither"
+        );
+    }
+
+    /// The better match sorts first even when the worse one is alphabetically ahead.
+    #[test]
+    fn ranking_puts_the_better_match_first() {
+        let r = registry(vec![Fake::new("automodel"), Fake::new("model")]);
+        assert_eq!(
+            labels(&state(&r, "/mod")),
+            vec!["/model", "/automodel"],
+            "a match at the start outranks one buried mid-word"
+        );
+    }
+
+    /// An alias and its canonical name are separate triggers but one command, so a
+    /// query matching both must not list it twice.
+    #[test]
+    fn a_command_matched_through_two_triggers_is_listed_once() {
+        let r = registry(vec![Fake::new("quit").alias("exit")]);
+        // `t` hits both `quit` and `exit`.
+        assert_eq!(labels(&state(&r, "/t")), vec!["/quit"], "canonical wins");
+        // …unless the alias is what was actually typed.
+        assert_eq!(labels(&state(&r, "/exit")), vec!["/exit"]);
+    }
+
     #[test]
     fn no_match_closes_the_menu() {
         let r = registry(vec![Fake::new("new")]);
@@ -438,7 +519,13 @@ mod tests {
     fn the_query_is_clamped_to_the_cursor() {
         let r = registry(vec![Fake::new("new"), Fake::new("quit")]);
         let mut s = SlashState::default();
-        s.refresh(&r, &CommandCtx::default(), "/quit", 1);
+        s.refresh(
+            &r,
+            &mut FuzzyMatcher::new(),
+            &CommandCtx::default(),
+            "/quit",
+            1,
+        );
         assert_eq!(s.query, "");
         assert_eq!(labels(&s), vec!["/new", "/quit"]);
     }
@@ -452,12 +539,30 @@ mod tests {
         assert!(s.open);
 
         s.dismiss("/n");
-        s.refresh(&r, &CommandCtx::default(), "/n", 2);
+        s.refresh(
+            &r,
+            &mut FuzzyMatcher::new(),
+            &CommandCtx::default(),
+            "/n",
+            2,
+        );
         assert!(!s.open, "still dismissed for the same draft");
-        s.refresh(&r, &CommandCtx::default(), "/n", 1);
+        s.refresh(
+            &r,
+            &mut FuzzyMatcher::new(),
+            &CommandCtx::default(),
+            "/n",
+            1,
+        );
         assert!(!s.open, "moving the cursor does not undo the dismissal");
 
-        s.refresh(&r, &CommandCtx::default(), "/ne", 3);
+        s.refresh(
+            &r,
+            &mut FuzzyMatcher::new(),
+            &CommandCtx::default(),
+            "/ne",
+            3,
+        );
         assert!(s.open, "editing re-derives the menu");
     }
 
@@ -484,7 +589,13 @@ mod tests {
         let mut s = state(&r, "/");
         s.move_selection(1); // "/quit"
         assert_eq!(s.selection().unwrap().display, "/quit");
-        s.refresh(&r, &CommandCtx::default(), "/qu", 3);
+        s.refresh(
+            &r,
+            &mut FuzzyMatcher::new(),
+            &CommandCtx::default(),
+            "/qu",
+            3,
+        );
         assert_eq!(
             s.selection().unwrap().display,
             "/quit",
