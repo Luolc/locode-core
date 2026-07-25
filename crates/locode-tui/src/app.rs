@@ -374,10 +374,10 @@ impl App {
                     && message.role == Role::User
                     && message_text(message).starts_with("<system-reminder>") =>
             {
-                self.outbox.push(Block::Notice(format!(
-                    "[hidden context] injected reminder:\n{}",
-                    message_text(message)
-                )));
+                self.outbox.push(Block::HiddenContext {
+                    label: "injected reminder".to_string(),
+                    body: message_text(message),
+                });
             }
             Event::Message { message } => match message.role {
                 Role::Assistant if self.streaming.is_some() => {
@@ -437,19 +437,18 @@ impl App {
                 preamble, tools, ..
             } if self.show_hidden_context => {
                 for msg in &preamble {
-                    self.outbox.push(Block::Notice(format!(
-                        "[hidden context] {:?} message:\n{}",
-                        msg.role,
-                        message_text(msg)
-                    )));
+                    self.outbox.push(Block::HiddenContext {
+                        label: format!("{:?} message", msg.role).to_lowercase(),
+                        body: message_text(msg),
+                    });
                 }
                 // In full, deliberately: a truncated schema cannot answer "what did the
                 // model actually see?", which is the only reason this flag exists.
                 for tool in &tools {
-                    self.outbox.push(Block::Notice(format!(
-                        "[hidden context] tool schema:\n{}",
-                        serde_json::to_string_pretty(tool).unwrap_or_else(|_| tool.to_string())
-                    )));
+                    self.outbox.push(Block::HiddenContext {
+                        label: format!("tool schema{}", tool_label(tool)),
+                        body: json_fence(tool),
+                    });
                 }
             }
             // Init is chrome-irrelevant otherwise; Approval lands in slice 4;
@@ -810,6 +809,46 @@ fn args_summary(input: &serde_json::Value) -> String {
         s = s.chars().take(59).collect::<String>() + "…";
     }
     s
+}
+
+/// `: <name>` when the tool spec carries one, else empty — the schemas are otherwise
+/// indistinguishable at a glance.
+fn tool_label(tool: &serde_json::Value) -> String {
+    tool.get("name")
+        .and_then(serde_json::Value::as_str)
+        .map(|n| format!(": {n}"))
+        .unwrap_or_default()
+}
+
+/// Pretty-print a tool schema into a fenced `json` block: two-space indent and **sorted
+/// keys**, so two runs of the same schema diff cleanly instead of shuffling.
+///
+/// The fence is what routes it through the markdown renderer's syntect highlighting and
+/// wrapping, rather than spilling one long line off the right edge.
+fn json_fence(value: &serde_json::Value) -> String {
+    let sorted = sort_json_keys(value);
+    let pretty = serde_json::to_string_pretty(&sorted).unwrap_or_else(|_| value.to_string());
+    format!("```json\n{pretty}\n```")
+}
+
+/// Recursively re-key every object through a `BTreeMap` so output order is the key
+/// order. `serde_json`'s own `Map` preserves insertion order when the `preserve_order`
+/// feature is on anywhere in the dependency graph, so sorting explicitly is the only
+/// way to guarantee it.
+fn sort_json_keys(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let sorted: std::collections::BTreeMap<String, serde_json::Value> = map
+                .iter()
+                .map(|(k, v)| (k.clone(), sort_json_keys(v)))
+                .collect();
+            serde_json::to_value(sorted).unwrap_or_else(|_| value.clone())
+        }
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.iter().map(sort_json_keys).collect())
+        }
+        other => other.clone(),
+    }
 }
 
 /// Flatten a message's text blocks — used only by `--debug-show-hidden-context`, which
@@ -1654,6 +1693,62 @@ mod tests {
             all.contains("input_schema"),
             "full schema, not just the name: {all}"
         );
+
+        // Schemas arrive as a fenced `json` block so the markdown renderer wraps and
+        // highlights them instead of spilling one long line off the right edge.
+        let schema = app
+            .outbox
+            .iter()
+            .find_map(|b| match b {
+                Block::HiddenContext { label, body } if label.starts_with("tool schema") => {
+                    Some((label.clone(), body.clone()))
+                }
+                _ => None,
+            })
+            .expect("a tool-schema block");
+        assert_eq!(schema.0, "tool schema: read_file", "labeled by tool name");
+        assert!(schema.1.starts_with("```json\n"), "{}", schema.1);
+        // Two-space indent, and keys sorted: `input_schema` before `name`.
+        assert!(schema.1.contains("\n  \"input_schema\""), "{}", schema.1);
+        let (i, n) = (
+            schema.1.find("\"input_schema\"").unwrap(),
+            schema.1.find("\"name\"").unwrap(),
+        );
+        assert!(i < n, "keys sorted: {}", schema.1);
+    }
+
+    /// Long hidden content wraps to the width instead of running off the edge — the
+    /// bug this rendering pass exists to fix.
+    #[test]
+    fn hidden_context_wraps_to_the_available_width() {
+        let block = Block::HiddenContext {
+            label: "system message".into(),
+            body: "word ".repeat(120),
+        };
+        let lines = block.render(60);
+        assert!(lines.len() > 3, "wrapped: {}", lines.len());
+        for line in &lines {
+            let w: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+            assert!(w <= 60, "line exceeds width: {w}");
+        }
+    }
+
+    /// The marker distinguishes hidden context from conversation blocks at a glance.
+    #[test]
+    fn hidden_context_uses_its_own_marker() {
+        let lines = Block::HiddenContext {
+            label: "injected reminder".into(),
+            body: "x".into(),
+        }
+        .render(80);
+        // Every block gets the shared 2-col left margin, so compare after it.
+        let head: String = lines[1].spans.iter().map(|s| s.content.as_ref()).collect();
+        let head = head.trim_start();
+        assert!(
+            head.starts_with("\u{2715} [hidden context] injected reminder"),
+            "{head}"
+        );
+        assert!(!head.starts_with('\u{25cf}'), "not the bullet: {head}");
     }
 
     /// The other half of "hidden": injected `<system-reminder>` user messages, which the
