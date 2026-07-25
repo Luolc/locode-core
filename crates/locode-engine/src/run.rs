@@ -62,6 +62,43 @@ impl Session {
         }
     }
 
+    /// Refresh the skills `<system-reminder>` (ADR-0025 §3.1).
+    ///
+    /// The comparison unit is the **whole rendered body**: unchanged ⇒ nothing is sent;
+    /// changed at all ⇒ the entire listing is re-sent, never a per-skill delta. Whether
+    /// a body counts as already delivered is read off the transcript itself, not a
+    /// stored hash — which is what makes a compacted-away listing re-appear and a
+    /// resumed session stay quiet, with no bookkeeping either way.
+    fn refresh_skills(&mut self) {
+        if !self.config.skills.enabled {
+            return;
+        }
+        let discovered = locode_skills::discover(&self.config.cwd, &self.config.skills);
+        for warning in &discovered.warnings {
+            self.sink.emit(Event::Error {
+                message: warning.clone(),
+            });
+        }
+        let budget = locode_skills::char_budget(self.config.context_window_tokens);
+        let message = if let Some(body) = locode_skills::render_body(&discovered.skills, budget) {
+            if locode_skills::already_delivered(&self.history, &body) {
+                return;
+            }
+            locode_skills::listing_message(&body)
+        } else {
+            // Nothing listable. Say so only if something *was* listed before — otherwise
+            // a skill-less project would open with a pointless denial.
+            if !locode_skills::any_listing_delivered(&self.history)
+                || locode_skills::already_delivered(&self.history, locode_skills::NO_SKILLS_BODY)
+            {
+                return;
+            }
+            locode_skills::removal_message()
+        };
+        self.history.push(message.clone());
+        self.sink.emit(Event::Message { message });
+    }
+
     /// The driver behind [`Session::run`]. Infallible — all terminal conditions land
     /// in the returned [`Report`].
     pub(crate) async fn drive(&mut self, user_content: Vec<ContentBlock>) -> Report {
@@ -92,6 +129,10 @@ impl Session {
         // Project instructions (ADR-0023): rescanned every turn — injected/refreshed after
         // the pack preamble and before this turn's user message (a no-op when unchanged).
         self.refresh_project_instructions();
+
+        // Skills (ADR-0025): the listing rides the same seam, after instructions and
+        // before this turn's user message.
+        self.refresh_skills();
 
         let user_msg = Message {
             role: Role::User,

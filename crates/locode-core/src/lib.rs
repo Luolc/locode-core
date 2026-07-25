@@ -62,6 +62,11 @@ pub use locode_instructions::{
     InstructionEntry, InstructionsConfig, ProjectInstructions, load_project_instructions,
 };
 
+// ---- skills: `SKILL.md` discovery + the model-facing listing ----
+pub use locode_skills::{
+    DiscoveredSkills, Skill, SkillScope, SkillsConfig, discover as discover_skills,
+};
+
 // ---- tools: the full tool surface (SPEC Users #4) ----
 pub use locode_tools::{
     Dispatched, DynTool, MODEL_OUTPUT_BUDGET, Registry, Tool, ToolCtx, ToolError, ToolKind,

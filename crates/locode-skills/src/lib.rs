@@ -9,10 +9,12 @@
 
 mod discover;
 mod frontmatter;
+mod inject;
 mod listing;
 
 pub use discover::{
     DiscoveredSkills, PROJECT_SKILLS_DIR, SKILL_FILE, Skill, SkillScope, SkillsConfig,
     ambiguous_names, discover, normalize_name,
 };
+pub use inject::{already_delivered, any_listing_delivered, listing_message, removal_message};
 pub use listing::{NO_SKILLS_BODY, char_budget, render_body};

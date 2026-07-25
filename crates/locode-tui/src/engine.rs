@@ -7,7 +7,7 @@ use std::sync::Arc;
 use locode_core::{
     CacheHint, CancellationToken, EngineConfig, EventSink, FnSink, Host, HostConfig,
     InstructionsConfig, Pack, PackContext, PathPolicy, ProviderInit, ProviderRegistry, Report,
-    SamplingArgs, Session,
+    SamplingArgs, Session, SkillsConfig,
 };
 
 use crate::cli::Cli;
@@ -403,6 +403,13 @@ fn build_session(
             root_stop_pattern: settings.root_stop_pattern.clone(),
             extends_dirs: extends_dirs.clone(),
             ..InstructionsConfig::default()
+        },
+        // Skills (ADR-0025): the same resolved settings feed discovery, which is what
+        // keeps "settings before discovery" an invariant rather than a convention.
+        skills: SkillsConfig {
+            extends_dirs,
+            extra: settings.skills_extra.clone(),
+            ..SkillsConfig::enabled()
         },
         ..EngineConfig::default()
     };
