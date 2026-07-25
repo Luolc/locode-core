@@ -181,6 +181,28 @@ motivating case is a future `/model` that lists models from a provider rather th
 hardcoded set; **v1 hardcodes the list**, and nothing in the command set needs `.await`
 yet.
 
+> **Amendment (2026-07-25): v1 ships no model list at all, and `/model` is read-only.**
+> Two facts found while implementing the argument submenu:
+>
+> 1. **There is no list to hardcode.** locode keeps no model catalog — `--model` and the
+>    `model` setting pass a free-form id straight to whichever wire is configured. A
+>    "hardcoded list" would therefore be *invented* model ids, which the repo's
+>    truthfulness rule forbids: a menu that offers models the configured provider may not
+>    serve is worse than no menu.
+> 2. **Switching is blocked anyway.** Changing the model mid-session needs a
+>    model-selection seam on the ADR-0015 `ProviderRegistry`, which is an ask-first
+>    change to core's public surface and is tracked separately.
+>
+> So `/model` **reports** the model in use and names the two surfaces that set it
+> (`--model`, `~/.locode/settings.json`), and the argument submenu ships behind
+> **`/help [command]`** instead — whose suggestions are the registry's own contents, so
+> they are always true. `execute` stays async for the original reason: the day the
+> provider seam exists, `/model` will list what the provider actually serves.
+>
+> One consequence for the trait's context: `CommandCtx` gains `registry`, since a command
+> that describes the command set has to see it. That is the ADR's own rule for growing
+> the context — a command genuinely needed more.
+
 ### 7. Where the code lives — three layers, most of it in the TUI
 
 *(User decision.)* The registry belongs in the core; the skill-specific parts belong

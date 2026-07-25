@@ -63,6 +63,11 @@ pub struct CommandCtx<'a> {
     pub model: Option<&'a str>,
     /// Whether a turn is in flight, for the commands that cannot run under one.
     pub is_running: bool,
+    /// The command set, for the commands that describe it (`/help`).
+    ///
+    /// A shared reference, so a command reading the registry it lives in is an
+    /// ordinary borrow rather than a cycle.
+    pub registry: Option<&'a crate::commands::CommandRegistry>,
 }
 
 /// A slash command.
