@@ -84,3 +84,4 @@ tracker.
 | Plan | Task |
 |---|---|
 | [task-31-locode-home-settings-and-trace.md](task-31-locode-home-settings-and-trace.md) | Task 31 — settings loading + resumable session trace (`--continue`/`--resume`) |
+| [task-32-skills.md](task-32-skills.md) | Task 32 — agent skills: discovery, the `<system-reminder>` listing, `extends` dotfolders (ADR-0025) |

@@ -396,3 +396,27 @@ reused is the cwd→root marker walk, and that **stays in `locode-host`**
 
 Nothing else in §2 changes: same files, same walk, same merge, same budget, same
 `User` `<system-reminder>` injection, one shared implementation for every pack.
+
+## Amendment (2026-07-24): what `root_stop_pattern` actually matches
+
+§2's *Root detection* rule 2 says "if the directory's absolute path matches, that
+directory is the root" without pinning the matching semantics. Three of them are
+load-bearing, and the first has already cost a user a silently-inert config:
+
+1. **The subject has no trailing separator.** The pattern is tested against
+   `Path::to_string_lossy()` of each candidate directory, and that never appends a
+   `/` (the filesystem root is the sole exception). So the natural-looking
+   `.../xx/$` matches nothing and the rule degrades to the cwd-only fallback —
+   configured, but never firing, with no diagnostic. The working form is `/xx$`.
+2. **It is a search, not a full match** (`Regex::is_match`), so no leading `.*` is
+   required. Note also that a literal `...` is *three arbitrary characters*, not an
+   ellipsis: `.../xx$` silently requires three characters before `/xx` and fails on
+   short paths.
+3. **The start directory is itself a candidate**, tested before the ascent begins,
+   so a pattern may name the cwd.
+
+These are pinned by tests in `locode-host/src/root.rs` so they cannot drift. The
+decision itself is unchanged; this only writes down the contract a user has to
+program against. A future improvement — warning when a configured pattern matches
+no directory on the walk — is worth considering, since "inert regex" has no
+symptom today.
