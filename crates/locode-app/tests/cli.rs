@@ -170,6 +170,84 @@ fn project_instructions_injected_from_agents_md() {
 }
 
 #[test]
+fn extends_dotfolder_contributes_settings_instructions_and_skills() {
+    // The wiring test the per-layer unit tests cannot give: settings resolves the
+    // `extends` dotfolders, and BOTH consumers have to receive them. Each layer is
+    // unit-tested in isolation, so deleting either `extends_dirs:` line in the entry
+    // points would leave every one of those tests green — and the failure mode is
+    // silent (the extended dotfolder's contributions simply do not appear).
+    let home = tempdir();
+    let team = tempdir();
+    let repo = tempdir();
+    let locode_home = home.path().join(".locode");
+    std::fs::create_dir_all(&locode_home).expect("mkdir home");
+
+    // The user layer points at the team dotfolder.
+    std::fs::write(
+        locode_home.join("settings.json"),
+        format!(
+            r#"{{"extends": ["{}"]}}"#,
+            team.path().display().to_string().replace('\\', "\\\\")
+        ),
+    )
+    .expect("write user settings");
+
+    // The team dotfolder ships all three contributions.
+    std::fs::write(team.path().join("settings.json"), r#"{"harness": "grok"}"#)
+        .expect("write team settings");
+    std::fs::write(team.path().join("AGENTS.md"), "TEAM SHARED RULE").expect("write team AGENTS");
+    let skill_dir = team.path().join("skills").join("teamskill");
+    std::fs::create_dir_all(&skill_dir).expect("mkdir team skill");
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: teamskill\ndescription: Lives in the extended dotfolder\n---\n# t\n",
+    )
+    .expect("write SKILL.md");
+
+    std::fs::create_dir(repo.path().join(".git")).expect("mkdir .git");
+
+    let assert = locode()
+        .env("LOCODE_HOME", &locode_home)
+        .args([
+            "-p",
+            "say hi",
+            "--api-schema",
+            "mock",
+            "--output-format",
+            "stream-json",
+            "--no-session-persistence",
+            "--cwd",
+        ])
+        .arg(repo.path())
+        .assert()
+        .success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8");
+    // The tool schemas make the raw stream thousands of lines long, which would bury a
+    // failure. Report only the injected messages — the part these assertions are about.
+    let injected: String = stdout
+        .lines()
+        .filter(|l| l.contains("system-reminder"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // 1. settings.json — the pack came from the team layer, not the built-in default.
+    assert!(
+        stdout.contains("\"harness\":\"grok\""),
+        "team settings.json should have set the pack; init line missing `grok`"
+    );
+    // 2. AGENTS.md — the team file is in the instruction chain.
+    assert!(
+        injected.contains("TEAM SHARED RULE"),
+        "team AGENTS.md not injected. Injected messages were:\n{injected}"
+    );
+    // 3. skills/ — the team skill is in the listing.
+    assert!(
+        injected.contains("teamskill") && injected.contains("Lives in the extended dotfolder"),
+        "team skill not listed. Injected messages were:\n{injected}"
+    );
+}
+
+#[test]
 fn project_instructions_nested_repo_root_to_cwd_order() {
     // Full stack: a git repo with an AGENTS.md at the root AND a subdir, run from the
     // subdir. The injected reminder carries both, labeled, root→cwd (deepest last).
