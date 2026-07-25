@@ -43,6 +43,9 @@ pub struct Session {
     /// Hash of the currently-applied project instructions (ADR-0023 per-turn rescan):
     /// `None` = none apply, `Some(h)` = these apply. Drives the replace/remove banner.
     pub(crate) last_instructions: Option<u64>,
+    /// The listing body from the most recent scan, injected on the next turn
+    /// (ADR-0025 §3.2 — scanning happens after a run, never at the top of one).
+    pub(crate) skills_body: Option<String>,
 }
 
 impl Session {
@@ -70,6 +73,7 @@ impl Session {
             turns_run: 0,
             approver: Arc::new(AllowAll),
             last_instructions: None,
+            skills_body: None,
         }
     }
 

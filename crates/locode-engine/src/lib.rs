@@ -1184,6 +1184,11 @@ mod tests {
 
     /// Adding a skill re-sends the **whole** listing, not just the new entry — the
     /// defect the per-skill delta in Claude Code and grok produces (ADR-0025 §3.1).
+    ///
+    /// Also pins the timing consequence of §3.2: the scan runs *after* a run finishes,
+    /// so a skill created while the user is typing is picked up by the **next** run's
+    /// post-run scan and injected on the turn after that. Writing it during a run — the
+    /// case the design optimizes for — costs no extra turn.
     #[tokio::test]
     async fn adding_a_skill_re_sends_the_entire_listing() {
         let dir = tempfile::tempdir().unwrap();
@@ -1192,21 +1197,27 @@ mod tests {
         write_skill(&root, "commit", "Make a commit");
 
         let (mut s, requests) = capturing_with_cfg(
-            vec![Ok(text_turn("a")), Ok(text_turn("b"))],
+            vec![Ok(text_turn("a")), Ok(text_turn("b")), Ok(text_turn("c"))],
             skills_config(root.clone()),
         );
         s.run_text("q1").await;
-        write_skill(&root, "review", "Review a diff");
-        s.run_text("q2").await;
+        write_skill(&root, "review", "Review a diff"); // after run 1's post-run scan
+        s.run_text("q2").await; // still the cached body; run 2's scan picks it up
+        s.run_text("q3").await;
 
         let reqs = requests.lock().unwrap();
-        let second = reqs[1]
-            .iter()
-            .filter_map(|m| reminder_text(std::slice::from_ref(m)))
-            .rfind(|t| t.contains("skills are available"))
-            .expect("re-sent");
-        assert!(second.contains("- commit:"), "old skill included: {second}");
-        assert!(second.contains("- review:"), "new skill included: {second}");
+        let listing = |msgs: &[Message]| {
+            msgs.iter()
+                .filter_map(|m| reminder_text(std::slice::from_ref(m)))
+                .rfind(|t| t.contains("skills are available"))
+        };
+        assert!(
+            !listing(&reqs[1]).unwrap().contains("- review:"),
+            "not yet — the scan that would see it runs at the end of this run"
+        );
+        let third = listing(&reqs[2]).expect("re-sent");
+        assert!(third.contains("- commit:"), "old skill included: {third}");
+        assert!(third.contains("- review:"), "new skill included: {third}");
     }
 
     /// Removing the last skill says so, rather than going quiet and leaving a stale
@@ -1219,15 +1230,16 @@ mod tests {
         write_skill(&root, "commit", "Make a commit");
 
         let (mut s, requests) = capturing_with_cfg(
-            vec![Ok(text_turn("a")), Ok(text_turn("b"))],
+            vec![Ok(text_turn("a")), Ok(text_turn("b")), Ok(text_turn("c"))],
             skills_config(root.clone()),
         );
         s.run_text("q1").await;
         std::fs::remove_dir_all(root.join(".agents/skills/commit")).unwrap();
-        s.run_text("q2").await;
+        s.run_text("q2").await; // run 2's post-run scan observes the removal
+        s.run_text("q3").await;
 
         let reqs = requests.lock().unwrap();
-        let last = reqs[1]
+        let last = reqs[2]
             .iter()
             .filter_map(|m| reminder_text(std::slice::from_ref(m)))
             .next_back()
