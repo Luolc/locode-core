@@ -75,6 +75,18 @@ pub enum Block {
     },
     /// A non-terminal note (engine retry notes, build failures, app info).
     Notice(String),
+    /// `--debug-show-hidden-context` output: a part of the request the UI normally
+    /// does not draw (the preamble, an injected reminder, a tool schema).
+    ///
+    /// Rendered wrapped and markdown-formatted like assistant prose, behind a distinct
+    /// marker — these are not the conversation, and reading them as if they were is
+    /// exactly the confusion the marker prevents.
+    HiddenContext {
+        /// Short heading (`system message`, `injected reminder`, `tool schema: read_file`).
+        label: String,
+        /// The content, already markdown (JSON arrives pre-fenced).
+        body: String,
+    },
 }
 
 impl Block {
@@ -168,6 +180,25 @@ impl Block {
             }
             Block::Notice(text) => {
                 vec![Line::from(""), Line::styled(format!("● {text}"), dim)]
+            }
+            Block::HiddenContext { label, body } => {
+                // `✕` rather than the `●` every conversation block uses: at a glance the
+                // reader can tell this text was never part of the visible transcript.
+                let content_width = usize::from(width).saturating_sub(GUTTER).max(4);
+                let mut lines = vec![
+                    Line::from(""),
+                    Line::styled(format!("✕ [hidden context] {label}"), dim),
+                ];
+                // Markdown for prose, syntect-highlighted fences for schemas — the same
+                // renderer assistant text uses, so long lines wrap instead of running
+                // off the right edge.
+                for line in crate::ui::markdown::render(body, content_width) {
+                    let mut spans = Vec::with_capacity(line.spans.len() + 1);
+                    spans.push(Span::raw("  "));
+                    spans.extend(line.spans);
+                    lines.push(Line::from(spans));
+                }
+                lines
             }
         }
     }
