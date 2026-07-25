@@ -168,9 +168,23 @@ and resolve the plan's open-questions section first.
   [`../docs/research/markdown-rendering-study.md`](../docs/research/markdown-rendering-study.md)
   § *Raw HTML/XML markup*.
 - [ ] **OSC-8 hyperlinks** (P2) — clickable links (iTerm2 etc.).
-- [ ] **Built-in slash commands** — deferred pending a *holistic* design pass
-  (discovery/registry, syntax, pure-UI vs. seam- or persistence-backed), not piecemeal.
-  Current commands: `/new` `/quit` `/exit`.
+- [ ] **Task 34 — slash commands** (P0.5, **before** background bash + subagents, user
+  decision 2026-07-24). The holistic design pass this entry was waiting for is done:
+  study [`../docs/research/harness-study-slash-commands.md`](../docs/research/harness-study-slash-commands.md),
+  core decisions in [ADR-0026](../docs/decisions/ADR-0026-slash-commands-core.md)
+  (**Proposed** — two ask-first items open: the `nucleo` dependency and the registry's
+  crate placement).
+  - **Why first:** it is the missing half of skills — ADR-0025 parses `user-invocable`
+    but has no user-invocation channel, so a shipped skill can only be reached by the
+    model choosing to read it.
+  - **Core:** `SlashCommand` trait (name/aliases/description/usage, the two-bit args
+    model, `suggest_args`, per-keystroke `visible`), a value-returning `CommandResult`,
+    explicit ordering, every `user-invocable` skill registered as a command returning
+    `InjectSkill`, unknown `/foo` is an error rather than a pass-through.
+  - **UI (later plan, autonomous slices against the source):** grok's dropdown —
+    `nucleo` ranking, run-grouped **blue matched letters**, grey selected row with a
+    `❯` prefix, argument submenus from `suggest_args`, and the two ghost-text
+    mechanisms. Current commands: `/new` `/quit` `/exit`.
 - [ ] **`/model` switching** — persistence half is **done** (Task 31 shipped
   `~/.locode/settings.json` with a `model` field + a `--model` flag; there is no model env
   var). Still blocked on the other seam: model-selection on the ADR-0015
