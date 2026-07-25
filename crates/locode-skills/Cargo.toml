@@ -19,6 +19,7 @@ locode-host = { workspace = true }
 # The rendered `User` <system-reminder> message (S3/S4).
 locode-protocol = { workspace = true }
 serde = { workspace = true }
+serde_yaml_ng = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -250,7 +250,7 @@ fn collect_skill_dir(
         return;
     };
 
-    let raw_name = fm.get("name").map_or("", String::as_str);
+    let raw_name = fm.name.as_deref().unwrap_or_default();
     let name = if raw_name.trim().is_empty() {
         dir.file_name().map(|n| n.to_string_lossy().to_string())
     } else {
@@ -268,7 +268,8 @@ fn collect_skill_dir(
     };
 
     let description = fm
-        .get("description")
+        .description
+        .as_deref()
         .map(|d| d.trim().to_string())
         .unwrap_or_default();
     if description.is_empty() {
@@ -285,16 +286,13 @@ fn collect_skill_dir(
         scope,
         description,
         when_to_use: fm
-            .get("when-to-use")
+            .when_to_use
+            .as_deref()
             .map(|w| w.trim().to_string())
             .filter(|w| !w.is_empty()),
         path,
-        disable_model_invocation: fm
-            .get("disable-model-invocation")
-            .is_some_and(|v| frontmatter::as_bool(v)),
-        user_invocable: fm
-            .get("user-invocable")
-            .is_none_or(|v| frontmatter::as_bool(v)),
+        disable_model_invocation: fm.disable_model_invocation(),
+        user_invocable: fm.user_invocable(),
     });
 }
 

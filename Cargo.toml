@@ -31,6 +31,10 @@ locode-tui = { path = "crates/locode-tui", version = "0.1.10" }
 locode-exec = { path = "crates/locode-exec", version = "0.1.10" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# `SKILL.md` YAML frontmatter (ADR-0025 §2). codex and grok both parse it with a real
+# YAML crate rather than a hand-rolled scanner; we follow that, but take the maintained
+# drop-in fork — upstream `serde_yaml` is archived and publishes as `0.9.34+deprecated`.
+serde_yaml_ng = "0.10"
 # `instructions.root_stop_pattern` matching (ADR-0023 rule 2, activated by
 # ADR-0024 §1.4 — the dependency was approved with that ADR's acceptance).
 regex = "1"

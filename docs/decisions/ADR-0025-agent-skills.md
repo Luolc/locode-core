@@ -178,6 +178,15 @@ cloned repo ships `.locode/`) must not reconfigure the run.
   this machinery for rules directories as "disproportionate for this core"; there
   is no reason to build it a second time under a different name.
 
+**Parsing uses a real YAML crate**, as both reference harnesses do — codex runs
+`serde_yaml::from_str::<SkillFrontmatter>` (`core-skills/src/loader.rs:747`) and grok
+coerces from `serde_yaml::Value` (`skills/discovery.rs:150-176`). An earlier
+implementation hand-rolled a scalar-only scanner on the theory that five scalar keys
+need no parser; that was wrong in a way that loses skills, because real frontmatter
+uses folded (`description: >`) and literal (`|`) block scalars, and a skill whose
+description is lost cannot be routed to at all. We take `serde_yaml_ng`, the maintained
+drop-in — upstream `serde_yaml` is archived and publishes as `0.9.34+deprecated`.
+
 **Parsing is lenient**: unknown keys are ignored, not errors — a skill authored
 for another harness must still load, and this matches ADR-0024 §1.5's
 "unknown keys are preserved" posture for settings. This does **not** conflict with

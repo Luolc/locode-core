@@ -144,9 +144,12 @@ vendor-compat roots.
 Two things the plan did not anticipate, both recorded where they belong rather than
 absorbed silently:
 
-- **No YAML dependency.** All five recognized frontmatter keys are scalars and unknown
-  keys must be ignored, so the reader parses the block directly — which is also what
-  grok's own recovery path does. Adding a dependency would have been an ask-first stop.
+- **A YAML dependency, after a wrong turn.** The first implementation hand-rolled a
+  scalar-only scanner to avoid an ask-first dependency, justified by "grok does this
+  too" — but that described grok's *fallback* path; its primary path, and codex's, is
+  `serde_yaml`. The scanner silently dropped folded/literal block scalars, which real
+  skills use for descriptions, and a lost description drops the skill. Replaced with
+  `serde_yaml_ng` (the maintained drop-in; upstream is archived) once approved.
 - **Post-run scanning implies a one-turn lag** for a skill created *after* a run ends
   (while the user is typing). The case the design optimizes for — written during a run
   — has no lag. Pinned by a test and recorded as a dated ADR-0025 §3.2 amendment.
