@@ -11,7 +11,7 @@ behind each decision lives in the ADRs ([`../docs/decisions/`](../docs/decisions
 > anymore: they were merged into this tracker (2026-07-22) precisely because keeping status
 > in three files let the least-edited copy rot. Keep it to one.
 
-Current release: **0.1.13**. Sizes: XS = 1 file · S = 1–2 · M = 3–5 · L = 5–8 (split if larger).
+Current release: **0.1.14**. Sizes: XS = 1 file · S = 1–2 · M = 3–5 · L = 5–8 (split if larger).
 
 ## Architecture at a glance
 
@@ -68,6 +68,26 @@ The immediate queue, ahead of the remaining packs:
   deleting it. Raised 2026-07-25 alongside the `max_tokens` truncation fix.
 
 ### Fixes
+- [x] **Thinking was left to the serving model** (2026-07-25, #231, **breaking**). Nothing
+  ever set `reasoning_effort`, so the wire sent no `thinking` field at all — which does
+  **not** mean "off": Opus 4.8 read the absent field as no-thinking (verified:
+  `thinking_tokens: 0`), Opus 5 ran adaptive, Fable 5 thought regardless. One codebase,
+  three behaviours, visible in this repo's own traces (a session that switched models
+  mid-run went from 0 reasoning blocks to 1 at the switch). The wire now always sends
+  `{type:"adaptive", display:"summarized"}`; `reasoning_effort` chooses depth only, via
+  `output_config.effort`. `ReasoningEncoding` is **removed** rather than re-defaulted —
+  its `Budget` variant emitted `budget_tokens`, which every current model rejects, and it
+  was the default, so the default config was broken for every model we run. `EFFORT_BETA`
+  removed (effort is GA); `temperature` is no longer sent on this wire. Reconciled into
+  ADR-0007. **Gap:** adaptive is unsupported pre-4.6 (Sonnet 4.5, Haiku 4.5) — out of
+  scope by user decision, would need the deferred per-model table.
+- [x] **Output budget 64k + no silent ceiling** (2026-07-25, #230, **breaking**).
+  `DEFAULT_MAX_TOKENS` → 64k (Claude Code's `ESCALATED_MAX_TOKENS`; not 128k because
+  `upperLimit` is per-model and Haiku 4.5 stops at 64k). `ModelConfig.max_tokens_cap`
+  → `Option<u32>`, `None` by default on both wires: a `min` ceiling is silent by
+  construction, which ADR-0007 already rejects for `reasoning_effort`. The budget itself
+  cannot be `Option` — Anthropic requires `max_tokens` (opencode encodes the same
+  asymmetry: required for Anthropic, optional for both OpenAI protocols).
 - [x] **`max_tokens` truncation loop** (2026-07-25). `SamplingArgs::default()` shipped
   4096 output tokens and the Anthropic wire clamped to 8000, so an ordinary `Write` was
   cut mid-call; the wire returns an empty `input` for a truncated `tool_use`, the typed
