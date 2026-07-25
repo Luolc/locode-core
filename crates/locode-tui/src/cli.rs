@@ -91,6 +91,13 @@ pub struct Cli {
     #[arg(long = "dangerously-skip-permissions", alias = "yolo", hide = true)]
     pub dangerously_skip_permissions: bool,
 
+    /// Debugging: also print everything sent to the model that the UI normally
+    /// hides — the system prompt, the injected context reminders, and the full tool
+    /// schemas. Verbose on purpose. Headless already prints this: use
+    /// `-p --output-format stream-json`.
+    #[arg(long)]
+    pub debug_show_hidden_context: bool,
+
     /// Strip the harness's identity sentence from the system prompt.
     #[arg(long)]
     pub strip_identity: bool,

@@ -30,6 +30,7 @@ fn cli(dir: &tempfile::TempDir, yolo: bool) -> Cli {
         cwd: Some(dir.path().to_path_buf()),
         output_format: locode_exec::OutputFormat::Json,
         max_turns: None,
+        debug_show_hidden_context: false,
         restricted: !yolo,
         dangerously_skip_permissions: false,
         strip_identity: false,

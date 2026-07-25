@@ -113,6 +113,10 @@ pub struct App {
     /// Finalized blocks awaiting folding into the transcript tail (drained by
     /// the loop's `flush_outbox`; ADR-0022).
     pub outbox: Vec<Block>,
+    /// `--debug-show-hidden-context`: surface the parts of the request the UI hides —
+    /// the preamble, the injected `<system-reminder>`s, and the tool schemas. Off by
+    /// default; nothing about the request changes when it is on.
+    pub show_hidden_context: bool,
     /// Tool calls awaiting their results.
     pub pending_tools: Vec<PendingTool>,
     /// Approvals awaiting a user decision — FIFO, only the front renders
@@ -184,6 +188,7 @@ impl App {
             dirty: true,
             run: RunState::Idle,
             outbox: Vec::new(),
+            show_hidden_context: false,
             pending_tools: Vec::new(),
             approval_queue: VecDeque::new(),
             stashed_draft: None,
@@ -205,6 +210,14 @@ impl App {
             esc_armed_until: None,
             hint: None,
         }
+    }
+
+    /// Enable `--debug-show-hidden-context` (builder-style, so the constructors stay
+    /// argument-free for the many tests that do not care).
+    #[must_use]
+    pub fn showing_hidden_context(mut self) -> Self {
+        self.show_hidden_context = true;
+        self
     }
 
     /// Fresh state with the composer pre-filled from a positional prompt
@@ -353,6 +366,19 @@ impl App {
             Event::MessageDelta { text } => {
                 self.streaming.get_or_insert_default().push_str(&text);
             }
+            // Injected framing (project instructions, the skills listing) is a `User`
+            // message the UI drops, because live submits echo their own text. Under the
+            // debug flag it is exactly what the user asked to see.
+            Event::Message { ref message }
+                if self.show_hidden_context
+                    && message.role == Role::User
+                    && message_text(message).starts_with("<system-reminder>") =>
+            {
+                self.outbox.push(Block::Notice(format!(
+                    "[hidden context] injected reminder:\n{}",
+                    message_text(message)
+                )));
+            }
             Event::Message { message } => match message.role {
                 Role::Assistant if self.streaming.is_some() => {
                     // Streaming turn: the assistant text already streamed and its
@@ -405,7 +431,28 @@ impl App {
                 _ => {}
             },
             Event::Error { message } => self.outbox.push(Block::Notice(message)),
-            // Init is chrome-irrelevant here; Approval lands in slice 4;
+            // The preamble and the tool schemas are otherwise invisible: they ride
+            // `Init` and are never part of the transcript the UI draws.
+            Event::Init {
+                preamble, tools, ..
+            } if self.show_hidden_context => {
+                for msg in &preamble {
+                    self.outbox.push(Block::Notice(format!(
+                        "[hidden context] {:?} message:\n{}",
+                        msg.role,
+                        message_text(msg)
+                    )));
+                }
+                // In full, deliberately: a truncated schema cannot answer "what did the
+                // model actually see?", which is the only reason this flag exists.
+                for tool in &tools {
+                    self.outbox.push(Block::Notice(format!(
+                        "[hidden context] tool schema:\n{}",
+                        serde_json::to_string_pretty(tool).unwrap_or_else(|_| tool.to_string())
+                    )));
+                }
+            }
+            // Init is chrome-irrelevant otherwise; Approval lands in slice 4;
             // Result rides EngineMsg::RunFinished.
             _ => {}
         }
@@ -763,6 +810,19 @@ fn args_summary(input: &serde_json::Value) -> String {
         s = s.chars().take(59).collect::<String>() + "…";
     }
     s
+}
+
+/// Flatten a message's text blocks — used only by `--debug-show-hidden-context`, which
+/// prints content the UI otherwise never draws.
+fn message_text(msg: &locode_core::Message) -> String {
+    msg.content
+        .iter()
+        .filter_map(|b| match b {
+            ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]
@@ -1534,6 +1594,98 @@ mod tests {
                 .iter()
                 .any(|b| matches!(b, Block::Notice(m) if m.starts_with("error:"))),
             "no error notice on success"
+        );
+    }
+
+    /// Off by default: none of the hidden parts reach the transcript.
+    #[test]
+    fn hidden_context_is_off_unless_asked_for() {
+        let mut app = App::new();
+        app.on_event(Event::Init {
+            session_id: "s".into(),
+            harness: "grok".into(),
+            api_schema: "mock".into(),
+            model: "m".into(),
+            cwd: "/tmp".into(),
+            max_turns: None,
+            preamble: vec![locode_core::Message {
+                role: Role::System,
+                content: vec![ContentBlock::Text {
+                    text: "SYSTEM PROMPT".into(),
+                }],
+            }],
+            tools: vec![serde_json::json!({"name": "read_file"})],
+        });
+        assert!(app.outbox.is_empty(), "{:?}", app.outbox);
+    }
+
+    /// On: the preamble and the **full** tool schema both appear — a truncated schema
+    /// cannot answer "what did the model actually see?".
+    #[test]
+    fn hidden_context_shows_preamble_and_full_tool_schemas() {
+        let mut app = App::new().showing_hidden_context();
+        app.on_event(Event::Init {
+            session_id: "s".into(),
+            harness: "grok".into(),
+            api_schema: "mock".into(),
+            model: "m".into(),
+            cwd: "/tmp".into(),
+            max_turns: None,
+            preamble: vec![locode_core::Message {
+                role: Role::System,
+                content: vec![ContentBlock::Text {
+                    text: "SYSTEM PROMPT".into(),
+                }],
+            }],
+            tools: vec![serde_json::json!({
+                "name": "read_file",
+                "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}}
+            })],
+        });
+        let all = app
+            .outbox
+            .iter()
+            .map(|b| format!("{b:?}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(all.contains("SYSTEM PROMPT"), "{all}");
+        assert!(all.contains("read_file"), "{all}");
+        assert!(
+            all.contains("input_schema"),
+            "full schema, not just the name: {all}"
+        );
+    }
+
+    /// The other half of "hidden": injected `<system-reminder>` user messages, which the
+    /// normal path drops because live submits echo their own text.
+    #[test]
+    fn hidden_context_shows_injected_reminders_but_not_ordinary_prompts() {
+        let mut app = App::new().showing_hidden_context();
+        let reminder = locode_core::Message {
+            role: Role::User,
+            content: vec![ContentBlock::Text {
+                text: "<system-reminder>\nThe following skills are available for use:\n</system-reminder>".into(),
+            }],
+        };
+        let prompt = locode_core::Message {
+            role: Role::User,
+            content: vec![ContentBlock::Text {
+                text: "just my question".into(),
+            }],
+        };
+        app.on_event(Event::Message { message: reminder });
+        app.on_event(Event::Message { message: prompt });
+
+        let all = app
+            .outbox
+            .iter()
+            .map(|b| format!("{b:?}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(all.contains("skills are available"), "{all}");
+        assert!(
+            !all.contains("just my question"),
+            "own prompt not duplicated: {all}"
         );
     }
 }
