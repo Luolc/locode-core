@@ -48,7 +48,7 @@ The immediate queue, ahead of the remaining packs:
   along per the same ADR: an ADR-0008 **read-only** jail exception for the locode home
   + external skill roots (§4.1), and `extends` becoming a **dotfolder** pointer whose
   `settings.json` + `skills/` + `AGENTS.md` all merge (§6) with the settings-first load
-  order (§6.1). Needs a plan doc, then implementation — **the immediate next task**.
+  order (§6.1). Plan (5 slices): [`plans/task-32-skills.md`](plans/task-32-skills.md) — **the immediate next task**.
 - **P0.5 — Background Bash + Subagents.** Background/async bash commands, and subagents /
   agent-groups (their distinctions + implementations are hard to read off the UIs — needs a
   source dig). After the two P0s. Also unblocks codex `shell_command` → unified exec.
@@ -78,7 +78,16 @@ The immediate queue, ahead of the remaining packs:
     `claude`/`claude-sonnet-5` defaults + resume-model-from-flag/settings (#181);
     `--no-session-persistence` + the `.cargo`-redirect revert so `cargo run -c` finds
     real sessions (#180/#182). Reconciled into ADR-0024 (dated amendments).
-- [ ] **Task 32 — skills** (P0, needs its own ADR first — see Priorities).
+- [ ] **Task 32 — skills** (P0, ADR-0025 accepted; plan:
+  [`plans/task-32-skills.md`](plans/task-32-skills.md)):
+  - [ ] **S1** — `extends` becomes a dotfolder (`settings.json` + `skills/` + `AGENTS.md`)
+    and settings-before-discovery becomes a load-order invariant.
+  - [ ] **S2** — new `locode-skills` crate: discovery, five-key frontmatter, precedence,
+    three-scope collisions.
+  - [ ] **S3** — listing body: grok's verbatim format, 50 % budget, three-tier degrade.
+  - [ ] **S4** — injection: whole-body diff, previous state read off the transcript,
+    removal notice.
+  - [ ] **S5** — post-run rescan seam (engine hook + TUI invoking it after its render).
 
 ### More harness packs + wires (the A/B bed)
 Planning is a research task (AGENTS.md): re-read the harness source before starting each,
