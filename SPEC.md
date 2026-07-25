@@ -80,6 +80,7 @@ crates/
 ├── locode-host/         → fs/shell/path-jail/truncation/rg-resolution (injectable side-effect seam)
 ├── locode-instructions/ → project instructions (`AGENTS.md`): discovery + the injected reminder
 ├── locode-skills/      → agent skills (`SKILL.md`): discovery + the skills listing
+├── locode-commands/    → slash commands: the `SlashCommand` trait + registry
 ├── locode-engine/       → the sample→dispatch→append loop + Session driving API
 ├── locode-core/         → thin facade re-exporting the public surface (the bare name `locode` is taken on crates.io)
 ├── locode-exec/         → headless runner **library** (`run_headless` + `main_with`, Codex-exec-style stdout discipline); binary target removed 2026-07-23 (library only; not collapsed into `locode-tui`)

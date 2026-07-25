@@ -1174,6 +1174,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "locode-commands"
+version = "0.1.11"
+dependencies = [
+ "async-trait",
+ "tokio",
+]
+
+[[package]]
 name = "locode-core"
 version = "0.1.11"
 dependencies = [

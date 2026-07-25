@@ -1,0 +1,20 @@
+[package]
+name = "locode-commands"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Slash-command contract and registry for the locode coding agent"
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# `execute` is async from day 0 (ADR-0026 §6) — the same crate `Tool`/`Provider` use.
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
