@@ -44,7 +44,7 @@
   2026-07-24). Not a shared "context" crate — the two features share only an envelope.
 - **Deferred, deliberately:** the ADR-0008 read-only jail exception (ADR-0025 §4.1). With
   unrestricted the default (ADR-0008 amendment 2026-07-24) it buys nothing today; under
-  `--restricted`, skills reach only `<repo>/.locode/skills` and that is accepted.
+  `--restricted`, skills reach only `<repo>/.agents/skills` and that is accepted.
 
 ## Slices
 
@@ -69,7 +69,8 @@ roots and the instruction chain cannot know what to include.
 
 - New crate; depends on `locode-host` (`find_root_from_markers`, home resolution) and
   nothing else. Pure: no rendering, no injection, no engine wiring yet.
-- Roots, highest precedence first: `<repo>/.locode/skills` → `~/.locode/skills` →
+- Roots, highest precedence first: `<repo>/.agents/skills` (the cross-agent tree —
+  ADR-0025 §2 amendment) → `~/.locode/skills` →
   each `extends` dotfolder's `skills/` → each `skills.extra` entry.
 - Frontmatter: the five keys, **lenient** parsing (unknown keys ignored). A file that
   fails to parse or has an unusable name is **skipped with a stderr diagnostic** — never
