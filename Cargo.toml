@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.12"
+version = "0.1.13"
 edition = "2024"
 rust-version = "1.97"
 publish = true
@@ -18,17 +18,17 @@ readme = "README.md"
 # Internal crates: path for local builds, version for the published manifests
 # (cargo strips `path` on publish, so a version is mandatory). Kept here so a
 # release bumps every cross-crate requirement in one place.
-locode-protocol = { path = "crates/locode-protocol", version = "0.1.12" }
-locode-tools = { path = "crates/locode-tools", version = "0.1.12" }
-locode-packs = { path = "crates/locode-packs", version = "0.1.12" }
-locode-provider = { path = "crates/locode-provider", version = "0.1.12" }
-locode-host = { path = "crates/locode-host", version = "0.1.12" }
-locode-instructions = { path = "crates/locode-instructions", version = "0.1.12" }
-locode-skills = { path = "crates/locode-skills", version = "0.1.12" }
-locode-engine = { path = "crates/locode-engine", version = "0.1.12" }
-locode-core = { path = "crates/locode-core", version = "0.1.12" }
-locode-tui = { path = "crates/locode-tui", version = "0.1.12" }
-locode-exec = { path = "crates/locode-exec", version = "0.1.12" }
+locode-protocol = { path = "crates/locode-protocol", version = "0.1.13" }
+locode-tools = { path = "crates/locode-tools", version = "0.1.13" }
+locode-packs = { path = "crates/locode-packs", version = "0.1.13" }
+locode-provider = { path = "crates/locode-provider", version = "0.1.13" }
+locode-host = { path = "crates/locode-host", version = "0.1.13" }
+locode-instructions = { path = "crates/locode-instructions", version = "0.1.13" }
+locode-skills = { path = "crates/locode-skills", version = "0.1.13" }
+locode-engine = { path = "crates/locode-engine", version = "0.1.13" }
+locode-core = { path = "crates/locode-core", version = "0.1.13" }
+locode-tui = { path = "crates/locode-tui", version = "0.1.13" }
+locode-exec = { path = "crates/locode-exec", version = "0.1.13" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # `SKILL.md` YAML frontmatter (ADR-0025 §2). codex and grok both parse it with a real
