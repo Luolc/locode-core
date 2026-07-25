@@ -11,7 +11,7 @@ behind each decision lives in the ADRs ([`../docs/decisions/`](../docs/decisions
 > anymore: they were merged into this tracker (2026-07-22) precisely because keeping status
 > in three files let the least-edited copy rot. Keep it to one.
 
-Current release: **0.1.12**. Sizes: XS = 1 file · S = 1–2 · M = 3–5 · L = 5–8 (split if larger).
+Current release: **0.1.13**. Sizes: XS = 1 file · S = 1–2 · M = 3–5 · L = 5–8 (split if larger).
 
 ## Architecture at a glance
 
