@@ -107,8 +107,10 @@ The immediate queue, ahead of the remaining packs:
     `--debug-ui`, which is too broad and reads like a flag for debugging the UI itself.
   - Headless already has this: `--output-format stream-json` emits `Init` verbatim. Worth
     saying so in `--help` rather than adding a second headless surface.
-  - Watch: tool schemas are long. Decide whether the default is collapsed/summarized with
-    full text behind a toggle, rather than flooding the transcript on every run.
+  - **Tool schemas print in full (decided, user 2026-07-24)** — no collapsing, no
+    summarizing, no toggle. The flag exists for exactly one job: answering "what did the
+    model actually see?", and a truncated schema cannot answer it. Verbosity is not a
+    cost here because nothing turns this on except a debugging session.
 
 ### More harness packs + wires (the A/B bed)
 Planning is a research task (AGENTS.md): re-read the harness source before starting each,
