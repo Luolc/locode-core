@@ -73,6 +73,10 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
         output::warning_line(warning);
     }
     let settings = settings_load.settings;
+    // The resolved `extends` dotfolders travel with the settings — instruction and
+    // (later) skill discovery are consumers of this value, which is what keeps the
+    // load order an invariant (ADR-0025 §6.1).
+    let extends_dirs = settings_load.extends_dirs;
 
     // ---- 2c. Resume target (`-c`/`-r`, ADR-0024 §2.5): recover the transcript
     //          and the run identity (pack/wire/model/id) from the rollout header;
@@ -148,6 +152,7 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
         instructions: InstructionsConfig {
             enabled: !cli.no_project_instructions,
             root_stop_pattern: settings.root_stop_pattern.clone(),
+            extends_dirs: extends_dirs.clone(),
             ..InstructionsConfig::default()
         },
         ..EngineConfig::default()

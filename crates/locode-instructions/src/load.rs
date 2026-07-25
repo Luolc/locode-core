@@ -76,6 +76,15 @@ pub struct InstructionsConfig {
     pub extra_roots: Vec<PathBuf>,
     /// Read the global `~/.locode/AGENTS.md` (lowest precedence). Default `true`.
     pub global_file: bool,
+    /// Resolved `extends` dotfolders from settings (ADR-0024 §1.2 amendment). Each
+    /// contributes its `AGENTS.md` **below** the global file, in list order, so the
+    /// user's own global file still wins and the repo chain wins over both
+    /// (ADR-0023 amendment 2026-07-24).
+    ///
+    /// This field is why load order is an invariant rather than a convention
+    /// (ADR-0025 §6.1): the value comes from `SettingsLoad::extends_dirs`, so
+    /// discovery cannot run before settings resolve.
+    pub extends_dirs: Vec<PathBuf>,
 }
 
 impl Default for InstructionsConfig {
@@ -87,6 +96,7 @@ impl Default for InstructionsConfig {
             root_stop_pattern: None,
             extra_roots: Vec::new(),
             global_file: true,
+            extends_dirs: Vec::new(),
         }
     }
 }
@@ -121,7 +131,14 @@ fn load_impl(cwd: &Path, cfg: &InstructionsConfig, global: Option<&Path>) -> Pro
     let mut entries: Vec<InstructionEntry> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
 
-    // Global file — lowest precedence, first. Outside any repo, so not gitignore-filtered.
+    // `extends` dotfolders — the lowest precedence of all, so the user's own global
+    // file (next) overrides a team's. Outside any repo ⇒ not gitignore-filtered.
+    for dir in &cfg.extends_dirs {
+        push_dir_entry(dir, &mut entries, &mut seen, None);
+    }
+
+    // Global file — below the repo chain, above `extends`. Outside any repo, so not
+    // gitignore-filtered.
     if let Some(global) = global {
         push_dir_entry(&global_dir_of(global), &mut entries, &mut seen, None);
     }
@@ -476,6 +493,58 @@ mod tests {
             vec![global.clone(), root.join(AGENTS_FILE)],
             "global first (lowest precedence), project after"
         );
+    }
+
+    /// An `extends` dotfolder's `AGENTS.md` sits **below** the user's own global file,
+    /// which sits below the repo chain (ADR-0023 amendment 2026-07-24) — so a team file
+    /// is the weakest voice and the deepest project file still wins.
+    #[test]
+    fn extends_dotfolders_rank_below_the_global_file() {
+        let (_home_g, home) = tmp();
+        let global = home.join(".locode").join(AGENTS_FILE);
+        write(&global, "global");
+        let (_team_g, team) = tmp();
+        write(&team.join(AGENTS_FILE), "team");
+        let (_team2_g, team2) = tmp();
+        write(&team2.join(AGENTS_FILE), "team2");
+        let (_g, root) = tmp();
+        fs::create_dir(root.join(".git")).unwrap();
+        write(&root.join(AGENTS_FILE), "project");
+
+        let cfg = InstructionsConfig {
+            global_file: true,
+            extends_dirs: vec![team.clone(), team2.clone()],
+            ..Default::default()
+        };
+        let got = load_impl(&root, &cfg, Some(&global));
+        let paths: Vec<_> = got.entries.iter().map(|e| e.source_path.clone()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                team.join(AGENTS_FILE),
+                team2.join(AGENTS_FILE),
+                global.clone(),
+                root.join(AGENTS_FILE),
+            ],
+            "extends (list order) → global → repo chain"
+        );
+    }
+
+    /// A dotfolder that ships no `AGENTS.md` contributes nothing and is not an error.
+    #[test]
+    fn extends_dotfolder_without_agents_md_contributes_nothing() {
+        let (_team_g, team) = tmp();
+        let (_g, root) = tmp();
+        fs::create_dir(root.join(".git")).unwrap();
+        write(&root.join(AGENTS_FILE), "project");
+
+        let cfg = InstructionsConfig {
+            extends_dirs: vec![team],
+            ..cfg_no_global()
+        };
+        let got = load_impl(&root, &cfg, None);
+        let paths: Vec<_> = got.entries.iter().map(|e| e.source_path.clone()).collect();
+        assert_eq!(paths, vec![root.join(AGENTS_FILE)]);
     }
 
     #[test]

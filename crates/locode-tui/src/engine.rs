@@ -288,7 +288,9 @@ fn build_session(
     // Settings (ADR-0024): durable defaults under the flags. Interactive mode
     // has no stderr surface, so layer warnings are dropped here; the `-p`
     // headless path prints them (locode-exec).
-    let settings = locode_core::load_settings(&cwd, cli.settings.as_deref()).settings;
+    let settings_load = locode_core::load_settings(&cwd, cli.settings.as_deref());
+    let extends_dirs = settings_load.extends_dirs;
+    let settings = settings_load.settings;
 
     // Resume target (`-c`/`-r`, ADR-0024 §2.5): the rollout header wins the
     // identity; an explicit conflicting flag errors (no silent pack/wire swap).
@@ -398,6 +400,8 @@ fn build_session(
         // `--no-project-instructions` opts out.
         instructions: InstructionsConfig {
             enabled: !cli.no_project_instructions,
+            root_stop_pattern: settings.root_stop_pattern.clone(),
+            extends_dirs: extends_dirs.clone(),
             ..InstructionsConfig::default()
         },
         ..EngineConfig::default()
