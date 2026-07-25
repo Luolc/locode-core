@@ -2261,6 +2261,20 @@ mod tests {
         );
     }
 
+    /// Ghost text end to end: typing shows the rest of the name, and Tab — which
+    /// accepts the same selected row — makes it real.
+    #[tokio::test]
+    async fn the_ghost_shows_the_rest_of_the_name_and_tab_accepts_it() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        type_str(&mut app, "/qu", t0);
+        assert_eq!(app.slash.ghost.as_deref(), Some("it"));
+
+        let _ = app.update(key(KeyCode::Tab), t0);
+        assert_eq!(app.composer.text(), "/quit");
+        assert_eq!(app.slash.ghost, None, "nothing left to complete");
+    }
+
     /// A submitted prompt leaves nothing behind: the emptied composer closes the menu.
     #[test]
     fn submitting_closes_the_menu() {

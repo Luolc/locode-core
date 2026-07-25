@@ -97,7 +97,8 @@ pub fn draw(
         frame.render_widget(Paragraph::new(queue_lines(app)), queue_area);
     }
     dropdown::render(frame, menu_area, &app.slash);
-    app.composer.render(frame, composer_area);
+    app.composer
+        .render_with_ghost(frame, composer_area, app.slash.ghost.as_deref());
     frame.render_widget(
         Paragraph::new(footer_lines(app, footer_area.width)),
         footer_area,

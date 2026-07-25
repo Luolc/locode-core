@@ -114,6 +114,19 @@ pub trait SlashCommand: Send + Sync {
         None
     }
 
+    /// The dim hint shown after the command name once the user types a space —
+    /// `[command]` for `/help`, `[args]` for a skill (grok's `arg_placeholder`).
+    ///
+    /// Derived from [`SlashCommand::usage`] by default: whatever follows the command
+    /// name. A command with an accurate usage line therefore gets an accurate hint for
+    /// free, and the two can never drift apart.
+    fn arg_placeholder(&self) -> Option<&str> {
+        self.usage()
+            .split_once(char::is_whitespace)
+            .map(|(_, rest)| rest.trim())
+            .filter(|rest| !rest.is_empty())
+    }
+
     /// Whether the command is currently offerable. Evaluated **per query**, not at
     /// registration, so a command that cannot run is never shown (Claude Code's rule).
     fn visible(&self, _ctx: &CommandCtx<'_>) -> bool {
