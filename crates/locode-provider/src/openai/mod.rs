@@ -67,7 +67,7 @@ pub struct OpenAiModelConfig {
     /// The bearer credential.
     pub bearer: String,
     /// Clamp for `max_output_tokens` (which includes reasoning tokens).
-    pub max_tokens_cap: u32,
+    pub max_tokens_cap: Option<u32>,
     /// `reasoning.summary` request value. Default `Some("auto")` (plan §A.5
     /// Q2: trace readability); `None` omits the field for score-only runs.
     pub reasoning_summary: Option<String>,
@@ -116,7 +116,7 @@ impl OpenAiModelConfig {
             base_url,
             backend,
             bearer: bearer.into(),
-            max_tokens_cap: 32_000,
+            max_tokens_cap: None,
             reasoning_summary: Some("auto".to_string()),
             prompt_cache_key: None,
             custom_tools_supported: true,

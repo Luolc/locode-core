@@ -9,7 +9,9 @@ use locode_provider::anthropic::{
     ApiBackend, DeveloperRendering, ModelConfig, ReasoningEncoding, build_request,
     count_cache_controls, normalize_input_schema,
 };
-use locode_provider::{CacheHint, ConversationRequest, ReasoningEffort, SamplingArgs};
+use locode_provider::{
+    CacheHint, ConversationRequest, DEFAULT_MAX_TOKENS, ReasoningEffort, SamplingArgs,
+};
 use serde_json::json;
 
 fn native_cfg() -> ModelConfig {
@@ -182,6 +184,41 @@ fn temperature_omitted_when_thinking_on() {
     let built = build_request(&req, &native_cfg());
     assert!(built.thinking.is_none());
     assert_eq!(built.temperature, Some(0.7));
+}
+
+/// The default config pins no ceiling, so the caller's budget reaches the wire
+/// verbatim — a silent `min` would corrupt eval comparisons the same way a
+/// silently clamped `reasoning_effort` would (ADR-0007).
+#[test]
+fn max_tokens_passes_through_unclamped_by_default() {
+    let mut req = base_request(vec![msg(Role::User, vec![text("hi")])]);
+    assert_eq!(
+        native_cfg().max_tokens_cap,
+        None,
+        "no ceiling unless one is pinned"
+    );
+
+    let built = build_request(&req, &native_cfg());
+    assert_eq!(built.max_tokens, DEFAULT_MAX_TOKENS);
+
+    // Including a value above every current model's limit: the request is the
+    // caller's to make, and the API's own error is the honest answer.
+    req.sampling_args.max_tokens = 200_000;
+    assert_eq!(build_request(&req, &native_cfg()).max_tokens, 200_000);
+}
+
+/// The ceiling is opt-in, for pinning a model whose real limit is lower.
+#[test]
+fn max_tokens_cap_clamps_only_when_pinned() {
+    let mut cfg = native_cfg();
+    cfg.max_tokens_cap = Some(4096); // e.g. claude-3-haiku
+    let mut req = base_request(vec![msg(Role::User, vec![text("hi")])]);
+    req.sampling_args.max_tokens = 64_000;
+    assert_eq!(build_request(&req, &cfg).max_tokens, 4096);
+
+    // A budget already under the ceiling is untouched.
+    req.sampling_args.max_tokens = 1024;
+    assert_eq!(build_request(&req, &cfg).max_tokens, 1024);
 }
 
 #[test]

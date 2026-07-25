@@ -69,35 +69,58 @@ Budget encoding) reject `Other` pre-send with the new terminal
 `ProviderError::Config` variant. `SamplingArgs.reasoning_effort: None` (outer
 Option) still means "omit the parameter".
 
-## Amendment (2026-07-25): the output-token budget, and what `max_tokens_cap` is for
+## Amendment (2026-07-25): the output-token budget, and dropping the silent cap
 
-`SamplingArgs.max_tokens` defaults to **32k** (`DEFAULT_MAX_TOKENS`), up from
-4096. For a file-writing agent this is not a reply-length knob: a turn's output
-is dominated by one `tool_use` argument blob, so the budget is really the
+`SamplingArgs.max_tokens` defaults to **64k** (`DEFAULT_MAX_TOKENS`), up from
+4096, and `ModelConfig.max_tokens_cap` becomes `Option<u32>` defaulting to
+**`None`** on both wires.
+
+**The budget.** For a file-writing agent this is not a reply-length knob: a
+turn's output is dominated by one `tool_use` argument blob, so it is really the
 ceiling on the largest single tool call the model can emit. At 4096 the wire
 truncated ordinary `Write` calls, and truncation is silent by construction —
 the API returns the `tool_use` with an empty `input` (see the ADR-0004/0005
-amendments of the same date).
+amendments of the same date). 64k is Claude Code's `ESCALATED_MAX_TOKENS`
+(`utils/context.ts:25`), the value it retries at after exactly this failure,
+and the largest value correct on every model this crate targets. Not 128k: the
+frontier models allow it but `upperLimit` is per model and Haiku 4.5 stops at
+64k, and a tool call whose arguments exceed 64k tokens is not one worth
+completing. It is a ceiling, not a reservation — nothing is spent unless the
+model generates it.
 
-32k is where the studied harnesses sit for this tier. Claude Code resolves a
-per-model `{default, upperLimit}` pair (`utils/context.ts:149-208`): 32k for
-the sonnet-4-6 and 4.5 families, 64k for opus-4-6, upper limits 64k–128k. Its
-8k `CAPPED_DEFAULT_MAX_TOKENS` is **not** the shipped default — it is gated on
-the `tengu_otk_slot_v1` slot-reservation experiment, off by default outside
-first-party (`services/api/claude.ts:3394-3397`), and paired with a one-shot
-escalate to `ESCALATED_MAX_TOKENS = 64_000`. Codex sends no sampling cap at
-all; Grok Build leaves `max_tokens: None` and treats truncation as a dedicated
-non-retryable `SamplingError::MaxTokensTruncation`.
+**Why the field cannot be `Option`.** The Anthropic Messages API requires
+`max_tokens` on every request; "let the API decide" is not available on this
+wire. opencode encodes the asymmetry exactly — `max_tokens: Schema.Number`
+(required) for Anthropic against `Schema.optional` for both OpenAI protocols —
+and always sends a value, falling back to the model's declared output limit
+(`protocols/anthropic-messages.ts:510,546`). Codex sends no sampling cap
+because the Responses API does not require one; Grok Build's `Option` collapses
+to `unwrap_or(0)` when it lowers onto Messages
+(`xai-grok-sampling-types/src/conversation.rs:3265`), which is not a model to
+copy. Our OpenRouter gateway happens to tolerate an omitted `max_tokens` by
+filling its own default — verified live — but `ApiBackend::Native` would 400,
+so the leniency of one gateway is not a contract to build on.
 
-`ModelConfig.max_tokens_cap` is a **ceiling**, not a budget: a guard against a
-caller requesting more than the model accepts. The Anthropic wire's value was
-8000, credited to `CAPPED_DEFAULT_MAX_TOKENS` — a miscitation twice over (that
-constant is a default, and a flag-gated one), and because the clamp is a `min`
-it silently overrode any larger budget a caller set. It is now 64k, matching
-`ESCALATED_MAX_TOKENS` and sitting at or under the `upperLimit` of every model
-this wire targets; the Responses wire already used 32k.
+**Why the cap goes away.** A ceiling applied as a `min` is silent by
+construction: a caller who deliberately asks for more gets less, with no error
+and no way to notice. This ADR already rejects that shape for
+`reasoning_effort` — "never silently clamp — that would corrupt eval
+comparisons" — and the output budget is no different. The wire now forwards the
+caller's value and lets the API's own error surface. `Some(n)` remains, for
+pinning a model whose real ceiling is lower than the default (e.g.
+`claude-3-haiku` at 4096), where the clamp turns a 400 into a working request.
 
-**Deferred:** the per-model table. One default plus one ceiling is the honest
-v0 — every current Anthropic and OpenAI model targeted here accepts 32k — but
-a legacy model with a lower native limit (e.g. `claude-3-haiku` at 4096) needs
-its `ModelConfig` set explicitly, exactly as before this change.
+The prior value was 8000, credited to Claude Code's
+`CAPPED_DEFAULT_MAX_TOKENS` — a miscitation twice over: that constant is a
+*default*, not a ceiling, and it is gated on the `tengu_otk_slot_v1`
+slot-reservation experiment, off by default outside first-party
+(`services/api/claude.ts:3394-3397`).
+
+**Breaking:** `ModelConfig.max_tokens_cap` changes type on both wires and
+`anthropic::config::DEFAULT_MAX_TOKENS_CAP` is removed. Downstream code that
+set the field passes `Some(n)`; code that relied on the implicit 8k/32k
+ceilings now sends the caller's budget instead. Acceptable pre-1.0, and the old
+ceilings were the bug.
+
+**Deferred:** the per-model table (Claude Code's and opencode's shape). One
+safe default plus an opt-in pin is the honest v0.
