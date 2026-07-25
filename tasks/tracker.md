@@ -90,9 +90,11 @@ The immediate queue, ahead of the remaining packs:
     removal notice.
   - [x] **S5** — post-run rescan seam (scan after the terminal `Result`; session start is
     the one synchronous scan).
+  - **All five slices shipped 2026-07-24** (PRs #196–#201, plus #199 moving project
+    skills to `<repo>/.agents/skills`).
 
-- [ ] **Task 33 — `--debug-show-hidden-context`: render everything we send to the model** (P0.5,
-  **after Task 32**, user request 2026-07-24). A debugging flag that prints the parts of
+- [x] **Task 33 — `--debug-show-hidden-context`: render everything we send to the model**
+  (**complete** 2026-07-24). A debugging flag that prints the parts of
   the request the UI normally hides — the system prompt / preamble, every injected
   `<system-reminder>` (project instructions, and the skills listing once Task 32 lands),
   and the tool schemas — so "what did the model actually see?" is answerable without a

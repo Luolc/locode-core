@@ -139,4 +139,18 @@ vendor-compat roots.
 
 ## Result
 
-_(pending)_
+**Complete** (2026-07-24, PRs #196–#201, autonomous run).
+
+Two things the plan did not anticipate, both recorded where they belong rather than
+absorbed silently:
+
+- **No YAML dependency.** All five recognized frontmatter keys are scalars and unknown
+  keys must be ignored, so the reader parses the block directly — which is also what
+  grok's own recovery path does. Adding a dependency would have been an ask-first stop.
+- **Post-run scanning implies a one-turn lag** for a skill created *after* a run ends
+  (while the user is typing). The case the design optimizes for — written during a run
+  — has no lag. Pinned by a test and recorded as a dated ADR-0025 §3.2 amendment.
+
+Mid-flight scope change: project skills moved from `<repo>/.locode/skills` to the
+cross-agent `<repo>/.agents/skills` (#199), verified against codex's `AGENTS_DIR_NAME`
+and grok's always-scanned `.agents` root.

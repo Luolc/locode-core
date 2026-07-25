@@ -48,12 +48,16 @@ pub async fn run(cli: Cli, registry: ProviderRegistry) -> Result<ExitCode, RunEr
     // Pre-fill from a positional prompt before `cli` moves into the engine.
     let initial_draft = cli.prompt.clone();
     let restricted = cli.restricted;
+    let show_hidden = cli.debug_show_hidden_context;
     let (engine_tx, mut engine_rx) = engine::spawn(cli, registry);
 
     let mut app = match &initial_draft {
         Some(prompt) => App::with_draft(prompt),
         None => App::new(),
     };
+    if show_hidden {
+        app = app.showing_hidden_context();
+    }
     // The permission posture is stated up front (ADR-0008 amendment 2026-07-24):
     // unrestricted is the default, and restricted is knowingly incomplete. The TUI
     // has no stderr surface, so it rides the same notice channel as other advisories.
