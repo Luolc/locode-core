@@ -32,6 +32,7 @@ and — since the 2026-07-18 rename below — the facade crate as well.
 | `locode-provider` | `Provider` trait + API-agnostic `ConversationRequest` + Anthropic wire impl |
 | `locode-host` | fs/shell/path-jail/truncation/rg-resolution (injectable side-effect seam) |
 | `locode-instructions` | project instructions (`AGENTS.md`): discovery, assembly, and the injected `<system-reminder>` message (added 2026-07-24) |
+| `locode-skills` | agent skills (`SKILL.md`): discovery and the model-facing listing (added 2026-07-24) |
 | `locode-engine` | sample→dispatch→append loop + `Session` driving API |
 | `locode-core` (was `locode`) | thin facade re-exporting the public surface |
 | `locode-exec` | headless runner **library** (`run_headless` + `main_with`); binary target removed 2026-07-23 — kept standalone (not collapsed into `locode-tui`) so headless-only consumers avoid the TUI dep (ADR-0019 amendment) |
@@ -52,7 +53,7 @@ and — since the 2026-07-18 rename below — the facade crate as well.
 - Tools **never** touch `std::fs`/`Command` directly — only through `locode-host` — making them trivially testable and sandbox-ready.
 - More Cargo manifests and a `[workspace.lints]` table to maintain; accepted cost.
 
-## Amendment (2026-07-24): one crate per injected-context feature — `locode-instructions`, and `locode-skills` to follow
+## Amendment (2026-07-24): one crate per injected-context feature — `locode-instructions` and `locode-skills`
 
 Project-instruction (`AGENTS.md`) loading was split across two crates — the loader in
 `locode-host`, the renderer in `locode-engine` — and skills (ADR-0025) were about to
@@ -63,7 +64,7 @@ decision)*:
   `<system-reminder>` message. Depends on `locode-host` (for the shared cwd→root
   marker walk) and `locode-protocol` (for `Message`); nothing depends on it but
   `locode-engine` and the facade.
-- **`locode-skills`** (Task 32): the same shape for skills.
+- **`locode-skills`**: the same shape for skills (landed with Task 32 S2).
 
 **Why two crates rather than one.** A single `locode-context` crate was drafted and
 rejected as too broad: "context" names no feature, and the two have almost nothing in
@@ -88,6 +89,6 @@ a cycle.
 `locode-engine`, which already owns injection. It becomes its own crate only if a
 third consumer appears.
 
-**Consequence for releases:** the published set grows from 8 crates to 9 (and to 10
-when `locode-skills` lands). Publish order gains `instructions` after `host`:
-`protocol → tools → host → instructions → provider → packs → engine → core → exec`.
+**Consequence for releases:** the published set grows from 8 crates to 10. Publish
+order gains both after `host`:
+`protocol → tools → host → instructions → skills → provider → packs → engine → core → exec`.

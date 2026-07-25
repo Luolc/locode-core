@@ -1,0 +1,24 @@
+[package]
+name = "locode-skills"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Agent-skill discovery and the model-facing skill listing for the locode coding agent"
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Home resolution (`$LOCODE_HOME`) and the cwd→root marker walk — the same two host
+# primitives `locode-instructions` borrows, for the same reason (ADR-0002 amendment).
+locode-host = { workspace = true }
+# The rendered `User` <system-reminder> message (S3/S4).
+locode-protocol = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
