@@ -19,6 +19,9 @@ pub enum UiCommand {
     Submit(String),
     /// Discard the current `Session` and build a fresh one (`/new`).
     NewSession,
+    /// Swap the running session's model, and persist it as the next session's
+    /// default (`/model <id>`).
+    SetModel(String),
 }
 
 /// The context occupancy recovered for a resumed session: **exact** when the
@@ -53,6 +56,15 @@ pub enum EngineMsg {
     },
     /// Session assembly failed pre-run (bad schema, missing key, …).
     BuildFailed(String),
+    /// `/model` finished: the model now in use (unchanged when the switch failed) and
+    /// the line to show. Carrying the resolved model — not the requested one — is what
+    /// keeps the status bar honest when a factory resolves something else or refuses.
+    ModelChanged {
+        /// The model actually in use after the attempt.
+        model: String,
+        /// User-facing outcome.
+        message: String,
+    },
     /// A recovered user prompt from a resumed session's transcript — rendered
     /// like a live submit echo (the generic event path deliberately drops
     /// plain user text because live submits echo it themselves).
@@ -143,6 +155,9 @@ pub fn spawn(
                     // Pack-faithful prompt shaping, as locode-exec does.
                     let report = built.session.run_text(pack.shape_user_prompt(&text)).await;
                     let _ = msg_tx.send(EngineMsg::RunFinished(Box::new(report)));
+                }
+                UiCommand::SetModel(model) => {
+                    let _ = msg_tx.send(switch_model(&mut built, &registry, &model));
                 }
                 // `/new` always starts FRESH — the resume intent does not stick.
                 UiCommand::NewSession => {
@@ -269,6 +284,59 @@ struct BuiltSession {
     /// ones as slash commands (ADR-0026 §4). Discovered here rather than in the UI so
     /// both halves see the *same* resolved settings.
     skills: Vec<locode_skills::Skill>,
+    /// The wire this session is on, kept so `/model` can rebuild its provider without
+    /// re-resolving the whole session.
+    api_schema: String,
+    /// The session id, which some factories fold into the provider (the
+    /// `openai-responses` cache key).
+    session_id: String,
+}
+
+/// `/model <id>`: swap the provider on the live session, then remember the choice.
+///
+/// Order matters. The **session** changes first and the settings write is best-effort
+/// after it: a failed write must not leave the user on a model the status bar says they
+/// left. The reported model is the one the factory *resolved*, not the one requested, so
+/// a redirected or refused switch cannot leave the footer lying.
+fn switch_model(built: &mut BuiltSession, registry: &ProviderRegistry, model: &str) -> EngineMsg {
+    let init = ProviderInit {
+        session_id: built.session_id.clone(),
+        model: Some(model.to_string()),
+    };
+    let rebuilt = match registry.build(&built.api_schema, &init) {
+        Ok(rebuilt) => rebuilt,
+        Err(e) => {
+            return EngineMsg::ModelChanged {
+                model: built.model.clone(),
+                message: format!("cannot switch to {model}: {e}"),
+            };
+        }
+    };
+    let resolved = rebuilt.model.clone();
+    let notice = built.session.set_model(rebuilt.provider, &resolved);
+    built.session.announce(notice);
+    built.model.clone_from(&resolved);
+
+    // Persisted to the user-global file — what the NEXT session starts with; the running
+    // one already switched. Both reference harnesses persist globally and neither has a
+    // project-scoped model (Claude Code `userSettings.model`; grok `[models].default`).
+    let saved = locode_core::locode_home()
+        .map_err(|e| e.clone())
+        .and_then(|home| {
+            locode_core::update_user_setting(
+                &home,
+                "model",
+                serde_json::Value::String(resolved.clone()),
+            )
+        });
+    let message = match saved {
+        Ok(_) => format!("model: {resolved} (also saved as the default)"),
+        Err(e) => format!("model: {resolved} — switched, but saving the default failed: {e}"),
+    };
+    EngineMsg::ModelChanged {
+        model: resolved,
+        message,
+    }
 }
 
 #[allow(clippy::too_many_lines)] // linear assembly, mirrored from locode-exec
@@ -392,6 +460,7 @@ fn build_session(
         None => pack.preamble(&pack_ctx),
     };
 
+    let config_session_id = session_id.clone();
     let config = EngineConfig {
         session_id,
         harness: pack.name().to_string(),
@@ -480,6 +549,8 @@ fn build_session(
         replay,
         context,
         skills,
+        api_schema,
+        session_id: config_session_id,
     })
 }
 

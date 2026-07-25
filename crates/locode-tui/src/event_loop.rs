@@ -438,6 +438,9 @@ async fn run_reducer(app: &mut App, msg: Msg, io: &mut LoopIo<'_>) {
             Cmd::NewSession => {
                 let _ = io.engine_tx.send(UiCommand::NewSession);
             }
+            Cmd::SetModel(model) => {
+                let _ = io.engine_tx.send(UiCommand::SetModel(model));
+            }
             // Fire the run's cancel handle (idempotent — ADR-0018) AND drain
             // every pending approval with Deny, so a run parked in an
             // approval await (the ADR-0017 gap) unblocks and settles as

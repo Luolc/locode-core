@@ -102,8 +102,10 @@ skill out of that menu.
 
 Typing `/` at the start of the composer opens a menu of what you can run.
 Keep typing to narrow it, ↑/↓ to move, Tab to complete, Enter to run, Esc to
-close. `/help` lists everything, `/model` shows the model in use, `/new` starts
-a fresh session, and `/quit` (or `/exit`) leaves. Every skill you can invoke
+close. `/help` lists everything, `/model` shows or switches the model, `/new` starts
+a fresh session, and `/quit` (or `/exit`) leaves. `/model <id>` changes the running
+session and saves the id as the default for the next one; the menu lists a few common
+ids, and any other id can be typed. Every skill you can invoke
 appears there too.
 
 Every run appends a JSONL trace under `~/.locode/sessions/`; `--continue`

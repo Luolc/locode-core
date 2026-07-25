@@ -45,12 +45,14 @@ pub enum CommandResult {
 /// UI actions a command can ask for. Deliberately a closed set: a command that needs
 /// something not listed here is asking the UI to grow a capability, which should be a
 /// visible change rather than an opaque string.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UiAction {
     /// Start a fresh session.
     NewSession,
     /// Exit the app.
     Quit,
+    /// Switch the model this session samples with, and remember it for the next one.
+    SetModel(String),
 }
 
 /// Read-only context handed to `visible` and `suggest_args`.

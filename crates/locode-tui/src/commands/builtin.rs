@@ -85,13 +85,27 @@ impl SlashCommand for Help {
     }
 }
 
-/// `/model` — report the model this session is using, and how to change it.
+/// Models offered by `/model`'s menu.
 ///
-/// **Read-only on purpose.** Switching mid-session needs a model-selection seam on the
-/// provider registry, which is an ask-first change to core's public surface and is
-/// tracked separately. Rather than offer a list of models we cannot verify — locode
-/// passes `--model` through to whatever wire is configured and keeps no catalog — this
-/// reports what is in use and names the two places that set it.
+/// A short curated list, not a catalog: locode keeps none, and `--model` passes whatever
+/// you give it straight to the configured wire. Anything not listed can still be typed —
+/// the menu closes when nothing matches and Enter submits what you wrote — so this is a
+/// shortcut, never a restriction. These are Anthropic ids; on another wire they will
+/// fail at request time, which is the user's call to make.
+const MODELS: &[&str] = &[
+    "claude-fable-5",
+    "claude-opus-5",
+    "claude-opus-4-8",
+    "claude-sonnet-5",
+];
+
+/// `/model [id]` — report the model in use, or switch to another.
+///
+/// Switching does two things, as both reference harnesses do: it changes the **running**
+/// session (in memory — two sessions never fight over each other's model) and writes the
+/// id to the user-global settings, which is what the **next** session starts with
+/// (Claude Code: `updateSettingsForSource('userSettings', { model })`; grok:
+/// `[models].default` in `~/.grok/config.toml`). Neither has a project-scoped model.
 struct Model;
 
 #[async_trait::async_trait]
@@ -101,21 +115,49 @@ impl SlashCommand for Model {
     }
 
     fn description(&self) -> &'static str {
-        "show the model this session is using"
+        "show or switch the model this session uses"
     }
 
     fn usage(&self) -> &'static str {
-        "/model"
+        "/model [id]"
     }
 
-    async fn execute(&self, ctx: &CommandCtx<'_>, _args: &str) -> CommandResult {
-        let Some(model) = ctx.model else {
-            return CommandResult::Message("no model yet — the session is still starting".into());
-        };
-        CommandResult::Message(format!(
-            "{model}\nto use a different one, start locode with --model <id>, \
-             or set \"model\" in ~/.locode/settings.json"
-        ))
+    fn takes_args(&self) -> bool {
+        true
+    }
+
+    fn suggest_args(&self, ctx: &CommandCtx<'_>, _query: &str) -> Option<Vec<ArgItem>> {
+        Some(
+            MODELS
+                .iter()
+                .map(|id| ArgItem {
+                    display: (*id).to_string(),
+                    match_text: (*id).to_string(),
+                    insert_text: (*id).to_string(),
+                    description: if ctx.model == Some(*id) {
+                        "in use".to_string()
+                    } else {
+                        String::new()
+                    },
+                })
+                .collect(),
+        )
+    }
+
+    async fn execute(&self, ctx: &CommandCtx<'_>, args: &str) -> CommandResult {
+        let wanted = args.trim();
+        if wanted.is_empty() {
+            let Some(model) = ctx.model else {
+                return CommandResult::Message(
+                    "no model yet — the session is still starting".into(),
+                );
+            };
+            return CommandResult::Message(format!("{model}\ntype /model <id> to switch"));
+        }
+        if ctx.model == Some(wanted) {
+            return CommandResult::Message(format!("already using {wanted}"));
+        }
+        CommandResult::Action(UiAction::SetModel(wanted.to_string()))
     }
 }
 
@@ -256,28 +298,60 @@ mod tests {
         assert_eq!(quit.insert_text, "quit");
     }
 
-    /// `/model` reports; it does not switch. The message names the two surfaces that
-    /// actually set the model, both of which exist.
+    /// Bare `/model` reports; `/model <id>` asks the caller to switch.
     #[tokio::test]
-    async fn model_reports_the_active_model_and_how_to_change_it() {
+    async fn model_reports_with_no_argument_and_switches_with_one() {
         let r = registry();
-        let (cmd, args) = r.resolve("/model").expect("resolves");
+        let (cmd, _) = r.resolve("/model").expect("resolves");
         let ctx = CommandCtx {
             model: Some("claude-sonnet-5"),
             ..CommandCtx::default()
         };
-        let CommandResult::Message(msg) = cmd.execute(&ctx, args).await else {
+
+        let CommandResult::Message(msg) = cmd.execute(&ctx, "").await else {
             panic!("expected a report");
         };
         assert!(msg.starts_with("claude-sonnet-5"), "{msg}");
-        assert!(msg.contains("--model"), "{msg}");
-        assert!(msg.contains("~/.locode/settings.json"), "{msg}");
+
+        assert_eq!(
+            cmd.execute(&ctx, "claude-opus-5").await,
+            CommandResult::Action(UiAction::SetModel("claude-opus-5".into()))
+        );
+
+        // Switching to what is already running is a no-op with a word about it.
+        assert!(matches!(
+            cmd.execute(&ctx, "claude-sonnet-5").await,
+            CommandResult::Message(m) if m.contains("already using")
+        ));
 
         // Before the session is ready there is nothing to report, and it says so.
-        let CommandResult::Message(msg) = cmd.execute(&CommandCtx::default(), args).await else {
+        let CommandResult::Message(msg) = cmd.execute(&CommandCtx::default(), "").await else {
             panic!("expected a report");
         };
         assert!(msg.contains("still starting"), "{msg}");
+    }
+
+    /// The menu is a shortcut, not a restriction: it lists the curated ids and marks
+    /// the one in use, and an unlisted id still switches.
+    #[tokio::test]
+    async fn model_offers_the_curated_list_but_accepts_anything() {
+        let r = registry();
+        let (cmd, _) = r.resolve("/model").expect("resolves");
+        let ctx = CommandCtx {
+            model: Some("claude-opus-5"),
+            ..CommandCtx::default()
+        };
+        let items = cmd.suggest_args(&ctx, "").expect("suggestions");
+        let ids: Vec<&str> = items.iter().map(|i| i.display.as_str()).collect();
+        assert_eq!(ids, MODELS);
+        let current = items.iter().find(|i| i.display == "claude-opus-5").unwrap();
+        assert_eq!(current.description, "in use");
+
+        assert_eq!(
+            cmd.execute(&ctx, "some-other-model").await,
+            CommandResult::Action(UiAction::SetModel("some-other-model".into())),
+            "an id outside the list is still accepted"
+        );
     }
 
     #[tokio::test]

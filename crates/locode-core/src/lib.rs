@@ -55,6 +55,7 @@ pub use locode_host::{
     ExecLimits, GitMeta, Host, HostConfig, PathPolicy, RolloutContents, Settings, SettingsLoad,
     SkillsExtraEntry, TraceExtras, TraceWriter, decode_cwd_dirname, encode_cwd_dirname,
     find_latest_rollout, find_rollout_by_id, load_settings, locode_home, read_rollout,
+    update_user_setting,
 };
 
 // ---- instructions: `AGENTS.md` discovery + its injected message ----

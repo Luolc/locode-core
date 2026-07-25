@@ -21,7 +21,7 @@
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::root::find_root_from_markers;
 
@@ -206,6 +206,90 @@ pub fn load_settings_from(
         extends_dirs,
         warnings,
     }
+}
+
+/// Write `key = value` into the **user** settings file, preserving every other key.
+///
+/// This is the write half of the settings layer: `/model` persists the model the same
+/// way both reference harnesses do — into the user-global file (Claude Code's
+/// `updateSettingsForSource('userSettings', { model })`; grok's `[models].default` in
+/// `~/.grok/config.toml`). Neither has a project-scoped model, and neither needs one:
+/// a running session holds its model in memory, so the file only decides what the
+/// **next** session starts with.
+///
+/// **The write is atomic.** The new contents go to a temp file in the *same directory*
+/// — same filesystem, so the rename cannot fail with `EXDEV` — are flushed to disk, and
+/// only then renamed over the target. `rename(2)` is atomic, so a crash, a full disk or
+/// two processes writing at once can leave the file as the old contents or the new,
+/// never a truncated mixture. A half-written `settings.json` would be worse than no
+/// write at all: the next run would fall back to defaults with no way to tell why.
+///
+/// # Errors
+/// The path could not be resolved, created, written, or renamed. The existing file is
+/// untouched in every failure case.
+pub fn update_user_setting(user_dir: &Path, key: &str, value: Value) -> Result<PathBuf, String> {
+    let path = user_dir.join("settings.json");
+    // Read what is there, so unrelated keys (and unknown ones a newer version wrote)
+    // survive. An unreadable or malformed file is replaced rather than merged — there
+    // is nothing to preserve in it.
+    let mut root = match std::fs::read_to_string(&path) {
+        Ok(text) => {
+            serde_json::from_str::<Value>(&text).unwrap_or_else(|_| Value::Object(Map::new()))
+        }
+        Err(_) => Value::Object(Map::new()),
+    };
+    if !root.is_object() {
+        root = Value::Object(Map::new());
+    }
+    let Some(object) = root.as_object_mut() else {
+        unreachable!("just forced to an object");
+    };
+    match value {
+        // `null` removes the key rather than storing a null, so "unset it" round-trips
+        // through the same call.
+        Value::Null => {
+            object.remove(key);
+        }
+        value => {
+            object.insert(key.to_string(), value);
+        }
+    }
+    let text = serde_json::to_string_pretty(&root).map_err(|e| format!("serialize: {e}"))? + "\n";
+    crate::trace::create_dir_private(user_dir)?;
+    write_atomically(&path, text.as_bytes())?;
+    Ok(path)
+}
+
+/// Replace `path`'s contents atomically: temp file beside it → flush → rename.
+///
+/// The temp name carries the pid so two processes writing at once each land in their
+/// own file and the rename decides the winner, rather than interleaving into one.
+fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let name = path.file_name().map_or_else(
+        || std::ffi::OsString::from("settings.json"),
+        std::ffi::OsStr::to_os_string,
+    );
+    let mut temp_name = name;
+    temp_name.push(format!(".tmp.{}", std::process::id()));
+    let temp = dir.join(temp_name);
+
+    let write = || -> std::io::Result<()> {
+        let mut file = std::fs::File::create(&temp)?;
+        std::io::Write::write_all(&mut file, bytes)?;
+        // Flush to the device before the rename: without it a crash right after the
+        // rename can leave the new name pointing at an empty file.
+        file.sync_all()?;
+        Ok(())
+    };
+    if let Err(e) = write() {
+        let _ = std::fs::remove_file(&temp);
+        return Err(format!("write {}: {e}", temp.display()));
+    }
+    std::fs::rename(&temp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&temp);
+        format!("replace {}: {e}", path.display())
+    })
 }
 
 /// The first-run scaffold: written only when the user `settings.json` is
@@ -512,6 +596,99 @@ mod tests {
         }
     }
 
+    // ── the write half ──────────────────────────────────────────────────────
+
+    fn read_json(path: &Path) -> Value {
+        serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    /// Setting one key leaves every other one alone — including keys this version does
+    /// not know about, which a newer version may have written.
+    #[test]
+    fn updating_a_key_preserves_the_rest_of_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        write(
+            &path,
+            &json!({
+                "harness": "claude",
+                "model": "claude-sonnet-5",
+                "skills": { "extra": ["~/x"] },
+                "some_future_key": 42,
+            }),
+        );
+
+        let written = update_user_setting(dir.path(), "model", json!("claude-opus-5")).unwrap();
+        assert_eq!(written, path);
+        let got = read_json(&path);
+        assert_eq!(got["model"], "claude-opus-5");
+        assert_eq!(got["harness"], "claude", "untouched");
+        assert_eq!(got["skills"]["extra"][0], "~/x", "nested value untouched");
+        assert_eq!(got["some_future_key"], 42, "unknown key survives");
+    }
+
+    /// A `null` unsets rather than storing a null, so the same call both sets and clears.
+    #[test]
+    fn a_null_value_removes_the_key() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            &dir.path().join("settings.json"),
+            &json!({"model": "x", "harness": "claude"}),
+        );
+        update_user_setting(dir.path(), "model", Value::Null).unwrap();
+        let got = read_json(&dir.path().join("settings.json"));
+        assert!(got.get("model").is_none(), "{got}");
+        assert_eq!(got["harness"], "claude");
+    }
+
+    /// No file, or an unreadable one, still yields a valid file with the key set — and
+    /// the loader reads it back.
+    #[test]
+    fn a_missing_or_corrupt_file_is_replaced_not_merged() {
+        let dir = tempfile::tempdir().unwrap();
+        update_user_setting(dir.path(), "model", json!("m1")).unwrap();
+        assert_eq!(read_json(&dir.path().join("settings.json"))["model"], "m1");
+
+        fs::write(dir.path().join("settings.json"), "{ not json").unwrap();
+        update_user_setting(dir.path(), "model", json!("m2")).unwrap();
+        assert_eq!(read_json(&dir.path().join("settings.json"))["model"], "m2");
+    }
+
+    /// What the writer exists to guarantee: the target is **replaced by rename**, never
+    /// written through. A reader therefore sees the old contents or the new, never a
+    /// truncated mixture — so a crash mid-write cannot lose the user's settings.
+    #[test]
+    fn the_write_is_atomic_and_leaves_no_temp_file_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        write(&path, &json!({"model": "old"}));
+
+        // A big payload: a write-through implementation would be observably torn here,
+        // and would leave the temp file if it aborted.
+        let big: Vec<String> = (0..2000).map(|i| format!("entry-{i}")).collect();
+        update_user_setting(dir.path(), "skills", json!({ "extra": big })).unwrap();
+
+        let got = read_json(&path);
+        assert_eq!(got["model"], "old", "the untouched key survived");
+        assert_eq!(got["skills"]["extra"].as_array().unwrap().len(), 2000);
+
+        let leftovers: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n != "settings.json")
+            .collect();
+        assert!(leftovers.is_empty(), "temp files cleaned up: {leftovers:?}");
+    }
+
+    /// The written file is what the loader reads — the round trip has to close.
+    #[test]
+    fn the_written_model_is_what_the_loader_resolves() {
+        let f = fixture();
+        update_user_setting(&f.user_dir, "model", json!("claude-opus-5")).unwrap();
+        let load = load_settings_from(Some(&f.user_dir), &f.repo, Some(&f.home), None);
+        assert_eq!(load.settings.model.as_deref(), Some("claude-opus-5"));
+    }
     fn write(path: &Path, value: &Value) {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).unwrap();
