@@ -89,6 +89,26 @@ The immediate queue, ahead of the remaining packs:
     removal notice.
   - [ ] **S5** — post-run rescan seam (engine hook + TUI invoking it after its render).
 
+- [ ] **Task 33 — `--show-model-input`: render everything we send to the model** (P0.5,
+  **after Task 32**, user request 2026-07-24). A debugging flag that prints the parts of
+  the request the UI normally hides — the system prompt / preamble, every injected
+  `<system-reminder>` (project instructions, and the skills listing once Task 32 lands),
+  and the tool schemas — so "what did the model actually see?" is answerable without a
+  proxy or a trace dump.
+  - **Smaller than it looks: the data is already emitted.** `Event::Init` carries
+    `preamble: Vec<Message>` and `tools: Vec<Value>`; injected reminders already ride
+    `Event::Message`. The TUI simply drops them today (it reads `Init` for identity
+    only). So this is a **UI-only** change — subscribe and render, gated by the flag —
+    not a new engine seam or protocol variant. Scope S/M.
+  - **Naming** *(needs confirmation)*: `--show-model-input` — says what it prints, and
+    stays narrow. Deliberately **not** `--debug-ui` (too broad — it reads like a flag
+    about debugging the UI itself). Alternatives if preferred: `--show-model-request`,
+    `--show-hidden-context`.
+  - Headless already has this: `--output-format stream-json` emits `Init` verbatim. Worth
+    saying so in `--help` rather than adding a second headless surface.
+  - Watch: tool schemas are long. Decide whether the default is collapsed/summarized with
+    full text behind a toggle, rather than flooding the transcript on every run.
+
 ### More harness packs + wires (the A/B bed)
 Planning is a research task (AGENTS.md): re-read the harness source before starting each,
 and resolve the plan's open-questions section first.
