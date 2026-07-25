@@ -28,28 +28,30 @@ impl Session {
         if !self.config.instructions.enabled {
             return;
         }
-        let discovered =
-            locode_host::load_project_instructions(&self.config.cwd, &self.config.instructions);
-        let new_hash = crate::instructions::instructions_hash(&discovered);
+        let discovered = locode_instructions::load_project_instructions(
+            &self.config.cwd,
+            &self.config.instructions,
+        );
+        let new_hash = locode_instructions::instructions_hash(&discovered);
         if new_hash == self.last_instructions {
             return; // unchanged (including both-empty) — don't re-inject
         }
 
         let message = match (self.last_instructions, new_hash) {
             // First appearance (or re-appearance after removal): inject fresh, no banner.
-            (None, Some(_)) => crate::instructions::render_instructions(
+            (None, Some(_)) => locode_instructions::render_instructions(
                 &discovered,
                 self.config.instructions.byte_budget,
                 false,
             ),
             // Changed mid-session: re-inject with a replace banner.
-            (Some(_), Some(_)) => crate::instructions::render_instructions(
+            (Some(_), Some(_)) => locode_instructions::render_instructions(
                 &discovered,
                 self.config.instructions.byte_budget,
                 true,
             ),
             // Vanished: emit the removal notice.
-            (Some(_), None) => Some(crate::instructions::removal_message()),
+            (Some(_), None) => Some(locode_instructions::removal_message()),
             // Both empty is filtered by the equality check above.
             (None, None) => None,
         };

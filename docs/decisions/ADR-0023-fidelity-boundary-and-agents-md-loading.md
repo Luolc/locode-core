@@ -379,3 +379,20 @@ via `HOME`, and the direct-read rule above covers the out-of-repo read.
 > now reads `$LOCODE_HOME/AGENTS.md` when the variable is set (non-empty), falling back to
 > `$HOME/.locode/AGENTS.md` — still dependency-free. Future `~/.locode` consumers
 > (settings, traces, skills) must use the same variable.
+
+## Amendment (2026-07-24): the loader's home moved to `locode-instructions`
+
+§2's *Shape* put the loader "**in `locode-host`**, reusing its existing
+path/query/read machinery … rather than a new crate". The ADR-0002 amendment of the
+same date moves it into a dedicated **`locode-instructions`** crate, together with the
+renderer that was in `locode-engine`.
+
+The stated reason for the original placement did not hold up: the loader never used
+`Host` at all — it reads with `std::fs` directly, which this ADR's own implementation
+note already documents and justifies (discovery spans ancestors above the tool jail,
+and the jail governs tools, not engine machinery). The only host machinery it actually
+reused is the cwd→root marker walk, and that **stays in `locode-host`**
+(`locode_host::find_root_from_markers`) because the settings loader needs it too.
+
+Nothing else in §2 changes: same files, same walk, same merge, same budget, same
+`User` `<system-reminder>` injection, one shared implementation for every pack.

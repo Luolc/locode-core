@@ -1,0 +1,27 @@
+[package]
+name = "locode-instructions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Project-instruction (AGENTS.md) discovery, assembly, and injection for the locode coding agent"
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# `find_root_from_markers` — the cwd→root walk, shared with the settings loader,
+# which is why it stays a host primitive rather than moving here (ADR-0002
+# amendment 2026-07-24).
+locode-host = { workspace = true }
+# The rendered `User` <system-reminder> message.
+locode-protocol = { workspace = true }
+regex = { workspace = true }
+# `.gitignore` filtering of discovered files (ADR-0023 §2, *Merge*).
+ignore = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

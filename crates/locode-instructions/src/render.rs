@@ -1,6 +1,6 @@
 //! Rendering discovered project instructions into a conversation message (ADR-0023 §2).
 //!
-//! The loader in `locode-host` produces a neutral [`ProjectInstructions`]; the engine turns
+//! The loader in [`crate::load`] produces a neutral [`ProjectInstructions`]; this turns
 //! it into **one `User`-role `<system-reminder>` message** and injects it (Slice 3). This is
 //! the "engine renders / injects the neutral value" half of ADR-0023 — a single format for
 //! every pack (fidelity is bounded to tools + prompt, ADR-0023 §1).
@@ -11,7 +11,7 @@
 
 use std::hash::{Hash, Hasher};
 
-use locode_host::ProjectInstructions;
+use crate::load::ProjectInstructions;
 use locode_protocol::{ContentBlock, Message, Role};
 
 /// The authority preamble + relevance disclaimer (Claude's framing —
@@ -38,7 +38,8 @@ const TRUNCATION_MARKER: &str = "\n\n…[project instructions truncated]…";
 /// file is last). The **sections body** is capped at `byte_budget` bytes (UTF-8-boundary
 /// safe) with a truncation marker; `byte_budget == 0` means unbounded. When `replace` is set
 /// (the content changed mid-session), a replace banner leads the envelope.
-pub(crate) fn render_instructions(
+#[must_use]
+pub fn render_instructions(
     instructions: &ProjectInstructions,
     byte_budget: usize,
     replace: bool,
@@ -70,7 +71,8 @@ pub(crate) fn render_instructions(
 }
 
 /// The removal banner message, emitted when previously-applied instructions vanish.
-pub(crate) fn removal_message() -> Message {
+#[must_use]
+pub fn removal_message() -> Message {
     user_reminder(format!(
         "<system-reminder>\n{REMOVAL_NOTICE}\n</system-reminder>"
     ))
@@ -78,7 +80,8 @@ pub(crate) fn removal_message() -> Message {
 
 /// A stable hash of the discovered instructions, or `None` when nothing was discovered.
 /// Drives the per-turn diff: an unchanged hash means "don't re-inject" (ADR-0023 Refresh).
-pub(crate) fn instructions_hash(instructions: &ProjectInstructions) -> Option<u64> {
+#[must_use]
+pub fn instructions_hash(instructions: &ProjectInstructions) -> Option<u64> {
     if instructions.entries.is_empty() {
         return None;
     }
@@ -116,7 +119,7 @@ fn truncate_on_char_boundary(mut s: String, budget: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use locode_host::InstructionEntry;
+    use crate::load::InstructionEntry;
     use std::path::PathBuf;
 
     fn instr(entries: &[(&str, &str)]) -> ProjectInstructions {

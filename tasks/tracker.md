@@ -18,6 +18,7 @@ Current release: **0.1.10**. Sizes: XS = 1 file · S = 1–2 · M = 3–5 · L =
 ```
 locode-protocol   (pure types)
     ├── locode-host       (fs / shell / path-jail / truncation / rg)
+    │       └── locode-instructions  (AGENTS.md discovery + its <system-reminder>)
     ├── locode-tools      (Tool trait, registry, dispatch door — framework)
     │       └── locode-packs   (grok pack: real per-harness tools, over tools + host)
     ├── locode-provider   (Provider trait + wires: mock · anthropic · openai-responses)

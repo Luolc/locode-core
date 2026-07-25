@@ -90,11 +90,13 @@ loadSkillsDir.ts:424-428`); the directory is what lets a skill ship
 
 1. **project** — `<repo>/.locode/skills/`
 2. **user** — `~/.locode/skills/` (`$LOCODE_HOME` honored, per ADR-0024)
-3. **extends** — `<extended dotfolder>/skills/`, in `extends` list order (§6)
+3. **user, via `extends`** — `<extended dotfolder>/skills/`, in `extends` list order (§6)
 4. **extra** — `skills.extra` entries from settings, in list order
 
 1–3 mirror the settings layers 1:1 (ADR-0024 §3, and §1.2's user-beats-extends
-ordering). Project wins because it is the most specific to the work at hand — the
+ordering). Tiers 2 and 3 are distinct in *precedence* but share the **`user`**
+qualifier for collisions (below), because an extended dotfolder is part of how the
+user composes their own configuration, not a separate authority. Project wins because it is the most specific to the work at hand — the
 same root→cwd "deepest wins" rule ADR-0023 uses for instructions, and grok's own
 ordering (cwd → repo → home, `08-skills.md:15-35`). `extra` sits last because it
 is a manually-pointed grab-bag, not a tier of anything.
@@ -109,10 +111,21 @@ display-only" (`loadSkillsDir.ts:452,238`): two names for one thing is a
 documented foot-gun, and the slug rule keeps a human-written `name: Review PR`
 usable (`review-pr`) instead of dropping the skill.
 
-**Collisions.** Same name in two scopes → both are kept, addressable as
-`<scope>:<name>` (`project:commit`, `user:commit`, `extends:commit`,
-`extra:commit`) — grok's `format_skill_name` (`skill.rs`). The listing renders the
-qualified name whenever a short name is ambiguous.
+**Collisions.** There are **three** qualifier scopes, not four *(user decision)*:
+`project:`, `user:` and `extra:`. An `extends` dotfolder's skills carry the **`user`**
+qualifier — `extends` is a way of composing the user's own configuration, not a
+separate authority, exactly as its settings merge into the user side of the layer
+stack (ADR-0024 §1.2).
+
+So the rule is:
+
+- **Same name, same qualifier** (user vs. an extended dotfolder) → the
+  higher-precedence one wins and the other is **dropped**; there is no way to
+  address the shadowed one, and none is needed — that is what precedence means.
+- **Same name, different qualifier** → both are kept and addressable as
+  `<scope>:<name>` (`project:commit` vs `user:commit`), grok's `format_skill_name`
+  (`skill.rs`). The listing renders the qualified form whenever a short name is
+  ambiguous.
 
 **Frontmatter — exactly five recognized keys** *(user decision)*:
 

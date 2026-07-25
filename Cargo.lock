@@ -1179,6 +1179,7 @@ version = "0.1.10"
 dependencies = [
  "locode-engine",
  "locode-host",
+ "locode-instructions",
  "locode-packs",
  "locode-protocol",
  "locode-provider",
@@ -1192,6 +1193,7 @@ version = "0.1.10"
 dependencies = [
  "async-trait",
  "locode-host",
+ "locode-instructions",
  "locode-protocol",
  "locode-provider",
  "locode-tools",
@@ -1231,6 +1233,17 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "locode-instructions"
+version = "0.1.10"
+dependencies = [
+ "ignore",
+ "locode-host",
+ "locode-protocol",
+ "regex",
+ "tempfile",
 ]
 
 [[package]]
