@@ -179,7 +179,17 @@ impl Block {
                 vec![Line::from(""), Line::styled(format!("  {label}"), dim)]
             }
             Block::Notice(text) => {
-                vec![Line::from(""), Line::styled(format!("● {text}"), dim)]
+                // Wrapped and multi-line, like every other prose block. A notice used to
+                // render as one unwrapped `Line`, so an embedded newline was swallowed
+                // (`/model`'s two-line answer came out as one run-on sentence) and a long
+                // one ran off the right edge.
+                let content_width = usize::from(width).saturating_sub(GUTTER).max(4);
+                let mut lines = vec![Line::from("")];
+                for (i, row) in wrap_plain(text, content_width).into_iter().enumerate() {
+                    let prefix = if i == 0 { "● " } else { "  " };
+                    lines.push(Line::styled(format!("{prefix}{row}"), dim));
+                }
+                lines
             }
             Block::HiddenContext { label, body } => {
                 // `✕` rather than the `●` every conversation block uses: at a glance the
