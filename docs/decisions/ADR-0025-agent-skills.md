@@ -235,6 +235,42 @@ The **absolute path** is not decoration — it is the whole invocation mechanism
 (§4). grok's header, which names no tool, is therefore exactly right for us: there
 is no tool to name.
 
+> **Amendment (2026-07-25): the per-entry shape is an XML-like block, not grok's
+> `- name: desc` line.** *(User decision.)* The line format has no explicit entry
+> boundary — the only thing separating one skill from the next is the `Absolute path:`
+> line — so a **multiline description**, which real skills routinely have, is ambiguous:
+> its own `-` bullets read as new entries. An open/close tag makes the boundary explicit
+> and lets the description keep its original formatting.
+>
+> ```text
+> <system-reminder>
+> The following skills are available for use:
+>
+> <skill name="<name>" path="<absolute path to SKILL.md>">
+> <description, verbatim, newlines preserved>
+>
+> Use when: <when-to-use>
+> </skill>
+> <skill name="<name>" path="<absolute path to SKILL.md>">
+> <description>
+> </skill>
+> </system-reminder>
+> ```
+>
+> Unchanged: the header and the blank line after it, entry order, qualified names, the
+> char budget and the three-tier degrade (the names-only tier still emits `- <name>`
+> rows — they are names, not blocks). What changes is the per-entry rendering and the
+> boundary it implies: `name` and `path` become attributes, the `Absolute path:` line is
+> gone, and `Use when:` follows the description after a blank line, still omitted when
+> absent.
+>
+> **The description is third-party text**, so a literal `</skill>` in it would close the
+> block early. Any `</skill…` in the description or `when-to-use` body is neutralized to
+> `<\/skill…` before rendering. `name` and `path` are not escaped — both are validated
+> at discovery (§2). This is the one place the listing is *not* a verbatim copy of the
+> author's text, and it is deliberate: framing that a description can break is worse
+> than a visibly escaped tag.
+
 **Budget and degrade** — grok's numbers verbatim: a char budget of **50 % of the
 context window** (falling back to 400 000 chars when the window is unknown), a
 per-entry **400-byte** cap on description + `when-to-use` combined (split

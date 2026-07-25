@@ -1168,8 +1168,12 @@ mod tests {
             .filter_map(|m| reminder_text(std::slice::from_ref(m)))
             .find(|t| t.contains("skills are available"))
             .expect("listing injected");
-        assert!(listing.contains("- commit: Make a commit"), "{listing}");
-        assert!(listing.contains("Absolute path:"), "{listing}");
+        assert!(listing.contains(r#"<skill name="commit""#), "{listing}");
+        assert!(listing.contains("Make a commit"), "{listing}");
+        assert!(
+            listing.contains("SKILL.md\">"),
+            "the path attribute: {listing}"
+        );
 
         let count = |msgs: &[Message]| {
             msgs.iter()
@@ -1212,12 +1216,18 @@ mod tests {
                 .rfind(|t| t.contains("skills are available"))
         };
         assert!(
-            !listing(&reqs[1]).unwrap().contains("- review:"),
+            !listing(&reqs[1]).unwrap().contains(r#"name="review""#),
             "not yet — the scan that would see it runs at the end of this run"
         );
         let third = listing(&reqs[2]).expect("re-sent");
-        assert!(third.contains("- commit:"), "old skill included: {third}");
-        assert!(third.contains("- review:"), "new skill included: {third}");
+        assert!(
+            third.contains(r#"name="commit""#),
+            "old skill included: {third}"
+        );
+        assert!(
+            third.contains(r#"name="review""#),
+            "new skill included: {third}"
+        );
     }
 
     /// Removing the last skill says so, rather than going quiet and leaving a stale

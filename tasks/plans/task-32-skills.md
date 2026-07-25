@@ -35,6 +35,10 @@
 - **Listing format is grok's, verbatim** — header `The following skills are available
   for use:`, entries `- <name>: <desc>` + optional `  Use when:` + `  Absolute path:`;
   50 % context-window char budget, 400-byte per-entry cap, three-tier degrade (§3).
+  *(Superseded 2026-07-25, ADR-0025 §3 amendment: the per-entry shape is now an XML-like
+  `<skill name=… path=…>…</skill>` block, because the line form has no explicit entry
+  boundary and a multiline description's own bullets read as new entries. The header,
+  budget and degrade tiers are unchanged.)*
 - **Whole-body diff, never a per-skill delta** — both harnesses that do deltas carry two
   defects because of it (misleading partial header; announced-before-truncation), and
   comparing bodies has no ledger to get wrong (§3.1).
