@@ -148,6 +148,24 @@
 - `/model` ships a hardcoded list (ADR-0026 §6); `args_required` blocks bare Enter with
   the usage string.
 
+**Decisions taken while implementing:**
+
+- **The submenu's vehicle is `/help [command]`, not `/model`** *(ADR-0026 §6 amended
+  2026-07-25)*. Two facts made a hardcoded model list the wrong thing to ship: locode
+  keeps **no model catalog** (`--model` passes a free-form id to whichever wire is
+  configured), so the list would be invented ids the provider may not serve; and
+  switching mid-session is blocked on an ask-first `ProviderRegistry` seam. `/help`'s
+  suggestions are the registry's own contents, so they are always true.
+- **`/model` ships read-only**: it reports the model in use and names the two surfaces
+  that set it (`--model`, `~/.locode/settings.json`). **Flagged, not blocked** — the
+  switching half waits on the provider seam.
+- **`args_required` is enforced in dispatch**, not the menu: the usage string is what
+  the user sees, so it belongs where execution is refused (unit-tested there since S4).
+- **`CommandCtx` gains `registry`**, because a command describing the command set has to
+  see it. A shared reference, so it is an ordinary borrow rather than a cycle.
+- **The selection resets when the menu changes phase.** Carrying a command-row selection
+  into the argument list would land the highlight on an unrelated row.
+
 ### S7 — ghost text (S)
 
 - Name completion: typed `/comm`, best match `commit` ⇒ ghost suffix `it`, re-synced

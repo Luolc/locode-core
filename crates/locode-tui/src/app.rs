@@ -291,9 +291,12 @@ impl App {
             return;
         };
         let text = self.composer.text();
+        // Built inline rather than via `command_ctx`: that borrows all of `self`, and
+        // this call needs `slash` and `matcher` mutably alongside it.
         let ctx = CommandCtx {
             model: self.model.as_deref(),
             is_running: matches!(self.run, RunState::Running { .. }),
+            registry: Some(&self.registry),
         };
         self.slash
             .refresh(&self.registry, &mut self.matcher, &ctx, &text, cursor);
@@ -891,6 +894,7 @@ impl App {
         CommandCtx {
             model: self.model.as_deref(),
             is_running: matches!(self.run, RunState::Running { .. }),
+            registry: Some(&self.registry),
         }
     }
 
@@ -2125,7 +2129,7 @@ mod tests {
         let t0 = Instant::now();
         type_str(&mut app, "/", t0);
         assert!(app.slash.open, "a bare slash offers everything");
-        assert_eq!(menu(&app), vec!["/new", "/quit"]);
+        assert_eq!(menu(&app), vec!["/help", "/model", "/new", "/quit"]);
 
         type_str(&mut app, "q", t0);
         assert_eq!(menu(&app), vec!["/quit"], "narrowed to the match");
@@ -2221,6 +2225,39 @@ mod tests {
         assert_eq!(
             drive(&mut app, key(KeyCode::Enter), t0).await,
             vec![Cmd::Quit]
+        );
+    }
+
+    /// The argument submenu, end to end: past the command token the menu offers that
+    /// command's arguments, Tab inserts the selected one, and Enter runs it.
+    #[tokio::test]
+    async fn the_menu_offers_arguments_once_past_the_command_token() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        type_str(&mut app, "/help ", t0);
+        assert!(app.slash.open, "the argument submenu is up");
+        assert!(!app.slash.cursor_in_command);
+        assert!(
+            menu(&app).contains(&"/quit"),
+            "every command is offered: {:?}",
+            menu(&app)
+        );
+
+        type_str(&mut app, "qu", t0);
+        assert_eq!(menu(&app), vec!["/quit"]);
+        let _ = app.update(key(KeyCode::Tab), t0);
+        assert_eq!(
+            app.composer.text(),
+            "/help quit",
+            "the row inserted its `insert_text`, without the slash"
+        );
+
+        let cmds = drive(&mut app, key(KeyCode::Enter), t0).await;
+        assert_eq!(cmds, vec![], "a report, not a prompt");
+        assert!(
+            matches!(app.outbox.last(), Some(Block::Notice(n)) if n.starts_with("/quit ")),
+            "{:?}",
+            app.outbox.last()
         );
     }
 

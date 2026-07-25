@@ -6,14 +6,14 @@
 //! state and re-derives on each keystroke — but keep the important part: nothing here
 //! reads the terminal, so every rule below is table-testable.
 //!
-//! Scope of this module is the **command** phase. Argument suggestions (grok's second
-//! menu) arrive with `suggest_args`; until then a cursor past the command token simply
-//! closes the menu, which is what the finished behavior does too when a command offers
-//! no argument rows.
+//! Two phases, one state: while the cursor is inside the command token the menu offers
+//! **commands**; once it moves past it, the recognized command's own `suggest_args`
+//! offers **arguments** (grok's second-level menu). A command with nothing to suggest
+//! simply closes the menu.
 
 use std::ops::Range;
 
-use super::command::CommandCtx;
+use super::command::{ArgItem, CommandCtx};
 use super::matcher::FuzzyMatcher;
 use super::registry::{CommandRegistry, CommandTrigger};
 
@@ -53,6 +53,18 @@ impl SuggestionRow {
             indices,
         }
     }
+
+    /// The row for an argument suggestion. The item's three texts stay separate all the
+    /// way to the screen: `display` is shown, `match_text` was ranked, `insert_text` is
+    /// written.
+    fn from_arg(item: &ArgItem, indices: Vec<u32>) -> Self {
+        Self {
+            display: item.display.clone(),
+            description: item.description.clone(),
+            insert_text: item.insert_text.clone(),
+            indices,
+        }
+    }
 }
 
 /// The menu state derived from the composer.
@@ -67,8 +79,13 @@ pub struct SlashState {
     /// Selected index into `matches`.
     pub selected: usize,
     /// Character range of the command token (`0..6` for `/model`), which is what
-    /// acceptance replaces.
+    /// acceptance replaces in the command phase.
     pub command_range: Option<Range<usize>>,
+    /// Character range of the argument text, which acceptance replaces in the argument
+    /// phase.
+    pub args_range: Option<Range<usize>>,
+    /// Which phase the menu is in: `true` = offering commands, `false` = arguments.
+    pub cursor_in_command: bool,
     /// The draft the user pressed Esc on.
     ///
     /// Everything else here is a pure function of the composer, so without this the
@@ -99,16 +116,20 @@ impl SlashState {
         let Some(input) = analyze_input(text, cursor) else {
             return;
         };
-        if !input.cursor_in_command {
-            // The argument phase; nothing to offer until `suggest_args` is wired.
-            return;
-        }
-        let rows = command_rows(registry, matcher, ctx, &input.query);
-        self.selected = carry_selection(&previous, &rows, &input.query);
+        let (rows, query) = if input.cursor_in_command {
+            let rows = command_rows(registry, matcher, ctx, &input.query);
+            (rows, input.query.clone())
+        } else {
+            let rows = arg_rows(registry, matcher, ctx, text, &input.args_query);
+            (rows, input.args_query.clone())
+        };
+        self.selected = carry_selection(&previous, &rows, &query, input.cursor_in_command);
         self.open = !rows.is_empty();
         self.matches = rows;
-        self.query = input.query;
+        self.query = query;
+        self.cursor_in_command = input.cursor_in_command;
         self.command_range = Some(0..input.command_end);
+        self.args_range = input.args_range;
     }
 
     /// An open menu over `rows` — a fixture for the renderer's tests, which have no
@@ -162,7 +183,11 @@ impl SlashState {
     /// accept.
     #[must_use]
     pub fn accept(&self) -> Option<(Range<usize>, String)> {
-        let range = self.command_range.clone()?;
+        let range = if self.cursor_in_command {
+            self.command_range.clone()?
+        } else {
+            self.args_range.clone()?
+        };
         let row = self.selection()?;
         Some((range, row.insert_text.clone()))
     }
@@ -202,6 +227,12 @@ struct Input {
     query: String,
     /// Whether the cursor is still inside the command token.
     cursor_in_command: bool,
+    /// Character range of the argument text (`None` while the cursor is in the command
+    /// token). Runs to the end of the line, as grok's does: accepting an argument
+    /// replaces the whole tail rather than splicing into it.
+    args_range: Option<Range<usize>>,
+    /// The argument text up to the cursor, which is what argument rows are ranked on.
+    args_query: String,
 }
 
 /// Split the composer text around the cursor (grok's `analyze_input`,
@@ -225,11 +256,63 @@ fn analyze_input(text: &str, cursor: usize) -> Option<Input> {
     // The query is clamped to the cursor, so `/` typed *before* existing text offers
     // the full list rather than matching against text the user has not reached yet.
     let query_end = cursor.clamp(1, command_end);
+    let cursor_in_command = cursor <= command_end;
+    let (args_range, args_query) = if cursor_in_command {
+        (None, String::new())
+    } else {
+        let start = chars[command_end..]
+            .iter()
+            .position(|c| !c.is_whitespace())
+            .map_or(chars.len(), |i| command_end + i);
+        let end = chars.len();
+        let query_end = cursor.clamp(start, end);
+        (
+            Some(start..end),
+            chars[start.min(query_end)..query_end].iter().collect(),
+        )
+    };
     Some(Input {
         command_end,
         query: chars[1..query_end].iter().collect(),
-        cursor_in_command: cursor <= command_end,
+        cursor_in_command,
+        args_range,
+        args_query,
     })
+}
+
+/// The rows for the argument phase: whatever the recognized command suggests, ranked
+/// against what has been typed after it.
+///
+/// Empty when the line names no command or the command has no suggestions — which is
+/// what closes the menu the moment the cursor leaves `/new`.
+fn arg_rows(
+    registry: &CommandRegistry,
+    matcher: &mut FuzzyMatcher,
+    ctx: &CommandCtx<'_>,
+    text: &str,
+    query: &str,
+) -> Vec<SuggestionRow> {
+    let Ok((command, _)) = registry.resolve(text) else {
+        return Vec::new();
+    };
+    let Some(items) = command.suggest_args(ctx, query) else {
+        return Vec::new();
+    };
+    if query.trim().is_empty() {
+        return items
+            .iter()
+            .map(|item| SuggestionRow::from_arg(item, Vec::new()))
+            .collect();
+    }
+    matcher
+        .rank(&items, query, |item| item.match_text.as_str())
+        .into_iter()
+        .map(|(i, _)| {
+            let item = &items[i];
+            let indices = matcher.indices(&item.display);
+            SuggestionRow::from_arg(item, indices)
+        })
+        .collect()
 }
 
 /// The rows for a command-phase `query`.
@@ -330,8 +413,19 @@ fn beats(
 /// Keep the highlight on the same row across a refresh when it survived; otherwise
 /// start at the top. Matching on `insert_text` (grok's key) rather than the index is
 /// what stops the highlight from sliding onto a neighbour as rows are filtered out.
-fn carry_selection(previous: &SlashState, matches: &[SuggestionRow], query: &str) -> usize {
-    if matches.is_empty() || previous.matches.is_empty() || previous.query == query {
+fn carry_selection(
+    previous: &SlashState,
+    matches: &[SuggestionRow],
+    query: &str,
+    cursor_in_command: bool,
+) -> usize {
+    if matches.is_empty()
+        || previous.matches.is_empty()
+        || previous.cursor_in_command != cursor_in_command
+    {
+        return 0;
+    }
+    if previous.query == query {
         return previous.selected.min(matches.len().saturating_sub(1));
     }
     let previous_row = &previous.matches[previous.selected.min(previous.matches.len() - 1)];
@@ -352,6 +446,7 @@ mod tests {
         name: &'static str,
         aliases: Vec<&'static str>,
         takes: bool,
+        args: Vec<&'static str>,
     }
 
     impl Fake {
@@ -360,6 +455,7 @@ mod tests {
                 name,
                 aliases: Vec::new(),
                 takes: false,
+                args: Vec::new(),
             }
         }
         fn alias(mut self, a: &'static str) -> Self {
@@ -368,6 +464,13 @@ mod tests {
         }
         fn takes_args(mut self) -> Self {
             self.takes = true;
+            self
+        }
+        /// Suggests these argument values, each shown with a `» ` prefix so the test can
+        /// tell *shown* from *inserted*.
+        fn suggesting(mut self, args: &[&'static str]) -> Self {
+            self.takes = true;
+            self.args = args.to_vec();
             self
         }
     }
@@ -388,6 +491,22 @@ mod tests {
         }
         fn takes_args(&self) -> bool {
             self.takes
+        }
+        fn suggest_args(&self, _c: &CommandCtx<'_>, _q: &str) -> Option<Vec<ArgItem>> {
+            if self.args.is_empty() {
+                return None;
+            }
+            Some(
+                self.args
+                    .iter()
+                    .map(|a| ArgItem {
+                        display: format!("» {a}"),
+                        match_text: (*a).to_string(),
+                        insert_text: (*a).to_string(),
+                        description: String::new(),
+                    })
+                    .collect(),
+            )
         }
         async fn execute(&self, _c: &CommandCtx<'_>, _a: &str) -> CommandResult {
             CommandResult::Handled
@@ -506,11 +625,66 @@ mod tests {
         );
     }
 
-    /// Past the command token there is nothing to offer yet, so the menu closes.
+    /// A command with nothing to suggest closes the menu once the cursor leaves it.
     #[test]
-    fn the_cursor_leaving_the_command_token_closes_the_menu() {
+    fn the_cursor_leaving_a_command_without_suggestions_closes_the_menu() {
         let r = registry(vec![Fake::new("new")]);
         assert!(!state(&r, "/new ").open);
+    }
+
+    /// …but a command that *does* suggest switches the menu to its arguments.
+    #[test]
+    fn the_menu_switches_to_arguments_past_the_command_token() {
+        let r = registry(vec![Fake::new("model").suggesting(&["fast", "smart"])]);
+        let s = state(&r, "/model ");
+        assert!(s.open);
+        assert!(!s.cursor_in_command, "the argument phase");
+        assert_eq!(
+            labels(&s),
+            vec!["» fast", "» smart"],
+            "rows show `display`, not what they insert"
+        );
+        assert_eq!(s.query, "", "nothing typed after the command yet");
+    }
+
+    /// Argument rows are ranked on `match_text` and insert `insert_text` — the three
+    /// texts stay separate all the way through.
+    #[test]
+    fn argument_rows_rank_on_match_text_and_insert_insert_text() {
+        let r = registry(vec![Fake::new("model").suggesting(&["fast", "smart"])]);
+        let s = state(&r, "/model sm");
+        assert_eq!(labels(&s), vec!["» smart"]);
+        let (range, text) = s.accept().expect("accepts");
+        assert_eq!(range, 7..9, "the argument text, not the command token");
+        assert_eq!(text, "smart", "inserts `insert_text`");
+    }
+
+    /// The highlight starts over when the menu changes phase — an argument row is not
+    /// the command row that was selected a keystroke ago.
+    #[test]
+    fn the_selection_resets_when_the_phase_changes() {
+        let r = registry(vec![
+            Fake::new("model").suggesting(&["fast", "smart"]),
+            Fake::new("new"),
+        ]);
+        let mut s = state(&r, "/");
+        s.move_selection(1); // "/new"
+        s.refresh(
+            &r,
+            &mut FuzzyMatcher::new(),
+            &CommandCtx::default(),
+            "/model ",
+            7,
+        );
+        assert_eq!(s.selected, 0, "back to the top of the argument list");
+        assert_eq!(s.selection().unwrap().display, "» fast");
+    }
+
+    /// An unknown command offers no argument rows — there is nothing to ask.
+    #[test]
+    fn an_unrecognized_command_offers_no_arguments() {
+        let r = registry(vec![Fake::new("model").suggesting(&["fast"])]);
+        assert!(!state(&r, "/nope arg").open);
     }
 
     /// The query is clamped to the cursor: `/` typed in front of existing text lists
