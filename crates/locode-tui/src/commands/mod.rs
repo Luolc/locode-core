@@ -12,6 +12,7 @@
 mod builtin;
 mod command;
 mod dispatch;
+mod matcher;
 mod registry;
 mod skill;
 mod state;
@@ -19,6 +20,7 @@ mod state;
 pub use builtin::register_builtins;
 pub use command::{ArgItem, CommandCtx, CommandResult, SlashCommand, UiAction};
 pub use dispatch::execute;
+pub use matcher::FuzzyMatcher;
 pub use registry::{
     CommandRegistry, CommandSource, CommandTrigger, Invocation, LookupError, parse_invocation,
 };

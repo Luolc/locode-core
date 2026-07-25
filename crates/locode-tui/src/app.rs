@@ -11,8 +11,8 @@ use locode_core::{ContentBlock, Event, Report, ResultChunk, Role};
 
 use crate::approval::{ApprovalOutcome, ApprovalView};
 use crate::commands::{
-    CommandCtx, CommandRegistry, CommandResult, SlashState, UiAction, parse_invocation,
-    register_builtins, register_skills,
+    CommandCtx, CommandRegistry, CommandResult, FuzzyMatcher, SlashState, UiAction,
+    parse_invocation, register_builtins, register_skills,
 };
 use crate::engine::EngineMsg;
 use crate::ui::blocks::{Block, turn_end};
@@ -146,6 +146,9 @@ pub struct App {
     pub registry: CommandRegistry,
     /// The command menu derived from the composer on every edit.
     pub slash: SlashState,
+    /// Ranks the menu. Kept alive between keystrokes — it owns a scoring slab that is
+    /// cheap to reuse and wasteful to rebuild per character.
+    matcher: FuzzyMatcher,
     /// Set when the loop should exit after the current iteration.
     pub should_quit: bool,
     /// Redraw needed.
@@ -230,6 +233,7 @@ impl App {
             composer: Composer::new(),
             registry,
             slash: SlashState::default(),
+            matcher: FuzzyMatcher::new(),
             should_quit: false,
             dirty: true,
             run: RunState::Idle,
@@ -291,7 +295,8 @@ impl App {
             model: self.model.as_deref(),
             is_running: matches!(self.run, RunState::Running { .. }),
         };
-        self.slash.refresh(&self.registry, &ctx, &text, cursor);
+        self.slash
+            .refresh(&self.registry, &mut self.matcher, &ctx, &text, cursor);
     }
 
     /// Whether a run is currently active.

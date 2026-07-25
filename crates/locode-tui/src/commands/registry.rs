@@ -232,21 +232,18 @@ impl CommandRegistry {
         }
     }
 
-    /// Registered names sharing a prefix with `name`, or containing it — enough to catch
-    /// a typo without pretending to be a spell-checker (real ranking arrives with the
-    /// fuzzy matcher in the UI slice).
+    /// The three registered names closest to `name`, by the same fuzzy ranking the menu
+    /// uses — so `/nw` suggests `/new`, which a prefix or substring test cannot do.
+    ///
+    /// The matcher is built here rather than shared: this runs once, on the error path
+    /// of a command that did not resolve, where an allocation is invisible.
     fn near_names(&self, name: &str) -> Vec<String> {
-        let lowered = name.to_ascii_lowercase();
-        let mut out: Vec<String> = self
-            .triggers
-            .iter()
-            .filter(|t| {
-                let m = t.match_text.to_ascii_lowercase();
-                m.starts_with(&lowered) || lowered.starts_with(&m) || m.contains(&lowered)
-            })
-            .map(|t| t.match_text.clone())
+        let mut matcher = super::matcher::FuzzyMatcher::new();
+        let mut out: Vec<String> = matcher
+            .rank(&self.triggers, name, |t| t.match_text.as_str())
+            .into_iter()
+            .map(|(i, _)| self.triggers[i].match_text.clone())
             .collect();
-        out.sort();
         out.dedup();
         out.truncate(3);
         out
@@ -424,6 +421,19 @@ mod tests {
             Err(other) => panic!("expected Unknown, got {other:?}"),
             Ok(_) => panic!("`/mode` must not resolve"),
         }
+    }
+
+    /// A dropped letter leaves a *subsequence*, which the fuzzy matcher finds and a
+    /// substring test cannot. (Transpositions are still missed — nucleo matches
+    /// subsequences, not edit distance.)
+    #[test]
+    fn a_dropped_letter_still_finds_its_command() {
+        let r = registry(vec![Fake::new("new").arc(), Fake::new("quit").arc()]);
+        let Err(LookupError::Unknown { did_you_mean, .. }) = r.resolve("/nw") else {
+            panic!("`/nw` must not resolve");
+        };
+        assert_eq!(did_you_mean, vec!["new"]);
+        assert!(!"new".contains("nw"), "a substring test would find nothing");
     }
 
     #[test]
