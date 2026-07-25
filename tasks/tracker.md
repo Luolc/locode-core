@@ -60,6 +60,23 @@ The immediate queue, ahead of the remaining packs:
 - **P1 — our own `locode` best-of pack** (the other half of Task 15) — now the **only**
   remaining pack work, and the home for every capability after skills (background tasks,
   todo, subagents, …): those are built once, on `locode`, not ported per harness.
+- **P1–P2 — tool-error text belongs behind a debug view.** Tool `is_error` results
+  (`invalid arguments: …`, the truncation notice) currently render inline in the TUI
+  above each tool. That is deliberate for now — it is the fastest way to see a
+  malformed call while developing — but a real user should not read decode errors.
+  Move it behind the debug/hidden-context surface once that exists, rather than
+  deleting it. Raised 2026-07-25 alongside the `max_tokens` truncation fix.
+
+### Fixes
+- [x] **`max_tokens` truncation loop** (2026-07-25). `SamplingArgs::default()` shipped
+  4096 output tokens and the Anthropic wire clamped to 8000, so an ordinary `Write` was
+  cut mid-call; the wire returns an empty `input` for a truncated `tool_use`, the typed
+  decode blamed the model for a missing field, and the model retried the same oversized
+  call forever (reproduced live on `claude-fable-5`, whose always-on thinking shares the
+  same budget). Budget → 32k, Anthropic ceiling → 64k, and the loop now answers a
+  truncated call by naming the output-token limit instead of dispatching it. Grounded in
+  Claude Code's per-model `{default, upperLimit}` table and its escalate-on-truncation
+  path; reconciled into ADR-0004 / ADR-0005 / ADR-0007 (dated amendments).
 
 ### Home dotfolder (`~/.locode`, ADR-0024)
 - [x] **Task 31 — settings + trace persistence** (P0, **complete 2026-07-24**, PRs

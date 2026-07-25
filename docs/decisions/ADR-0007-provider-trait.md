@@ -68,3 +68,36 @@ would corrupt eval comparisons); wires with fixed mappings (the Anthropic
 Budget encoding) reject `Other` pre-send with the new terminal
 `ProviderError::Config` variant. `SamplingArgs.reasoning_effort: None` (outer
 Option) still means "omit the parameter".
+
+## Amendment (2026-07-25): the output-token budget, and what `max_tokens_cap` is for
+
+`SamplingArgs.max_tokens` defaults to **32k** (`DEFAULT_MAX_TOKENS`), up from
+4096. For a file-writing agent this is not a reply-length knob: a turn's output
+is dominated by one `tool_use` argument blob, so the budget is really the
+ceiling on the largest single tool call the model can emit. At 4096 the wire
+truncated ordinary `Write` calls, and truncation is silent by construction —
+the API returns the `tool_use` with an empty `input` (see the ADR-0004/0005
+amendments of the same date).
+
+32k is where the studied harnesses sit for this tier. Claude Code resolves a
+per-model `{default, upperLimit}` pair (`utils/context.ts:149-208`): 32k for
+the sonnet-4-6 and 4.5 families, 64k for opus-4-6, upper limits 64k–128k. Its
+8k `CAPPED_DEFAULT_MAX_TOKENS` is **not** the shipped default — it is gated on
+the `tengu_otk_slot_v1` slot-reservation experiment, off by default outside
+first-party (`services/api/claude.ts:3394-3397`), and paired with a one-shot
+escalate to `ESCALATED_MAX_TOKENS = 64_000`. Codex sends no sampling cap at
+all; Grok Build leaves `max_tokens: None` and treats truncation as a dedicated
+non-retryable `SamplingError::MaxTokensTruncation`.
+
+`ModelConfig.max_tokens_cap` is a **ceiling**, not a budget: a guard against a
+caller requesting more than the model accepts. The Anthropic wire's value was
+8000, credited to `CAPPED_DEFAULT_MAX_TOKENS` — a miscitation twice over (that
+constant is a default, and a flag-gated one), and because the clamp is a `min`
+it silently overrode any larger budget a caller set. It is now 64k, matching
+`ESCALATED_MAX_TOKENS` and sitting at or under the `upperLimit` of every model
+this wire targets; the Responses wire already used 32k.
+
+**Deferred:** the per-model table. One default plus one ceiling is the honest
+v0 — every current Anthropic and OpenAI model targeted here accepts 32k — but
+a legacy model with a lower native limit (e.g. `claude-3-haiku` at 4096) needs
+its `ModelConfig` set explicitly, exactly as before this change.

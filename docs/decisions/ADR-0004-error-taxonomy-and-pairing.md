@@ -19,6 +19,23 @@ Model tool errors as `enum ToolError { Respond(String), Fatal(String) }`. **Defa
 ### Guard pairing only inside the loop
 - Rejected: the invariant is a **wire-format** requirement. Making it a single function the provider layer calls unconditionally (before every send) is more robust than scattering checks.
 
+## Amendment (2026-07-25): a soft error must name the cause it actually knows
+
+`Respond` keeps the loop productive only when the prose is *true*. A `tool_use`
+truncated by the output-token limit arrives with an empty `input` (the
+Anthropic wire returns `{}`, not partial JSON), so the typed decode reported
+`missing field \`file_path\`` — an accusation that the model malformed its
+call. The model, having no way to know it was cut off, re-sent the same
+oversized call and was cut off identically; the "recoverable" error looped
+forever.
+
+The loop therefore recognizes this case ahead of dispatch and synthesizes the
+result itself, naming the output-token limit and telling the model not to
+repeat the call unchanged (ADR-0005 amendment, same date). The general rule
+this sharpens: when the engine holds context the tool layer does not, it owns
+the message — a soft error that misattributes blame is worse than a fatal one,
+because it is retried.
+
 ## Consequences
 - The loop stays productive: schema-decode failures and unknown tool names return prose telling the model to fix its call, rather than crashing.
 - Transcript validity is centrally enforced, independent of how a turn ended (normal, max-turns, abort, mid-batch cancel).

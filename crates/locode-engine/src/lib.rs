@@ -377,6 +377,90 @@ mod tests {
         assert_eq!(report.stop_reason.as_deref(), Some("end_turn"));
     }
 
+    /// A `max_tokens` stop whose LAST block is a `tool_use` cut that call's
+    /// arguments short. The Anthropic wire surfaces the loss as an empty
+    /// `input`, so dispatching would report a missing required field and blame
+    /// the model; the loop names the real cause instead and keeps going.
+    #[tokio::test]
+    async fn truncated_tool_call_is_not_executed_and_names_the_cause() {
+        let truncated = Completion {
+            content: vec![ContentBlock::ToolUse {
+                id: "c1".into(),
+                name: "echo".into(),
+                input: json!({}), // what the wire returns for a cut-off call
+            }],
+            usage: Usage::default(),
+            stop: StopReason::MaxTokens,
+        };
+        let (mut session, events) = session_with(
+            vec![Ok(truncated), Ok(text_turn("smaller this time"))],
+            echo_registry(),
+            config(),
+        );
+        let report = session.run_text("write a huge file").await;
+
+        // Soft: the model gets the error and the loop continues (ADR-0004).
+        assert_eq!(report.status, Status::Completed);
+        assert_eq!(report.final_message.as_deref(), Some("smaller this time"));
+        assert!(
+            report.tool_calls.is_empty(),
+            "a call that never ran is not recorded, matching the cancel path"
+        );
+
+        let explained = dump(&events).iter().any(|e| match e {
+            Event::Message { message } => message.content.iter().any(|b| {
+                matches!(
+                    b,
+                    ContentBlock::ToolResult { tool_use_id, is_error: true, content, .. }
+                        if tool_use_id == "c1"
+                            && content.iter().any(|c| matches!(
+                                c,
+                                locode_protocol::ResultChunk::Text { text }
+                                    if text.contains("output-token limit")
+                                        && text.contains("max_tokens")
+                                        && text.contains("Do not repeat the call unchanged")
+                            ))
+                )
+            }),
+            _ => false,
+        });
+        assert!(
+            explained,
+            "the model must see the truncation, not a 'missing field' decode error"
+        );
+    }
+
+    /// The guard keys off the last **content block**, not the stop reason
+    /// alone: a `tool_use` the model finished before the cut still runs, so
+    /// truncation of a trailing text block never swallows a valid call.
+    #[tokio::test]
+    async fn truncation_after_a_finished_tool_call_still_dispatches() {
+        let cut_after_call = Completion {
+            content: vec![
+                ContentBlock::ToolUse {
+                    id: "c1".into(),
+                    name: "echo".into(),
+                    input: json!({"complete": true}),
+                },
+                ContentBlock::Text {
+                    text: "and then I was cut off mid-sent".into(),
+                },
+            ],
+            usage: Usage::default(),
+            stop: StopReason::MaxTokens,
+        };
+        let (mut session, _events) = session_with(
+            vec![Ok(cut_after_call), Ok(text_turn("done"))],
+            echo_registry(),
+            config(),
+        );
+        let report = session.run_text("go").await;
+
+        assert_eq!(report.status, Status::Completed);
+        assert_eq!(report.tool_calls.len(), 1, "the finished call still ran");
+        assert!(report.tool_calls[0].ok);
+    }
+
     #[tokio::test]
     async fn persistent_empty_completions_are_model_error() {
         let empty = || Completion {
