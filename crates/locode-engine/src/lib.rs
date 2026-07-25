@@ -1124,6 +1124,137 @@ mod tests {
         assert_eq!(reminder_count(&reqs[1]), 1, "not re-injected on run 2");
     }
 
+    /// A skills config rooted at `cwd` that never reads the real `~/.locode`
+    /// (`discover` resolves the home root itself, so the temp repo is the only source
+    /// as long as no skill exists in the developer's home — the project root is what
+    /// this asserts on).
+    fn skills_config(cwd: std::path::PathBuf) -> EngineConfig {
+        EngineConfig {
+            cwd: cwd.clone(),
+            skills: locode_skills::SkillsConfig::enabled(),
+            ..instr_config(cwd)
+        }
+    }
+
+    fn write_skill(root: &std::path::Path, name: &str, description: &str) {
+        let dir = root.join(".agents/skills").join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: {description}\n---\n# {name}\n"),
+        )
+        .unwrap();
+    }
+
+    /// Injected once, before the prompt; and a second turn with no change sends nothing
+    /// new — the whole-body comparison is what makes the steady state quiet.
+    #[tokio::test]
+    async fn skills_listing_injected_once_then_quiet() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        write_skill(&root, "commit", "Make a commit");
+
+        let (mut s, requests) = capturing_with_cfg(
+            vec![Ok(text_turn("a")), Ok(text_turn("b"))],
+            skills_config(root),
+        );
+        s.run_text("q1").await;
+        s.run_text("q2").await;
+
+        let reqs = requests.lock().unwrap();
+        let listing = reqs[0]
+            .iter()
+            .filter_map(|m| reminder_text(std::slice::from_ref(m)))
+            .find(|t| t.contains("skills are available"))
+            .expect("listing injected");
+        assert!(listing.contains("- commit: Make a commit"), "{listing}");
+        assert!(listing.contains("Absolute path:"), "{listing}");
+
+        let count = |msgs: &[Message]| {
+            msgs.iter()
+                .filter(|m| {
+                    reminder_text(std::slice::from_ref(m))
+                        .is_some_and(|t| t.contains("skills are available"))
+                })
+                .count()
+        };
+        assert_eq!(count(&reqs[1]), 1, "unchanged ⇒ not re-sent");
+    }
+
+    /// Adding a skill re-sends the **whole** listing, not just the new entry — the
+    /// defect the per-skill delta in Claude Code and grok produces (ADR-0025 §3.1).
+    #[tokio::test]
+    async fn adding_a_skill_re_sends_the_entire_listing() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        write_skill(&root, "commit", "Make a commit");
+
+        let (mut s, requests) = capturing_with_cfg(
+            vec![Ok(text_turn("a")), Ok(text_turn("b"))],
+            skills_config(root.clone()),
+        );
+        s.run_text("q1").await;
+        write_skill(&root, "review", "Review a diff");
+        s.run_text("q2").await;
+
+        let reqs = requests.lock().unwrap();
+        let second = reqs[1]
+            .iter()
+            .filter_map(|m| reminder_text(std::slice::from_ref(m)))
+            .rfind(|t| t.contains("skills are available"))
+            .expect("re-sent");
+        assert!(second.contains("- commit:"), "old skill included: {second}");
+        assert!(second.contains("- review:"), "new skill included: {second}");
+    }
+
+    /// Removing the last skill says so, rather than going quiet and leaving a stale
+    /// instruction standing (ADR-0025 §3.1 — codex's behavior, not the other two's).
+    #[tokio::test]
+    async fn removing_the_last_skill_announces_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        write_skill(&root, "commit", "Make a commit");
+
+        let (mut s, requests) = capturing_with_cfg(
+            vec![Ok(text_turn("a")), Ok(text_turn("b"))],
+            skills_config(root.clone()),
+        );
+        s.run_text("q1").await;
+        std::fs::remove_dir_all(root.join(".agents/skills/commit")).unwrap();
+        s.run_text("q2").await;
+
+        let reqs = requests.lock().unwrap();
+        let last = reqs[1]
+            .iter()
+            .filter_map(|m| reminder_text(std::slice::from_ref(m)))
+            .next_back()
+            .expect("a reminder");
+        assert!(last.contains("No skills are currently available"), "{last}");
+    }
+
+    /// A project with no skills at all must not open with a pointless denial.
+    #[tokio::test]
+    async fn no_skills_ever_means_no_message_at_all() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir(root.join(".git")).unwrap();
+
+        let (mut s, requests) = capturing_with_cfg(vec![Ok(text_turn("a"))], skills_config(root));
+        s.run_text("q1").await;
+
+        let reqs = requests.lock().unwrap();
+        assert!(
+            !reqs[0]
+                .iter()
+                .any(|m| reminder_text(std::slice::from_ref(m))
+                    .is_some_and(|t| t.contains("skills"))),
+            "silence, not a denial"
+        );
+    }
+
     #[tokio::test]
     async fn project_instructions_absent_when_disabled() {
         let dir = tempfile::tempdir().unwrap();

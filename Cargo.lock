@@ -1183,6 +1183,7 @@ dependencies = [
  "locode-packs",
  "locode-protocol",
  "locode-provider",
+ "locode-skills",
  "locode-tools",
  "serde_json",
 ]
@@ -1196,6 +1197,7 @@ dependencies = [
  "locode-instructions",
  "locode-protocol",
  "locode-provider",
+ "locode-skills",
  "locode-tools",
  "serde",
  "serde_json",

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use locode_core::{
     CacheHint, EngineConfig, EventSink, FnSink, Host, HostConfig, InstructionsConfig, PackContext,
-    PathPolicy, ProviderInit, ProviderRegistry, SamplingArgs, Session,
+    PathPolicy, ProviderInit, ProviderRegistry, SamplingArgs, Session, SkillsConfig,
 };
 
 use crate::cli::{Cli, OutputFormat};
@@ -154,6 +154,13 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
             root_stop_pattern: settings.root_stop_pattern.clone(),
             extends_dirs: extends_dirs.clone(),
             ..InstructionsConfig::default()
+        },
+        // Skills (ADR-0025): the same resolved settings feed discovery, which is what
+        // keeps "settings before discovery" an invariant rather than a convention.
+        skills: SkillsConfig {
+            extends_dirs,
+            extra: settings.skills_extra.clone(),
+            ..SkillsConfig::enabled()
         },
         ..EngineConfig::default()
     };

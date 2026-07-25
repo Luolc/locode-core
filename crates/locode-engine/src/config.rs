@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use locode_instructions::InstructionsConfig;
 use locode_provider::{CacheHint, SamplingArgs};
+use locode_skills::SkillsConfig;
 
 /// Everything the loop needs that isn't the provider, registry, preamble, or sink.
 #[derive(Debug, Clone)]
@@ -47,6 +48,12 @@ pub struct EngineConfig {
     /// Shared project-instruction loading (`AGENTS.md`, ADR-0023): discovered from `cwd`
     /// and injected once per session as a `User` `<system-reminder>`. Default = enabled.
     pub instructions: InstructionsConfig,
+    /// Skill discovery + the injected listing (ADR-0025). Like `instructions`, this is
+    /// shared machinery: identical under every `--harness`, and no pack sees a tool.
+    pub skills: SkillsConfig,
+    /// The model's context window in tokens, when known — sizes the listing budget
+    /// (ADR-0025 §3). `None` falls back to a fixed char budget.
+    pub context_window_tokens: Option<u64>,
 }
 
 impl Default for EngineConfig {
@@ -65,6 +72,8 @@ impl Default for EngineConfig {
             cache_hint: CacheHint::default(),
             streaming: false,
             instructions: InstructionsConfig::default(),
+            skills: SkillsConfig::default(),
+            context_window_tokens: None,
         }
     }
 }

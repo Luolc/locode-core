@@ -86,7 +86,7 @@ The immediate queue, ahead of the remaining packs:
   - [x] **S2** — new `locode-skills` crate: discovery, five-key frontmatter, precedence,
     three-scope collisions.
   - [x] **S3** — listing body: grok's verbatim format, 50 % budget, three-tier degrade.
-  - [ ] **S4** — injection: whole-body diff, previous state read off the transcript,
+  - [x] **S4** — injection: whole-body diff, previous state read off the transcript,
     removal notice.
   - [ ] **S5** — post-run rescan seam (engine hook + TUI invoking it after its render).
 
