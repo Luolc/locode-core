@@ -94,6 +94,18 @@ and the agent opens the file when a task matches. `when-to-use` adds a trigger
 hint; `disable-model-invocation: true` hides a skill from the agent. Writing or
 editing a skill takes effect on the next turn, with no restart.
 
+You can also run a skill yourself: type `/` in the composer and pick it, or type
+`/<name>` and anything you want to pass along. `user-invocable: false` keeps a
+skill out of that menu.
+
+## Commands
+
+Typing `/` at the start of the composer opens a menu of what you can run.
+Keep typing to narrow it, ↑/↓ to move, Tab to complete, Enter to run, Esc to
+close. `/help` lists everything, `/model` shows the model in use, `/new` starts
+a fresh session, and `/quit` (or `/exit`) leaves. Every skill you can invoke
+appears there too.
+
 Every run appends a JSONL trace under `~/.locode/sessions/`; `--continue`
 resumes the newest session for the current directory and `--resume <id>` resumes
 by id (both in headless and interactive modes). `--no-session-persistence`
