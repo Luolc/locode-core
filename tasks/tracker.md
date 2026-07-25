@@ -89,7 +89,7 @@ The immediate queue, ahead of the remaining packs:
     removal notice.
   - [ ] **S5** — post-run rescan seam (engine hook + TUI invoking it after its render).
 
-- [ ] **Task 33 — `--show-model-input`: render everything we send to the model** (P0.5,
+- [ ] **Task 33 — `--debug-show-hidden-context`: render everything we send to the model** (P0.5,
   **after Task 32**, user request 2026-07-24). A debugging flag that prints the parts of
   the request the UI normally hides — the system prompt / preamble, every injected
   `<system-reminder>` (project instructions, and the skills listing once Task 32 lands),
@@ -100,10 +100,11 @@ The immediate queue, ahead of the remaining packs:
     `Event::Message`. The TUI simply drops them today (it reads `Init` for identity
     only). So this is a **UI-only** change — subscribe and render, gated by the flag —
     not a new engine seam or protocol variant. Scope S/M.
-  - **Naming** *(needs confirmation)*: `--show-model-input` — says what it prints, and
-    stays narrow. Deliberately **not** `--debug-ui` (too broad — it reads like a flag
-    about debugging the UI itself). Alternatives if preferred: `--show-model-request`,
-    `--show-hidden-context`.
+  - **Name (decided, user 2026-07-24): `--debug-show-hidden-context`.** The `debug-`
+    prefix is deliberate — it groups this with future debugging switches and signals
+    "not part of normal operation" at a glance; `show-hidden-context` then names exactly
+    what it reveals, the parts of the request the UI hides. Deliberately **not**
+    `--debug-ui`, which is too broad and reads like a flag for debugging the UI itself.
   - Headless already has this: `--output-format stream-json` emits `Init` verbatim. Worth
     saying so in `--help` rather than adding a second headless surface.
   - Watch: tool schemas are long. Decide whether the default is collapsed/summarized with
