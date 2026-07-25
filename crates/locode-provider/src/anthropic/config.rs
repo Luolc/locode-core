@@ -23,10 +23,6 @@ pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 /// may exceed `max_tokens`. Proxy-safe (OpenRouter documents it).
 pub const INTERLEAVED_THINKING_BETA: &str = "interleaved-thinking-2025-05-14";
 
-/// The effort-based reasoning beta, required by
-/// [`ReasoningEncoding::EffortAdaptive`] (opt-in; Claude Code `betas.ts:15`).
-pub const EFFORT_BETA: &str = "effort-2025-11-24";
-
 /// Which endpoint family the wire talks to — selects auth header + quirks.
 ///
 /// This is *configuration*, not a wire schema: all three speak Anthropic Messages
@@ -91,18 +87,6 @@ pub enum DeveloperRendering {
     MidConversationSystemBeta,
 }
 
-/// How `reasoning_effort` is encoded on the wire (plan §4.4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ReasoningEncoding {
-    /// `thinking: {type:"enabled", budget_tokens}` — the v0 default; no beta,
-    /// widest model support.
-    #[default]
-    Budget,
-    /// `output_config.effort` + `thinking: {type:"adaptive"}` — opt-in; requires
-    /// [`EFFORT_BETA`] and an adaptive-capable model.
-    EffortAdaptive,
-}
-
 /// The per-model wire configuration record (ADR-0007 + plan §3.1/§9).
 #[derive(Debug, Clone)]
 pub struct ModelConfig {
@@ -137,8 +121,6 @@ pub struct ModelConfig {
     pub max_tokens_cap: Option<u32>,
     /// How Developer messages are rendered.
     pub developer_rendering: DeveloperRendering,
-    /// How `reasoning_effort` is encoded.
-    pub reasoning_encoding: ReasoningEncoding,
     /// OpenRouter `provider` routing preferences. `None` → the default trio
     /// (`ignore: ["amazon-bedrock"], allow_fallbacks: false,
     /// require_parameters: true`, matching cc-reverse-proxy) when the backend
@@ -181,7 +163,6 @@ impl ModelConfig {
             extra_headers: Vec::new(),
             max_tokens_cap: None,
             developer_rendering: DeveloperRendering::default(),
-            reasoning_encoding: ReasoningEncoding::default(),
             provider_prefs: None,
         }
     }

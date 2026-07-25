@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use async_trait::async_trait;
 
 pub use build::{build_request, count_cache_controls, normalize_input_schema};
-pub use config::{ApiBackend, AuthScheme, DeveloperRendering, ModelConfig, ReasoningEncoding};
+pub use config::{ApiBackend, AuthScheme, DeveloperRendering, ModelConfig};
 pub use error::{HttpFailure, classify, parse_retry_after};
 pub use parse::response_to_completion;
 pub use retry::{RetryPolicy, backoff, run_with_retry};
@@ -146,19 +146,6 @@ impl Provider for AnthropicProvider {
     }
 
     async fn complete(&self, request: &ConversationRequest) -> Result<Completion, ProviderError> {
-        // 0. This wire has fixed effort mappings on the Budget encoding — an
-        //    unknown tier has no principled budget; reject clearly pre-send
-        //    (never silently clamp).
-        if let Some(crate::request::ReasoningEffort::Other(tier)) =
-            &request.sampling_args.reasoning_effort
-            && self.config.reasoning_encoding == config::ReasoningEncoding::Budget
-        {
-            return Err(ProviderError::Config(format!(
-                "unknown reasoning-effort tier {tier:?} has no budget mapping on the \
-                 anthropic wire (Budget encoding)"
-            )));
-        }
-
         // 1. Defensive transcript repair on a clone — a request must never
         //    leave this crate with a dangling tool_use or duplicate tool_result,
         //    regardless of who called it (ADR-0004; the engine runs the same
@@ -189,15 +176,6 @@ impl Provider for AnthropicProvider {
         on_delta: &mut (dyn FnMut(CompletionDelta) + Send),
     ) -> Result<Completion, ProviderError> {
         // Same pre-send validation + repair + build as `complete`, but streaming.
-        if let Some(crate::request::ReasoningEffort::Other(tier)) =
-            &request.sampling_args.reasoning_effort
-            && self.config.reasoning_encoding == config::ReasoningEncoding::Budget
-        {
-            return Err(ProviderError::Config(format!(
-                "unknown reasoning-effort tier {tier:?} has no budget mapping on the \
-                 anthropic wire (Budget encoding)"
-            )));
-        }
         let mut repaired = request.clone();
         let _ = repair_pairing(&mut repaired.messages);
         let mut wire_request = build_request(&repaired, &self.config);
