@@ -1,38 +1,80 @@
-//! The `SKILL.md` YAML frontmatter reader — **scalar keys only, by design**.
+//! The `SKILL.md` YAML frontmatter reader.
 //!
-//! ADR-0025 §2 recognizes exactly five keys, all scalars (`name`, `description`,
-//! `when-to-use`, `disable-model-invocation`, `user-invocable`), and requires unknown
-//! keys to be *ignored* rather than rejected. That makes a full YAML parser unnecessary
-//! — and a new dependency is an ask-first item under AGENTS.md, so this reads the block
-//! directly.
+//! Splitting the `---` fences is ours; parsing what is between them is
+//! [`serde_yaml_ng`]'s. Both reference harnesses do exactly this — codex runs
+//! `serde_yaml::from_str::<SkillFrontmatter>` (`core-skills/src/loader.rs:747`) and grok
+//! coerces from `serde_yaml::Value` (`skills/discovery.rs:150-176`) — and the reason
+//! matters: real skills use YAML that a scalar scanner silently loses. A folded
+//! `description: >` spanning three lines is the common one, and losing it drops the
+//! skill entirely, since a skill with no description cannot be routed to.
 //!
-//! Grok's own loader has the same shape as its recovery path: it salvages
-//! "listing-relevant scalar fields" and deliberately does not try to interpret list or
-//! map values like `allowed-tools` and `paths` (`discovery.rs:406`). We simply never
-//! need those, so scalar-only is the whole contract rather than a fallback.
-//!
-//! What is handled: the `---` fences, `key: value` pairs, quoted values, values that
-//! themselves contain `:` (`description: Deploy: push to prod`), comments, and blank
-//! lines. What is skipped: any key whose value spans lines (a block scalar, a list, or
-//! a nested map) — its continuation lines are consumed and dropped, so a list-valued
-//! `allowed-tools:` can never be mistaken for a scalar.
+//! Only the five recognized keys (ADR-0025 §2) are deserialized. Everything else —
+//! `allowed-tools`, `model`, `paths`, … — is *ignored*, which is serde's default for
+//! unknown fields and is the behavior the ADR requires.
 
-use std::collections::HashMap;
+use serde::Deserialize;
 
-/// Split a `SKILL.md` body into `(frontmatter_pairs, markdown_body)`.
-///
-/// Returns `None` when the file does not open with a `---` fence — a `SKILL.md` with no
-/// frontmatter has no name and no description, so the caller skips it.
-pub(crate) fn parse(source: &str) -> Option<(HashMap<String, String>, &str)> {
-    // Tolerate a leading BOM and blank lines before the fence.
-    let text = source.strip_prefix('\u{feff}').unwrap_or(source);
-    let after_open = strip_fence_line(text)?;
-    let (block, body) = split_at_closing_fence(after_open)?;
-    Some((parse_pairs(block), body))
+/// The five recognized keys. Absent fields stay `None`/default; unknown keys are
+/// ignored rather than rejected, so a skill authored for another harness still loads.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub(crate) struct Frontmatter {
+    pub(crate) name: Option<String>,
+    pub(crate) description: Option<String>,
+    #[serde(rename = "when-to-use", alias = "when_to_use")]
+    pub(crate) when_to_use: Option<String>,
+    #[serde(
+        rename = "disable-model-invocation",
+        alias = "disable_model_invocation"
+    )]
+    disable_model_invocation: Option<serde_yaml_ng::Value>,
+    #[serde(rename = "user-invocable", alias = "user_invocable")]
+    user_invocable: Option<serde_yaml_ng::Value>,
 }
 
-/// Consume an opening `---` line (and any blank lines before it).
-fn strip_fence_line(text: &str) -> Option<&str> {
+impl Frontmatter {
+    /// `disable-model-invocation`, defaulting to `false`.
+    pub(crate) fn disable_model_invocation(&self) -> bool {
+        truthy(self.disable_model_invocation.as_ref()).unwrap_or(false)
+    }
+
+    /// `user-invocable`, defaulting to `true` (a skill is user-invocable unless it
+    /// says otherwise).
+    pub(crate) fn user_invocable(&self) -> bool {
+        truthy(self.user_invocable.as_ref()).unwrap_or(true)
+    }
+}
+
+/// YAML 1.2 makes `yes`/`on` plain strings, but skill authors write them as booleans
+/// (grok's own test fixtures use `user-invocable: yes`). Coerce both spellings, exactly
+/// as grok's `parse_boolean_frontmatter` does.
+fn truthy(value: Option<&serde_yaml_ng::Value>) -> Option<bool> {
+    match value? {
+        serde_yaml_ng::Value::Bool(b) => Some(*b),
+        serde_yaml_ng::Value::String(s) => Some(matches!(
+            s.trim().to_ascii_lowercase().as_str(),
+            "true" | "yes" | "on" | "1"
+        )),
+        serde_yaml_ng::Value::Number(n) => Some(n.as_f64().is_some_and(|f| f != 0.0)),
+        _ => None,
+    }
+}
+
+/// Split a `SKILL.md` into `(frontmatter, markdown_body)`.
+///
+/// `None` when the file does not open with a `---` fence, when the block is
+/// unterminated, or when the YAML does not parse — in every case the caller skips the
+/// skill with a diagnostic rather than guessing at half-read metadata.
+pub(crate) fn parse(source: &str) -> Option<(Frontmatter, &str)> {
+    let text = source.strip_prefix('\u{feff}').unwrap_or(source);
+    let after_open = strip_open_fence(text)?;
+    let (block, body) = split_at_closing_fence(after_open)?;
+    let fm: Frontmatter = serde_yaml_ng::from_str(block).ok()?;
+    Some((fm, body))
+}
+
+/// Consume the opening `---` (skipping leading blank lines).
+fn strip_open_fence(text: &str) -> Option<&str> {
     let mut rest = text;
     loop {
         let (line, tail) = split_line(rest);
@@ -44,15 +86,14 @@ fn strip_fence_line(text: &str) -> Option<&str> {
     }
 }
 
-/// Split at the first closing `---`, returning `(block, body_after)`.
+/// Split at the first closing `---`/`...`, returning `(block, body_after)`.
 fn split_at_closing_fence(text: &str) -> Option<(&str, &str)> {
     let mut offset = 0usize;
     let mut rest = text;
     loop {
         let (line, tail) = split_line(rest);
         if matches!(line.trim_end(), "---" | "...") {
-            let body = tail.unwrap_or("");
-            return Some((&text[..offset], body));
+            return Some((&text[..offset], tail.unwrap_or("")));
         }
         let tail = tail?;
         offset += rest.len() - tail.len();
@@ -68,146 +109,80 @@ fn split_line(text: &str) -> (&str, Option<&str>) {
     }
 }
 
-fn parse_pairs(block: &str) -> HashMap<String, String> {
-    let mut out = HashMap::new();
-    for line in block.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        // Indented lines belong to a previous multi-line value; a top-level key starts
-        // at column 0. Anything indented here is a continuation we already decided to
-        // drop, so skip it.
-        if line.starts_with([' ', '\t']) || trimmed.starts_with('-') {
-            continue;
-        }
-        let Some((key, value)) = trimmed.split_once(':') else {
-            continue;
-        };
-        let key = key.trim().to_ascii_lowercase();
-        let value = value.trim();
-        if value.is_empty() {
-            // `key:` with the value on following lines — a block scalar, list, or map.
-            // Not a scalar, so drop it *and* its continuation, which the indent check
-            // above already handles as the iterator advances.
-            continue;
-        }
-        out.insert(key, unquote(value).to_string());
-    }
-    out
-}
-
-/// Strip one layer of matching quotes; leave everything else verbatim (including a
-/// trailing `#`, which in YAML would need a space before it to start a comment and is
-/// far more likely to be part of a description here).
-fn unquote(value: &str) -> &str {
-    let bytes = value.as_bytes();
-    if bytes.len() >= 2 {
-        let (first, last) = (bytes[0], bytes[bytes.len() - 1]);
-        if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
-            return &value[1..value.len() - 1];
-        }
-    }
-    value
-}
-
-/// YAML-ish truthiness for the two boolean keys: `true`/`yes`/`on`/`1`.
-pub(crate) fn as_bool(value: &str) -> bool {
-    matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "true" | "yes" | "on" | "1"
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn pairs(src: &str) -> HashMap<String, String> {
+    fn fm(src: &str) -> Frontmatter {
         parse(src).expect("frontmatter").0
     }
 
     #[test]
-    fn reads_scalar_keys_and_the_body() {
-        let (fm, body) =
-            parse("---\nname: commit\ndescription: Make a commit\n---\n# Body\ntext\n")
-                .expect("frontmatter");
-        assert_eq!(fm.get("name").map(String::as_str), Some("commit"));
-        assert_eq!(
-            fm.get("description").map(String::as_str),
-            Some("Make a commit")
+    fn reads_the_five_keys_and_the_body() {
+        let (f, body) = parse(
+            "---\nname: commit\ndescription: Make a commit\nwhen-to-use: on push\n\
+             disable-model-invocation: true\nuser-invocable: false\n---\n# Body\n",
+        )
+        .expect("frontmatter");
+        assert_eq!(f.name.as_deref(), Some("commit"));
+        assert_eq!(f.description.as_deref(), Some("Make a commit"));
+        assert_eq!(f.when_to_use.as_deref(), Some("on push"));
+        assert!(f.disable_model_invocation());
+        assert!(!f.user_invocable());
+        assert_eq!(body, "# Body\n");
+    }
+
+    #[test]
+    fn defaults_when_absent() {
+        let f = fm("---\nname: x\n---\n");
+        assert!(!f.disable_model_invocation(), "model may invoke by default");
+        assert!(f.user_invocable(), "user may invoke by default");
+        assert!(f.description.is_none());
+    }
+
+    /// The case the hand-rolled scanner silently lost: a folded description spanning
+    /// several lines. Losing it drops the skill, since a skill with no description
+    /// cannot be routed to.
+    #[test]
+    fn folded_and_literal_block_scalars_are_read() {
+        let f = fm("---\nname: x\ndescription: >\n  first line\n  second line\n---\n");
+        assert_eq!(f.description.as_deref(), Some("first line second line\n"));
+
+        let f = fm("---\nname: x\ndescription: |\n  line one\n  line two\n---\n");
+        assert_eq!(f.description.as_deref(), Some("line one\nline two\n"));
+    }
+
+    /// Unknown keys — including the ones ADR-0025 deliberately does not honor — are
+    /// ignored, so a skill authored for another harness still loads.
+    #[test]
+    fn unknown_keys_are_ignored_not_rejected() {
+        let f = fm(
+            "---\nname: x\ndescription: D\nallowed-tools:\n  - Bash\n  - Edit\n\
+             model: opus\npaths:\n  \"*.rs\": true\n---\n",
         );
-        assert_eq!(body, "# Body\ntext\n");
+        assert_eq!(f.name.as_deref(), Some("x"));
+        assert_eq!(f.description.as_deref(), Some("D"));
     }
 
     #[test]
-    fn a_value_may_contain_colons() {
-        let fm = pairs("---\ndescription: Deploy: push to prod\n---\n");
-        assert_eq!(
-            fm.get("description").map(String::as_str),
-            Some("Deploy: push to prod")
-        );
+    fn quoted_values_and_embedded_colons() {
+        let f = fm("---\nname: \"commit\"\ndescription: \"Deploy: push to prod\"\n---\n");
+        assert_eq!(f.name.as_deref(), Some("commit"));
+        assert_eq!(f.description.as_deref(), Some("Deploy: push to prod"));
+    }
+
+    /// Authors write `yes`/`no`, which YAML 1.2 calls strings — coerce both spellings.
+    #[test]
+    fn yes_no_booleans_are_coerced() {
+        assert!(!fm("---\nuser-invocable: no\n---\n").user_invocable());
+        assert!(fm("---\ndisable-model-invocation: yes\n---\n").disable_model_invocation());
+        assert!(!fm("---\ndisable-model-invocation: off\n---\n").disable_model_invocation());
     }
 
     #[test]
-    fn quotes_are_stripped_once() {
-        let fm = pairs("---\nname: \"commit\"\nwhen-to-use: 'on push'\n---\n");
-        assert_eq!(fm.get("name").map(String::as_str), Some("commit"));
-        assert_eq!(fm.get("when-to-use").map(String::as_str), Some("on push"));
-    }
-
-    /// The load-bearing case: a list-valued key must never be salvaged as a scalar, or
-    /// `allowed-tools: [Bash, Edit]` would look like a recognized value.
-    #[test]
-    fn multi_line_and_list_values_are_dropped_whole() {
-        let fm = pairs(
-            "---\nname: d\nallowed-tools:\n  - Bash\n  - Edit\npaths:\n  \"*.rs\": true\ndescription: after\n---\n",
-        );
-        assert_eq!(fm.get("name").map(String::as_str), Some("d"));
-        assert_eq!(fm.get("description").map(String::as_str), Some("after"));
-        assert!(!fm.contains_key("allowed-tools"), "{fm:?}");
-        assert!(!fm.contains_key("paths"), "{fm:?}");
-    }
-
-    /// An inline list stays a string — we never look at this key, and mis-parsing it
-    /// into something structured would be worse than ignoring it.
-    #[test]
-    fn inline_list_is_not_interpreted() {
-        let fm = pairs("---\nallowed-tools: [Bash, Edit]\nname: x\n---\n");
-        assert_eq!(fm.get("name").map(String::as_str), Some("x"));
-        assert_eq!(
-            fm.get("allowed-tools").map(String::as_str),
-            Some("[Bash, Edit]")
-        );
-    }
-
-    #[test]
-    fn comments_and_blank_lines_are_skipped() {
-        let fm = pairs("---\n# a comment\n\nname: x\n---\n");
-        assert_eq!(fm.len(), 1);
-        assert_eq!(fm.get("name").map(String::as_str), Some("x"));
-    }
-
-    #[test]
-    fn keys_are_case_insensitive() {
-        let fm = pairs("---\nName: x\nWhen-To-Use: y\n---\n");
-        assert_eq!(fm.get("name").map(String::as_str), Some("x"));
-        assert_eq!(fm.get("when-to-use").map(String::as_str), Some("y"));
-    }
-
-    #[test]
-    fn no_frontmatter_is_none() {
-        assert!(parse("# Just markdown\n").is_none());
-        assert!(parse("---\nname: x\n").is_none(), "unterminated block");
-    }
-
-    #[test]
-    fn booleans() {
-        for t in ["true", "TRUE", "yes", "on", "1"] {
-            assert!(as_bool(t), "{t}");
-        }
-        for f in ["false", "no", "off", "0", "", "maybe"] {
-            assert!(!as_bool(f), "{f}");
-        }
+    fn missing_or_broken_frontmatter_is_none() {
+        assert!(parse("# just markdown\n").is_none(), "no fence");
+        assert!(parse("---\nname: x\n").is_none(), "unterminated");
+        assert!(parse("---\n\tname: [\n---\n").is_none(), "invalid yaml");
     }
 }
