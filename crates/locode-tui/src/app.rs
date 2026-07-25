@@ -820,35 +820,15 @@ fn tool_label(tool: &serde_json::Value) -> String {
         .unwrap_or_default()
 }
 
-/// Pretty-print a tool schema into a fenced `json` block: two-space indent and **sorted
-/// keys**, so two runs of the same schema diff cleanly instead of shuffling.
+/// Pretty-print a tool schema into a fenced `json` block (two-space indent).
 ///
-/// The fence is what routes it through the markdown renderer's syntect highlighting and
-/// wrapping, rather than spilling one long line off the right edge.
+/// The fence routes it through the markdown renderer's syntect highlighting and
+/// wrapping instead of spilling one long line off the right edge. Key order is left
+/// exactly as the schema declares it — that ordering is part of what was sent, and
+/// showing what was sent is the only reason this flag exists.
 fn json_fence(value: &serde_json::Value) -> String {
-    let sorted = sort_json_keys(value);
-    let pretty = serde_json::to_string_pretty(&sorted).unwrap_or_else(|_| value.to_string());
+    let pretty = serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string());
     format!("```json\n{pretty}\n```")
-}
-
-/// Recursively re-key every object through a `BTreeMap` so output order is the key
-/// order. `serde_json`'s own `Map` preserves insertion order when the `preserve_order`
-/// feature is on anywhere in the dependency graph, so sorting explicitly is the only
-/// way to guarantee it.
-fn sort_json_keys(value: &serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Object(map) => {
-            let sorted: std::collections::BTreeMap<String, serde_json::Value> = map
-                .iter()
-                .map(|(k, v)| (k.clone(), sort_json_keys(v)))
-                .collect();
-            serde_json::to_value(sorted).unwrap_or_else(|_| value.clone())
-        }
-        serde_json::Value::Array(items) => {
-            serde_json::Value::Array(items.iter().map(sort_json_keys).collect())
-        }
-        other => other.clone(),
-    }
 }
 
 /// Flatten a message's text blocks — used only by `--debug-show-hidden-context`, which
@@ -1708,13 +1688,8 @@ mod tests {
             .expect("a tool-schema block");
         assert_eq!(schema.0, "tool schema: read_file", "labeled by tool name");
         assert!(schema.1.starts_with("```json\n"), "{}", schema.1);
-        // Two-space indent, and keys sorted: `input_schema` before `name`.
+        // Two-space indent; key order is whatever the schema declared.
         assert!(schema.1.contains("\n  \"input_schema\""), "{}", schema.1);
-        let (i, n) = (
-            schema.1.find("\"input_schema\"").unwrap(),
-            schema.1.find("\"name\"").unwrap(),
-        );
-        assert!(i < n, "keys sorted: {}", schema.1);
     }
 
     /// Long hidden content wraps to the width instead of running off the edge — the

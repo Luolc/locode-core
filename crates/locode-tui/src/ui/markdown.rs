@@ -171,7 +171,30 @@ impl Writer {
                     Style::default().add_modifier(Modifier::DIM),
                 ));
             }
+            // Raw markup is **content**, not markup to drop. Agent transcripts are full
+            // of `<system-reminder>`-style tags, and pulldown-cmark hands those over as
+            // Html events — which a catch-all arm silently swallowed, taking the whole
+            // HTML block with them (everything up to the next blank line). That deleted
+            // the opening line of every injected reminder, and any `<tag>` paragraph an
+            // assistant wrote.
+            Event::Html(t) | Event::InlineHtml(t) => self.raw(&t),
             _ => {}
+        }
+    }
+
+    /// Emit raw markup verbatim, honoring embedded newlines — a block-level Html event
+    /// can carry several lines at once, and folding them into one would run the tag and
+    /// its first line of content together.
+    fn raw(&mut self, t: &str) {
+        let mut first = true;
+        for segment in t.split('\n') {
+            if !first {
+                self.flush_inline();
+            }
+            first = false;
+            if !segment.is_empty() {
+                self.text(segment);
+            }
         }
     }
 
@@ -952,5 +975,38 @@ mod tests {
             "{:?}",
             texts(&lines)
         );
+    }
+
+    /// Raw markup must survive: `<system-reminder>` opens an HTML block that runs to the
+    /// next blank line, so swallowing it deleted the opening line of every injected
+    /// reminder — the header the whole listing depends on.
+    #[test]
+    fn raw_html_blocks_are_kept_with_their_content() {
+        let src = "<system-reminder>\nThe following skills are available for use:\n\n                   - commit: Make a commit\n</system-reminder>";
+        let text = joined(&render(src, 80));
+        assert!(text.contains("<system-reminder>"), "{text}");
+        assert!(
+            text.contains("The following skills are available for use:"),
+            "the swallowed header: {text}"
+        );
+        assert!(text.contains("commit: Make a commit"), "{text}");
+        assert!(text.contains("</system-reminder>"), "{text}");
+    }
+
+    /// The same bug hit ordinary assistant prose containing a tag-like token.
+    #[test]
+    fn inline_markup_in_prose_is_kept() {
+        let text = joined(&render("use the <Foo> element here", 80));
+        assert!(text.contains("<Foo>"), "{text}");
+    }
+
+    /// A multi-line preamble reminder keeps every line, not just the last paragraph.
+    #[test]
+    fn multi_line_reminder_keeps_all_of_its_lines() {
+        let src = "<system-reminder>\nAs you answer, use this context:\n# currentDate\n                   Today's date is 2026-07-24.\n</system-reminder>";
+        let text = joined(&render(src, 100));
+        assert!(text.contains("As you answer, use this context:"), "{text}");
+        assert!(text.contains("currentDate"), "{text}");
+        assert!(text.contains("2026-07-24"), "{text}");
     }
 }
