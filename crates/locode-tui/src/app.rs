@@ -2238,13 +2238,13 @@ mod tests {
         assert!(app.slash.open, "the argument submenu is up");
         assert!(!app.slash.cursor_in_command);
         assert!(
-            menu(&app).contains(&"/quit"),
-            "every command is offered: {:?}",
+            menu(&app).contains(&"quit"),
+            "every command is offered, named rather than slashed: {:?}",
             menu(&app)
         );
 
         type_str(&mut app, "qu", t0);
-        assert_eq!(menu(&app), vec!["/quit"]);
+        assert_eq!(menu(&app), vec!["quit"]);
         let _ = app.update(key(KeyCode::Tab), t0);
         assert_eq!(
             app.composer.text(),

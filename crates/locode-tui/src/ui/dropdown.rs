@@ -5,12 +5,12 @@
 //! band, bold text and a `❯` prefix — with two spaces in the prefix slot otherwise, so
 //! the labels never shift as the selection moves.
 //!
-//! **One deviation, deliberate.** Grok word-wraps a long description across extra
-//! rows; we truncate to one row per item. Its dropdown caps at six *rows*, so a wrapped
-//! description eats the menu — and a skill's description is routing text written for a
-//! model, routinely a full sentence. One row per item keeps six *commands* visible,
-//! which is what a command menu is for. (This is our own UI, not a ported pack: the
-//! faithfulness rule governs packs, and best-of applies here.)
+//! **Wrap, then truncate** (grok wraps; the cap is ours). A description gets up to
+//! `MAX_DESC_ROWS` rows and is cut with `…` beyond that. Grok's dropdown caps at six
+//! *rows* with no per-item bound, so one verbose skill can eat the whole menu; the cap
+//! keeps at least three commands visible while still showing more than a single
+//! truncated line. Descriptions arrive already reduced to a one-line summary
+//! (`commands::state`), so wrapping only ever reflows prose.
 
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -33,6 +33,10 @@ const GAP: usize = 2;
 /// description off the row (grok's `LABEL_CAP`).
 const LABEL_CAP: usize = 40;
 
+/// Rows one item's description may wrap to before it is truncated. Two, so a six-row
+/// menu always shows at least three commands.
+const MAX_DESC_ROWS: usize = 2;
+
 /// Background band on the selected row. `DarkGray` is the ANSI bright-black palette
 /// slot — "one step above the background" under whatever theme the user runs, the same
 /// palette-relative choice the user-prompt band makes.
@@ -42,13 +46,25 @@ const SELECTED_BG: Color = Color::DarkGray;
 /// alike (grok's `theme.fuzzy_accent`).
 const MATCH_FG: Color = Color::LightBlue;
 
-/// Rows the dropdown wants: one per suggestion, capped.
+/// Rows the dropdown wants: every item's wrapped height, capped at
+/// [`MAX_VISIBLE_ROWS`].
+///
+/// Item-count height would starve wrapped items and leave later matches off-area
+/// entirely, which is the bug grok's `desired_item_rows` comment records.
 #[must_use]
-pub fn desired_rows(state: &SlashState) -> u16 {
+pub fn desired_rows(state: &SlashState, width: u16) -> u16 {
     if !state.open {
         return 0;
     }
-    u16::try_from(state.matches.len().min(MAX_VISIBLE_ROWS)).unwrap_or(0)
+    let Some(geometry) = Geometry::for_width(&state.matches, width) else {
+        return 0;
+    };
+    let rows: usize = state
+        .matches
+        .iter()
+        .map(|row| geometry.item_rows(row).len())
+        .sum();
+    u16::try_from(rows.min(MAX_VISIBLE_ROWS)).unwrap_or(0)
 }
 
 /// Draw the visible slice of the menu into `area`.
@@ -56,24 +72,105 @@ pub fn render(frame: &mut crate::frame_terminal::Frame<'_>, area: Rect, state: &
     if !state.open || area.height == 0 {
         return;
     }
-    let content_w = usize::from(area.width).saturating_sub(2 * MARGIN);
-    if content_w <= PREFIX_W + GAP {
+    let Some(geometry) = Geometry::for_width(&state.matches, area.width) else {
         return;
-    }
-    let label_w = label_column_width(&state.matches, content_w - PREFIX_W);
-    let height = usize::from(area.height);
-    let offset = state.scroll_offset(height);
+    };
     let selected = state.selected.min(state.matches.len().saturating_sub(1));
 
-    let lines: Vec<Line<'static>> = state
-        .matches
-        .iter()
-        .enumerate()
-        .skip(offset)
-        .take(height)
-        .map(|(i, row)| row_line(row, i == selected, label_w, content_w))
-        .collect();
-    frame.render_widget(Paragraph::new(lines), area);
+    // Flatten to rows, remembering where each item starts — once a description wraps,
+    // rows are no longer items and the scroll offset has to be measured in rows.
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut starts: Vec<usize> = Vec::new();
+    for (i, row) in state.matches.iter().enumerate() {
+        starts.push(lines.len());
+        lines.extend(geometry.render_item(row, i == selected));
+    }
+
+    let height = usize::from(area.height);
+    let offset = scroll_offset(
+        starts.get(selected).copied().unwrap_or(0),
+        lines.len(),
+        height,
+    );
+    let visible: Vec<Line<'static>> = lines.into_iter().skip(offset).take(height).collect();
+    frame.render_widget(Paragraph::new(visible), area);
+}
+
+/// Keep the selected item's first row visible, centred once the list scrolls.
+fn scroll_offset(selected_row: usize, total: usize, height: usize) -> usize {
+    if height == 0 || total <= height {
+        return 0;
+    }
+    if selected_row < height / 2 {
+        0
+    } else if selected_row + height / 2 >= total {
+        total - height
+    } else {
+        selected_row - height / 2
+    }
+}
+
+/// The column widths every row shares, computed once per paint.
+struct Geometry {
+    /// Width of the aligned label column.
+    label: usize,
+    /// Width available to the description.
+    description: usize,
+    /// Total width inside the margins.
+    content: usize,
+}
+
+impl Geometry {
+    /// `None` when the terminal is too narrow for even a label and a gap.
+    fn for_width(rows: &[SuggestionRow], width: u16) -> Option<Self> {
+        let content_w = usize::from(width).saturating_sub(2 * MARGIN);
+        if content_w <= PREFIX_W + GAP {
+            return None;
+        }
+        let label = label_column_width(rows, content_w - PREFIX_W);
+        Some(Self {
+            description: content_w.saturating_sub(PREFIX_W + label + GAP),
+            label,
+            content: content_w,
+        })
+    }
+
+    /// The description's wrapped rows, capped and truncated with `…`.
+    fn item_rows(&self, row: &SuggestionRow) -> Vec<String> {
+        if row.description.is_empty() || self.description == 0 {
+            return vec![String::new()];
+        }
+        let mut wrapped = wrap(&row.description, self.description);
+        if wrapped.len() > MAX_DESC_ROWS {
+            wrapped.truncate(MAX_DESC_ROWS);
+            if let Some(last) = wrapped.last_mut() {
+                *last = with_ellipsis(last, self.description);
+            }
+        }
+        wrapped
+    }
+
+    /// The item's full rendering: its label row, then description continuations
+    /// indented to the description column.
+    fn render_item(&self, row: &SuggestionRow, selected: bool) -> Vec<Line<'static>> {
+        let desc_rows = self.item_rows(row);
+        let mut out = vec![row_line(
+            row,
+            selected,
+            self.label,
+            self.content,
+            desc_rows.first().map_or("", String::as_str),
+        )];
+        for continuation in desc_rows.iter().skip(1) {
+            out.push(continuation_line(
+                continuation,
+                selected,
+                PREFIX_W + self.label + GAP,
+                self.content,
+            ));
+        }
+        out
+    }
 }
 
 /// The aligned label column: the widest label, bounded by 60% of the space and by
@@ -95,6 +192,7 @@ fn row_line(
     selected: bool,
     label_w: usize,
     content_w: usize,
+    desc: &str,
 ) -> Line<'static> {
     let bold = if selected {
         Modifier::BOLD
@@ -113,7 +211,7 @@ fn row_line(
     let label = truncate(&row.display, label_w);
     let label_used = span_width(&label);
     let desc_w = content_w.saturating_sub(PREFIX_W + label_w + GAP);
-    let desc = truncate(&row.description, desc_w);
+    let desc = truncate(desc, desc_w);
 
     let mut spans = vec![
         // The margin is outside the band: the band starts at the prefix, like the
@@ -131,6 +229,79 @@ fn row_line(
         base,
     ));
     Line::from(spans)
+}
+
+/// A wrapped description's continuation row, indented to the description column and
+/// carrying the same band as its label row.
+fn continuation_line(text: &str, selected: bool, indent: usize, content_w: usize) -> Line<'static> {
+    let base = if selected {
+        Style::default().bg(SELECTED_BG)
+    } else {
+        Style::default()
+    };
+    let used = span_width(text);
+    Line::from(vec![
+        Span::raw(" ".repeat(MARGIN)),
+        Span::styled(" ".repeat(indent), base),
+        Span::styled(text.to_string(), base.add_modifier(Modifier::DIM)),
+        Span::styled(" ".repeat(content_w.saturating_sub(indent + used)), base),
+    ])
+}
+
+/// Mark `text` as cut, dropping trailing characters until the `…` fits.
+///
+/// Distinct from [`truncate`], which only marks a string that was *already* too wide:
+/// the last wrapped row usually fits its own width, and the reader still has to be told
+/// that rows were dropped after it.
+fn with_ellipsis(text: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let mut out = text.trim_end().to_string();
+    while span_width(&out) + 1 > width && out.pop().is_some() {}
+    out.push('…');
+    out
+}
+
+/// Word-wrap plain text to `width` display columns, hard-breaking a word too long to
+/// fit on its own.
+fn wrap(text: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![text.to_string()];
+    }
+    let mut rows = Vec::new();
+    let mut cur = String::new();
+    let mut cur_w = 0usize;
+    for word in text.split_whitespace() {
+        let word_w = span_width(word);
+        if cur_w > 0 && cur_w + 1 + word_w > width {
+            rows.push(std::mem::take(&mut cur));
+            cur_w = 0;
+        }
+        if word_w > width {
+            // A single word wider than the row: place what fits, drop the rest to the
+            // truncation marker rather than looping forever.
+            if cur_w > 0 {
+                rows.push(std::mem::take(&mut cur));
+                cur_w = 0;
+            }
+            rows.push(truncate(word, width));
+            continue;
+        }
+        if cur_w > 0 {
+            cur.push(' ');
+            cur_w += 1;
+        }
+        cur.push_str(word);
+        cur_w += word_w;
+    }
+    if !cur.is_empty() {
+        rows.push(cur);
+    }
+    if rows.is_empty() {
+        rows.push(String::new());
+    }
+    rows
 }
 
 /// Split `text` into runs of matched / unmatched characters, one span per run.
@@ -313,23 +484,62 @@ mod tests {
         );
     }
 
+    /// A long description wraps to the cap, then the last row is cut with `…` — so a
+    /// verbose skill costs two rows, not the whole menu.
     #[test]
-    fn a_long_description_is_truncated_to_one_row() {
+    fn a_long_description_wraps_to_the_cap_then_truncates() {
         let s = state(
             vec![row(
                 "/commit",
-                "use when the user asks to commit staged work and write a message",
+                "use when the user asks to commit staged work and write a good message \
+                 explaining what changed and why it changed",
                 vec![],
             )],
             0,
         );
-        let rows = text_rows(&draw(&s, 40, 1));
-        assert_eq!(rows.len(), 1, "one row per item, never wrapped");
-        assert!(rows[0].ends_with('…'), "cut is marked: {rows:?}");
+        assert_eq!(desired_rows(&s, 40), 2, "capped at {MAX_DESC_ROWS} rows");
+        let rows = text_rows(&draw(&s, 40, 3));
+        assert!(rows[0].starts_with("  ❯ /commit"), "{rows:?}");
         assert!(
-            rows[0].chars().count() <= 38,
-            "inside the margins: {rows:?}"
+            rows[1].starts_with("            "),
+            "continuation indented to the description column: {rows:?}"
         );
+        assert!(rows[1].ends_with('…'), "the cut is marked: {rows:?}");
+        for r in &rows {
+            assert!(r.chars().count() <= 38, "inside the margins: {r:?}");
+        }
+    }
+
+    /// A description that fits needs no second row.
+    #[test]
+    fn a_short_description_stays_on_one_row() {
+        let s = state(vec![row("/new", "start a fresh session", vec![])], 0);
+        assert_eq!(desired_rows(&s, 50), 1);
+    }
+
+    /// The band covers a wrapped item's continuation rows too, so the selection reads
+    /// as one block rather than a highlighted line with an orphaned tail.
+    #[test]
+    fn the_band_covers_a_wrapped_selection_completely() {
+        let s = state(
+            vec![row(
+                "/commit",
+                "a description long enough to need a second row in this narrow menu",
+                vec![],
+            )],
+            0,
+        );
+        let t = draw(&s, 40, 2);
+        let buf = t.backend().buffer();
+        for y in 0..2u16 {
+            for x in 2..38u16 {
+                assert_eq!(
+                    buf[(x, y)].style().bg,
+                    Some(SELECTED_BG),
+                    "banded at ({x}, {y})"
+                );
+            }
+        }
     }
 
     /// More items than rows: the viewport scrolls to keep the selection visible.
@@ -339,7 +549,7 @@ mod tests {
             .map(|i| row(&format!("/cmd{i}"), "", vec![]))
             .collect();
         let mut s = state(rows, 0);
-        assert_eq!(desired_rows(&s), 6, "capped at six rows");
+        assert_eq!(desired_rows(&s, 30), 6, "capped at six rows");
 
         let shown = text_rows(&draw(&s, 30, 3));
         assert!(shown[0].contains("/cmd0") && shown[2].contains("/cmd2"));
@@ -360,7 +570,7 @@ mod tests {
     fn a_closed_menu_draws_nothing() {
         let mut s = state(vec![row("/new", "x", vec![])], 0);
         s.open = false;
-        assert_eq!(desired_rows(&s), 0);
+        assert_eq!(desired_rows(&s, 30), 0);
         assert_eq!(text_rows(&draw(&s, 30, 1)), vec![String::new()]);
     }
 

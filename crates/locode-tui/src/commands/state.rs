@@ -39,6 +39,31 @@ pub struct SuggestionRow {
     pub indices: Vec<u32>,
 }
 
+/// Reduce a description to a one-paragraph, single-line summary for the menu.
+///
+/// A skill's description is markdown written for a model, so it routinely runs to
+/// several paragraphs and its own bullet list. Two steps, in order:
+///
+/// 1. **Keep the first paragraph.** A description's opening paragraph is its summary;
+///    what follows is detail the menu has no room for, and rendering a bullet list
+///    inline reads as gibberish.
+/// 2. **Collapse the remaining whitespace.** A hard-wrapped first paragraph reflows to
+///    one line, so the renderer's own wrapping decides the line breaks rather than
+///    inheriting the author's.
+///
+/// Cutting at the paragraph break rather than the first newline is what keeps a
+/// hard-wrapped opening sentence intact.
+fn summarize(description: &str) -> String {
+    let first_paragraph = description
+        .split("\n\n")
+        .find(|p| !p.trim().is_empty())
+        .unwrap_or(description);
+    first_paragraph
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 impl SuggestionRow {
     /// The row for a command trigger. `takes_args` earns the trailing space.
     fn from_trigger(trigger: &CommandTrigger, indices: Vec<u32>) -> Self {
@@ -48,7 +73,7 @@ impl SuggestionRow {
         }
         Self {
             display: trigger.display.clone(),
-            description: trigger.description.clone(),
+            description: summarize(&trigger.description),
             insert_text,
             indices,
         }
@@ -60,7 +85,7 @@ impl SuggestionRow {
     fn from_arg(item: &ArgItem, indices: Vec<u32>) -> Self {
         Self {
             display: item.display.clone(),
-            description: item.description.clone(),
+            description: summarize(&item.description),
             insert_text: item.insert_text.clone(),
             indices,
         }
@@ -593,6 +618,24 @@ mod tests {
 
     fn labels(s: &SlashState) -> Vec<&str> {
         s.matches.iter().map(|r| r.display.as_str()).collect()
+    }
+
+    /// A skill description is markdown written for a model: the menu takes the first
+    /// paragraph, reflowed to one line, so its own bullets cannot leak into the row.
+    #[test]
+    fn descriptions_are_reduced_to_a_one_line_summary() {
+        assert_eq!(
+            summarize("Critique a design.\n\n- read the doc\n- list the risks"),
+            "Critique a design.",
+            "the first paragraph is the summary"
+        );
+        assert_eq!(
+            summarize("Stage the changes\nand write a message"),
+            "Stage the changes and write a message",
+            "a hard-wrapped opening paragraph reflows rather than being cut"
+        );
+        assert_eq!(summarize("  spaced   out \t text "), "spaced out text");
+        assert_eq!(summarize(""), "");
     }
 
     #[test]
