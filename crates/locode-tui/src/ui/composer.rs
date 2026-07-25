@@ -99,6 +99,33 @@ impl Composer {
         self.textarea.insert_str(text);
     }
 
+    /// The cursor's character offset within a **single-line** draft; `None` once the
+    /// draft has more than one line. Only the slash menu asks, and it does not run on
+    /// multiline drafts, so a whole-buffer offset would be answering a question nobody
+    /// has.
+    #[must_use]
+    pub fn cursor_offset(&self) -> Option<usize> {
+        let (row, col) = self.textarea.cursor();
+        (self.textarea.lines().len() == 1 && row == 0).then_some(col)
+    }
+
+    /// Replace the character range `range` with `text`, leaving the cursor just past
+    /// what was inserted (the slash-completion accept path).
+    pub fn replace_range(&mut self, range: std::ops::Range<usize>, text: &str) {
+        let current = self.text();
+        let chars: Vec<char> = current.chars().collect();
+        let end = range.end.min(chars.len());
+        let start = range.start.min(end);
+        let head: String = chars[..start].iter().collect();
+        let tail: String = chars[end..].iter().collect();
+        let cursor = start + text.chars().count();
+        self.set_text(&format!("{head}{text}{tail}"));
+        self.textarea.move_cursor(tui_textarea::CursorMove::Jump(
+            0,
+            u16::try_from(cursor).unwrap_or(u16::MAX),
+        ));
+    }
+
     /// The editor width available for text at composer area `width` (the full
     /// width minus the gutter and right margin).
     fn editor_width(width: u16) -> u16 {
@@ -465,6 +492,36 @@ mod tests {
                 "row within the right margin (no overflow): {r:?}"
             );
         }
+    }
+
+    /// The slash menu needs a single-line character offset, and explicitly nothing on
+    /// a multiline draft (where it does not run).
+    #[test]
+    fn cursor_offset_tracks_a_single_line_and_vanishes_on_a_second() {
+        let mut c = Composer::new();
+        assert_eq!(c.cursor_offset(), Some(0), "empty composer, caret at 0");
+        c.insert_text("/mod");
+        assert_eq!(c.cursor_offset(), Some(4));
+        c.insert_newline();
+        assert_eq!(c.cursor_offset(), None, "multiline draft has no offset");
+    }
+
+    /// Accepting a completion replaces the command token in place and leaves the caret
+    /// just past it — not at the end of the line, which would jump over trailing args.
+    #[test]
+    fn replace_range_swaps_the_token_and_parks_the_caret_after_it() {
+        let mut c = Composer::new();
+        c.insert_text("/mod gpt-5");
+        c.replace_range(0..4, "/model");
+        assert_eq!(c.text(), "/model gpt-5");
+        assert_eq!(c.cursor_offset(), Some(6), "caret after the inserted name");
+
+        // Character offsets, not bytes: a wide-glyph draft must not be sliced apart.
+        let mut c = Composer::new();
+        c.insert_text("/新 尾");
+        c.replace_range(0..2, "/new");
+        assert_eq!(c.text(), "/new 尾");
+        assert_eq!(c.cursor_offset(), Some(4));
     }
 
     /// Wide (CJK) glyphs wrap by *display* width — two columns each — so a run of

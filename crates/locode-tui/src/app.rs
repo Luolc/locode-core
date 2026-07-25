@@ -10,6 +10,7 @@ use crossterm::event::{Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers}
 use locode_core::{ContentBlock, Event, Report, ResultChunk, Role};
 
 use crate::approval::{ApprovalOutcome, ApprovalView};
+use crate::commands::{CommandCtx, CommandRegistry, SlashState, register_builtins};
 use crate::engine::EngineMsg;
 use crate::ui::blocks::{Block, turn_end};
 use crate::ui::composer::Composer;
@@ -104,6 +105,11 @@ pub struct PendingTool {
 pub struct App {
     /// The multiline prompt editor.
     pub composer: Composer,
+    /// Every registered slash command (ADR-0026). Builtins register at startup;
+    /// skill-backed commands join when the engine reports what it discovered.
+    pub registry: CommandRegistry,
+    /// The command menu derived from the composer on every edit.
+    pub slash: SlashState,
     /// Set when the loop should exit after the current iteration.
     pub should_quit: bool,
     /// Redraw needed.
@@ -182,8 +188,12 @@ impl App {
     /// Fresh state with an empty composer.
     #[must_use]
     pub fn new() -> Self {
+        let mut registry = CommandRegistry::new();
+        register_builtins(&mut registry);
         Self {
             composer: Composer::new(),
+            registry,
+            slash: SlashState::default(),
             should_quit: false,
             dirty: true,
             run: RunState::Idle,
@@ -227,8 +237,25 @@ impl App {
         let mut app = Self::new();
         if !draft.trim().is_empty() {
             app.composer.set_text(draft);
+            app.refresh_slash();
         }
         app
+    }
+
+    /// Re-derive the command menu from the composer. Called after **every** edit —
+    /// the menu is a pure function of the draft and the cursor, never a thing that is
+    /// separately opened and closed.
+    fn refresh_slash(&mut self) {
+        let Some(cursor) = self.composer.cursor_offset() else {
+            self.slash.close();
+            return;
+        };
+        let text = self.composer.text();
+        let ctx = CommandCtx {
+            model: self.model.as_deref(),
+            is_running: matches!(self.run, RunState::Running { .. }),
+        };
+        self.slash.refresh(&self.registry, &ctx, &text, cursor);
     }
 
     /// Whether a run is currently active.
@@ -273,6 +300,7 @@ impl App {
                     // Normalize CR pastes (Windows/legacy terminals) to LF.
                     self.composer
                         .insert_text(&text.replace("\r\n", "\n").replace('\r', "\n"));
+                    self.refresh_slash();
                     vec![]
                 }
                 CrosstermEvent::Resize(..) => vec![], // redraw via dirty
@@ -579,12 +607,80 @@ impl App {
         }
     }
 
+    /// One keystroke, then re-derive the command menu — every path that can touch the
+    /// composer funnels through here, so the menu can never go stale.
     fn on_key(&mut self, key: KeyEvent, now: Instant) -> Vec<Cmd> {
+        let cmds = self.on_key_inner(key, now);
+        self.refresh_slash();
+        cmds
+    }
+
+    /// Navigation and acceptance while the command menu is open (grok's intercept,
+    /// `agent_view/prompt.rs:144-231`), which runs **before** the ordinary bindings so
+    /// Esc dismisses the menu instead of cancelling the run and ↑/↓ move the highlight
+    /// instead of browsing history.
+    ///
+    /// `None` means "not mine" — the key falls through to the ordinary handling. Enter
+    /// deliberately returns `None` after completing a terminal row: the completed text
+    /// then rides the normal submit path.
+    fn on_slash_key(&mut self, key: KeyEvent, ctrl: bool) -> Option<Vec<Cmd>> {
+        match (key.code, ctrl) {
+            (KeyCode::Up, false) | (KeyCode::Char('p'), true) => {
+                self.slash.move_selection(-1);
+                Some(vec![])
+            }
+            (KeyCode::Down, false) | (KeyCode::Char('n'), true) => {
+                self.slash.move_selection(1);
+                Some(vec![])
+            }
+            // Tab completes the text and nothing else — never executes.
+            (KeyCode::Tab, false) => {
+                self.accept_slash();
+                Some(vec![])
+            }
+            (KeyCode::Esc, _) => {
+                let text = self.composer.text();
+                self.slash.dismiss(&text);
+                Some(vec![])
+            }
+            (KeyCode::Enter, false)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::ALT | KeyModifiers::SHIFT) =>
+            {
+                // A row that completes to a trailing space expects more typing, so
+                // Enter fills it in and waits; anything else falls through and submits.
+                let chains = self.slash.selection_chains();
+                self.accept_slash();
+                if chains {
+                    Some(vec![])
+                } else {
+                    self.slash.close();
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Replace the command token with the selected row.
+    fn accept_slash(&mut self) {
+        if let Some((range, text)) = self.slash.accept() {
+            self.composer.replace_range(range, &text);
+        }
+    }
+
+    fn on_key_inner(&mut self, key: KeyEvent, now: Instant) -> Vec<Cmd> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         // The approval overlay owns non-Ctrl input; Ctrl+C/Ctrl+D still fall
         // through to cancel/quit (cancel drains the queue).
         if self.is_awaiting_approval() && !ctrl {
             return self.on_approval_key(key);
+        }
+        if self.slash.open
+            && let Some(cmds) = self.on_slash_key(key, ctrl)
+        {
+            return cmds;
         }
         match (key.code, ctrl) {
             // Ctrl+C: (spec) first press cancels a running turn AND arms the
@@ -665,37 +761,7 @@ impl App {
             // Alt+Enter works on any terminal; Shift+Enter only when the terminal
             // reports the modifier on Enter (needs the kitty keyboard protocol —
             // enabling it repo-wide is deferred, see the TUI polish backlog).
-            (KeyCode::Enter, _) => {
-                if key
-                    .modifiers
-                    .intersects(KeyModifiers::ALT | KeyModifiers::SHIFT)
-                {
-                    self.composer.insert_newline();
-                    return vec![];
-                }
-                let text = self.composer.take_text();
-                self.disarm();
-                self.history_nav = None;
-                if text.trim().is_empty() {
-                    return vec![];
-                }
-                // Slash commands intercept before submit/queue.
-                if let Some(cmds) = self.try_slash(&text) {
-                    return cmds;
-                }
-                if self.engine_failed || self.model.is_none() {
-                    self.composer.set_text(&text); // engine not ready; keep it
-                    return vec![];
-                }
-                self.record_history(&text);
-                // Running ⇒ queue (drained one per turn end); else submit.
-                if self.is_running() {
-                    self.prompt_queue.push_back(text);
-                    return vec![];
-                }
-                self.outbox.push(Block::UserPrompt(text.clone()));
-                vec![Cmd::Submit(text)]
-            }
+            (KeyCode::Enter, _) => self.on_enter(key),
             // Everything else goes to the editor; any keypress disarms the
             // pending quit/clear arms and exits history browsing.
             _ => {
@@ -705,6 +771,39 @@ impl App {
                 vec![]
             }
         }
+    }
+
+    /// Enter: submit the draft, or insert a newline under Alt/Shift.
+    fn on_enter(&mut self, key: KeyEvent) -> Vec<Cmd> {
+        if key
+            .modifiers
+            .intersects(KeyModifiers::ALT | KeyModifiers::SHIFT)
+        {
+            self.composer.insert_newline();
+            return vec![];
+        }
+        let text = self.composer.take_text();
+        self.disarm();
+        self.history_nav = None;
+        if text.trim().is_empty() {
+            return vec![];
+        }
+        // Slash commands intercept before submit/queue.
+        if let Some(cmds) = self.try_slash(&text) {
+            return cmds;
+        }
+        if self.engine_failed || self.model.is_none() {
+            self.composer.set_text(&text); // engine not ready; keep it
+            return vec![];
+        }
+        self.record_history(&text);
+        // Running ⇒ queue (drained one per turn end); else submit.
+        if self.is_running() {
+            self.prompt_queue.push_back(text);
+            return vec![];
+        }
+        self.outbox.push(Block::UserPrompt(text.clone()));
+        vec![Cmd::Submit(text)]
     }
 
     /// Slash-command dispatch (`/quit`, `/new`); `None` if `text` isn't a
@@ -1757,5 +1856,138 @@ mod tests {
             !all.contains("just my question"),
             "own prompt not duplicated: {all}"
         );
+    }
+
+    // ── Slash-command menu (Task 34 S3) ─────────────────────────────────────
+
+    /// Row labels currently offered by the menu.
+    fn menu(app: &App) -> Vec<&str> {
+        app.slash
+            .matches
+            .iter()
+            .map(|r| r.display.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn typing_a_slash_opens_the_menu_and_typing_on_narrows_it() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        type_str(&mut app, "/", t0);
+        assert!(app.slash.open, "a bare slash offers everything");
+        assert_eq!(menu(&app), vec!["/new", "/quit"]);
+
+        type_str(&mut app, "q", t0);
+        assert_eq!(menu(&app), vec!["/quit"], "narrowed to the match");
+
+        type_str(&mut app, "zz", t0);
+        assert!(!app.slash.open, "no match closes the menu");
+    }
+
+    /// Ordinary text — including a path — must never open the menu.
+    #[test]
+    fn ordinary_text_leaves_the_menu_closed() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        type_str(&mut app, "look in /usr/bin", t0);
+        assert!(!app.slash.open);
+    }
+
+    /// While the menu is open the arrows drive it, not the prompt history.
+    #[test]
+    fn arrows_move_the_selection_instead_of_browsing_history() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        type_str(&mut app, "earlier prompt", t0);
+        let _ = app.update(key(KeyCode::Enter), t0);
+
+        type_str(&mut app, "/", t0);
+        let _ = app.update(key(KeyCode::Down), t0);
+        assert_eq!(app.slash.selected, 1);
+        assert_eq!(
+            app.composer.text(),
+            "/",
+            "history did not overwrite the draft"
+        );
+        let _ = app.update(key(KeyCode::Up), t0);
+        assert_eq!(app.slash.selected, 0);
+    }
+
+    /// grok's rule: Esc belongs to the menu first — dismissing it must not cancel the
+    /// run underneath (`mid_turn_slash_dropdown_esc_dismisses_not_cancel`).
+    #[test]
+    fn esc_dismisses_the_menu_without_cancelling_the_run() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        let _ = app.update(run_started(), t0);
+        type_str(&mut app, "/", t0);
+        assert!(app.slash.open);
+
+        assert_eq!(
+            app.update(key(KeyCode::Esc), t0),
+            vec![],
+            "the first Esc only closes the menu"
+        );
+        assert!(!app.slash.open);
+        assert!(app.is_running(), "run untouched");
+
+        assert_eq!(
+            app.update(key(KeyCode::Esc), t0),
+            vec![Cmd::CancelRun],
+            "the next Esc reaches the run"
+        );
+    }
+
+    /// Tab completes the text and stops there — completion is never execution.
+    #[test]
+    fn tab_completes_without_running_the_command() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        type_str(&mut app, "/qu", t0);
+        assert_eq!(app.update(key(KeyCode::Tab), t0), vec![]);
+        assert_eq!(app.composer.text(), "/quit");
+        assert!(!app.should_quit, "completing is not running");
+    }
+
+    /// Enter on a partially typed command completes it *and* runs it.
+    #[test]
+    fn enter_completes_the_selection_then_submits_it() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        type_str(&mut app, "/qu", t0);
+        assert_eq!(app.update(key(KeyCode::Enter), t0), vec![Cmd::Quit]);
+    }
+
+    /// The alias is a row of its own and resolves to the same command.
+    #[test]
+    fn an_alias_is_offered_and_runs_the_command_it_names() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        type_str(&mut app, "/exi", t0);
+        assert_eq!(menu(&app), vec!["/exit"]);
+        assert_eq!(app.update(key(KeyCode::Enter), t0), vec![Cmd::Quit]);
+    }
+
+    /// A submitted prompt leaves nothing behind: the emptied composer closes the menu.
+    #[test]
+    fn submitting_closes_the_menu() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        type_str(&mut app, "/new", t0);
+        assert!(app.slash.open);
+        let _ = app.update(key(KeyCode::Enter), t0);
+        assert!(!app.slash.open);
+        assert!(app.composer.is_empty());
+    }
+
+    /// A multiline draft is content, not a command, even when it opens with a slash.
+    #[test]
+    fn a_multiline_draft_closes_the_menu() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        type_str(&mut app, "/new", t0);
+        assert!(app.slash.open);
+        let _ = app.update(alt_enter(), t0);
+        assert!(!app.slash.open, "second line ⇒ ordinary text");
     }
 }

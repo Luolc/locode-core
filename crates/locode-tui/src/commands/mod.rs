@@ -9,12 +9,16 @@
 //! non-TUI surface needs commands — headless `locode -p "/commit …"` being the concrete
 //! candidate.
 
+mod builtin;
 mod command;
 mod registry;
 mod skill;
+mod state;
 
+pub use builtin::register_builtins;
 pub use command::{ArgItem, CommandCtx, CommandResult, SlashCommand, UiAction};
 pub use registry::{
     CommandRegistry, CommandSource, CommandTrigger, Invocation, LookupError, parse_invocation,
 };
 pub use skill::{SkillCommand, register_skills};
+pub use state::{MAX_VISIBLE_ROWS, SlashState, SuggestionRow};
