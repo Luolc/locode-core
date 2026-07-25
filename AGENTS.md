@@ -232,12 +232,12 @@ env var, or default before tagging. Steps, in order:
    `v[0-9]+.[0-9]+.[0-9]+` tag triggers `.github/workflows/release.yml`, which creates the
    GitHub Release and builds+attaches the 4-platform binaries (darwin/linux × x86_64/aarch64
    + sha256). Wait for that run to go green.
-3. **Publish all 10 crates to crates.io** (the workflow does **not** — it's agent-driven),
+3. **Publish all 11 crates to crates.io** (the workflow does **not** — it's agent-driven),
    in dependency order so each dep is on the index before its dependents:
-   `protocol → tools → host → instructions → skills → provider → packs → engine → core → exec`
+   `protocol → tools → host → instructions → skills → commands → provider → packs → engine → core → exec`
    (`cargo publish -p locode-<name>` each; `cargo publish` waits for the index between
-   steps). `locode-tui` and `locode-app` are `publish = false` — 10 published, 12 in the
-   workspace (`locode-instructions` + `locode-skills` added 2026-07-24). Auth is `~/.cargo/credentials.toml`; new-version publishes are not
+   steps). `locode-tui` and `locode-app` are `publish = false` — 11 published, 13 in the
+   workspace (`locode-instructions` + `locode-skills` 2026-07-24; `locode-commands` 2026-07-25). Auth is `~/.cargo/credentials.toml`; new-version publishes are not
    rate-limited (unlike a first-ever burst of new crates, which replenishes ~1 per 10 min).
 4. **Verify:** each crate's `max_version` on crates.io is the new version (the API needs a
    `User-Agent` header — an empty reply is a missing UA, not a failed publish), and the
