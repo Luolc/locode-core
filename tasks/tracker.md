@@ -88,7 +88,8 @@ The immediate queue, ahead of the remaining packs:
   - [x] **S3** — listing body: grok's verbatim format, 50 % budget, three-tier degrade.
   - [x] **S4** — injection: whole-body diff, previous state read off the transcript,
     removal notice.
-  - [ ] **S5** — post-run rescan seam (engine hook + TUI invoking it after its render).
+  - [x] **S5** — post-run rescan seam (scan after the terminal `Result`; session start is
+    the one synchronous scan).
 
 - [ ] **Task 33 — `--debug-show-hidden-context`: render everything we send to the model** (P0.5,
   **after Task 32**, user request 2026-07-24). A debugging flag that prints the parts of

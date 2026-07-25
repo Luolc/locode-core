@@ -62,14 +62,19 @@ impl Session {
         }
     }
 
-    /// Refresh the skills `<system-reminder>` (ADR-0025 §3.1).
+    /// Rescan the skill roots and cache the rendered listing body (ADR-0025 §3.2).
     ///
-    /// The comparison unit is the **whole rendered body**: unchanged ⇒ nothing is sent;
-    /// changed at all ⇒ the entire listing is re-sent, never a per-skill delta. Whether
-    /// a body counts as already delivered is read off the transcript itself, not a
-    /// stored hash — which is what makes a compacted-away listing re-appear and a
-    /// resumed session stay quiet, with no bookkeeping either way.
-    fn refresh_skills(&mut self) {
+    /// Deliberately **not** called at the top of a turn: filesystem work there lands on
+    /// the user's critical path and reads as a stall. It runs at session start (there is
+    /// no earlier turn to hide behind) and again once each run has reached its terminal
+    /// state and emitted its `Result`, where the user is reading the reply and a few
+    /// hundred milliseconds are invisible.
+    ///
+    /// Rescanning beats watching for the same reason ADR-0023 gave for `AGENTS.md`: the
+    /// walk is small and bounded, so watch/invalidate would buy a filesystem-watcher
+    /// dependency for nothing. Net effect: a skill written mid-session is usable on the
+    /// very next turn, with no restart.
+    pub(crate) fn rescan_skills(&mut self) {
         if !self.config.skills.enabled {
             return;
         }
@@ -80,7 +85,22 @@ impl Session {
             });
         }
         let budget = locode_skills::char_budget(self.config.context_window_tokens);
-        let message = if let Some(body) = locode_skills::render_body(&discovered.skills, budget) {
+        self.skills_body = locode_skills::render_body(&discovered.skills, budget);
+    }
+
+    /// Inject the cached listing when it differs from what the transcript already
+    /// carries (ADR-0025 §3.1) — pure bookkeeping, no disk access.
+    ///
+    /// The comparison unit is the **whole rendered body**: unchanged ⇒ nothing is sent;
+    /// changed at all ⇒ the entire listing is re-sent, never a per-skill delta. Whether
+    /// a body counts as already delivered is read off the transcript itself, not a
+    /// stored hash — which is what makes a compacted-away listing re-appear and a
+    /// resumed session stay quiet, with no bookkeeping either way.
+    fn inject_skills(&mut self) {
+        if !self.config.skills.enabled {
+            return;
+        }
+        let message = if let Some(body) = self.skills_body.clone() {
             if locode_skills::already_delivered(&self.history, &body) {
                 return;
             }
@@ -99,6 +119,28 @@ impl Session {
         self.sink.emit(Event::Message { message });
     }
 
+    /// The stream's self-sufficient header (ADR-0014), emitted once per session on the
+    /// first run only (ADR-0016) — a follow-up run continues the same stream and carries
+    /// its own `Result`.
+    fn emit_init(&mut self) {
+        let tools: Vec<Value> = self
+            .registry
+            .specs()
+            .iter()
+            .filter_map(|spec| serde_json::to_value(spec).ok())
+            .collect();
+        self.sink.emit(Event::Init {
+            session_id: self.config.session_id.clone(),
+            harness: self.config.harness.clone(),
+            api_schema: self.config.api_schema.clone(),
+            model: self.config.model.clone(),
+            cwd: self.config.cwd.to_string_lossy().into_owned(),
+            max_turns: self.config.max_turns,
+            preamble: self.preamble.clone(),
+            tools,
+        });
+    }
+
     /// The driver behind [`Session::run`]. Infallible — all terminal conditions land
     /// in the returned [`Report`].
     pub(crate) async fn drive(&mut self, user_content: Vec<ContentBlock>) -> Report {
@@ -107,22 +149,7 @@ impl Session {
         // continues the same stream, which then carries one `Result` per run
         // (ADR-0014 amendment 2026-07-21).
         if self.turns_run == 0 {
-            let tools: Vec<Value> = self
-                .registry
-                .specs()
-                .iter()
-                .filter_map(|spec| serde_json::to_value(spec).ok())
-                .collect();
-            self.sink.emit(Event::Init {
-                session_id: self.config.session_id.clone(),
-                harness: self.config.harness.clone(),
-                api_schema: self.config.api_schema.clone(),
-                model: self.config.model.clone(),
-                cwd: self.config.cwd.to_string_lossy().into_owned(),
-                max_turns: self.config.max_turns,
-                preamble: self.preamble.clone(),
-                tools,
-            });
+            self.emit_init();
         }
         self.turns_run += 1;
 
@@ -130,9 +157,13 @@ impl Session {
         // the pack preamble and before this turn's user message (a no-op when unchanged).
         self.refresh_project_instructions();
 
-        // Skills (ADR-0025): the listing rides the same seam, after instructions and
-        // before this turn's user message.
-        self.refresh_skills();
+        // Skills (ADR-0025): session start is the one synchronous scan — there is no
+        // earlier turn to hide it behind. Every later turn injects a value the previous
+        // run already computed (§3.2).
+        if self.turns_run == 1 {
+            self.rescan_skills();
+        }
+        self.inject_skills();
 
         let user_msg = Message {
             role: Role::User,
@@ -243,6 +274,11 @@ impl Session {
         // the retired token — a harmless no-op — and the next run starts
         // uncancelled; frontends re-fetch `cancel_handle()` each turn.
         self.cancel = CancellationToken::new();
+
+        // Post-run rescan (ADR-0025 §3.2): after the terminal `Result` is out, so the
+        // frontend already has everything it needs to render and this work overlaps the
+        // user reading the reply instead of delaying their next turn.
+        self.rescan_skills();
 
         report
     }

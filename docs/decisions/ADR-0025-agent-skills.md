@@ -335,8 +335,18 @@ what a bounded rescan already gives us. ADR-0023 made the same call for
 `AGENTS.md`, for the same reason: the walk is small and cheap, so rescan-and-diff
 beats watch-and-invalidate.
 
-Net effect: a skill written mid-session is usable on the very next turn, with no
-restart. Among the surveyed harnesses only Claude Code manages that in an ordinary
+Net effect: a skill written **while a run is in flight** is usable on the very next
+turn, with no restart.
+
+> **Amendment (2026-07-24, implementation): the one-turn lag this timing implies.**
+> The scan runs at the *end* of a run, so a skill created **after** that scan — while
+> the user is typing their next prompt — is not seen by the turn they are about to
+> send. The next run's post-run scan picks it up, and it appears on the turn after.
+> This is inherent to scanning post-run rather than per-turn, and it is the accepted
+> cost of keeping filesystem work off the user's critical path; the case the design
+> optimizes for (the agent or the user writes a skill *during* a run) has no lag at
+> all. Pinned by a test so it cannot drift silently into "sometimes one turn, sometimes
+> two". Among the surveyed harnesses only Claude Code manages that in an ordinary
 CLI session; grok notices a new skill only if a tool call happens to touch its
 directory (it has no watcher at all), and codex's CLI does not notice it.
 
