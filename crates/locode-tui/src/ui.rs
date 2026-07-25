@@ -16,6 +16,7 @@ use crate::app::{App, Hint, RunState};
 
 pub mod blocks;
 pub mod composer;
+pub mod dropdown;
 pub mod highlight;
 pub mod markdown;
 
@@ -61,12 +62,16 @@ pub fn draw(
     let stream_height = u16::try_from(stream.len()).unwrap_or(u16::MAX);
     let status_height = u16::from(app.is_running());
     let queue_height = u16::try_from(app.prompt_queue.len()).unwrap_or(u16::MAX);
+    // The command menu sits between the queue and the composer — directly above the
+    // text it is completing, so the eye travels from the row to the caret.
+    let menu_height = dropdown::desired_rows(&app.slash);
     let [
         _,
         tail_area,
         stream_area,
         status_area,
         queue_area,
+        menu_area,
         composer_area,
         footer_area,
     ] = Layout::vertical([
@@ -75,6 +80,7 @@ pub fn draw(
         Constraint::Length(stream_height),
         Constraint::Length(status_height),
         Constraint::Length(queue_height),
+        Constraint::Length(menu_height),
         Constraint::Length(composer_rows),
         Constraint::Length(FOOTER_ROWS),
     ])
@@ -90,6 +96,7 @@ pub fn draw(
     if !app.prompt_queue.is_empty() {
         frame.render_widget(Paragraph::new(queue_lines(app)), queue_area);
     }
+    dropdown::render(frame, menu_area, &app.slash);
     app.composer.render(frame, composer_area);
     frame.render_widget(
         Paragraph::new(footer_lines(app, footer_area.width)),
@@ -120,6 +127,7 @@ pub fn live_rows(app: &App, width: u16, screen_h: u16) -> (u16, u16) {
     let non_tail = status
         .saturating_add(queue)
         .saturating_add(stream)
+        .saturating_add(dropdown::desired_rows(&app.slash))
         .saturating_add(composer)
         .saturating_add(FOOTER_ROWS);
     (composer, non_tail)
@@ -376,6 +384,38 @@ mod tests {
         );
         let first_row: String = text.lines().next().unwrap().trim().to_string();
         assert!(first_row.is_empty(), "top row is margin: {first_row:?}");
+    }
+
+    /// The command menu takes rows directly above the composer, and gives them back
+    /// when it closes.
+    #[test]
+    fn the_command_menu_sits_between_the_transcript_and_the_composer() {
+        let mut terminal = FrameTerminal::new(TestBackend::new(50, 12)).unwrap();
+        let mut app = App::new();
+        app.model = Some("mock-1".into());
+        for ch in "/".chars() {
+            let _ = app.update(
+                crate::app::Msg::Input(Box::new(crossterm::event::Event::Key(
+                    crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char(ch)),
+                ))),
+                Instant::now(),
+            );
+        }
+        assert!(app.slash.open, "precondition: the menu is open");
+
+        let (cr, non_tail) = live_rows(&app, 50, 12);
+        terminal.draw(|frame| draw(frame, &app, &[], cr)).unwrap();
+        let text = buffer_text(&terminal);
+        let rows: Vec<&str> = text.lines().collect();
+        let menu_row = rows.iter().position(|r| r.contains("/quit")).unwrap();
+        // The selected menu row carries a `❯` of its own, so the composer is the
+        // *last* one on screen.
+        let composer_row = rows.iter().rposition(|r| r.contains('❯')).unwrap();
+        assert!(menu_row < composer_row, "menu above the composer: {text}");
+        assert!(
+            non_tail >= cr + 2,
+            "the menu is reserved in the frame geometry ({non_tail} vs composer {cr})"
+        );
     }
 
     #[test]

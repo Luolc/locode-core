@@ -64,6 +64,25 @@
   `theme` background + bold + `❯` prefix (two spaces otherwise, so text never shifts),
   selection kept centred while scrolling.
 
+**Decisions taken while implementing** (each grounded against grok's source):
+
+- **One row per item, description truncated** — grok word-wraps a description across
+  extra rows, but its dropdown caps at six *rows*, so a wrapped description eats the
+  menu; a skill's description is routing prose and routinely a full sentence. Six
+  *commands* visible beats two commands and four continuation lines. Our own UI, so
+  best-of applies (the faithfulness rule governs packs).
+- **The menu never opens on a multiline draft.** A `/` starting a multiline draft is
+  pasted content far more often than a command, and Alt+Enter multiline drafts are a
+  supported gesture.
+- **Esc has to be remembered.** Everything else in `SlashState` is a pure function of
+  `(text, cursor)`, so a derived-only menu would re-open on the very next refresh and
+  Esc would do nothing. A `dismissed` draft is recorded and keyed on the **text**
+  (grok refreshes on edits only): moving the cursor leaves it dismissed, editing
+  re-derives.
+- **The builtins become real commands here, but dispatch waits for S4.** `/new` and
+  `/quit`(+`exit`) register so the menu has something to show and can be smoke-tested;
+  the reducer still executes them through the old hard-coded `match`, which S4 deletes.
+
 ### S4 — dispatch, and the existing commands move into the registry (M)
 
 - `CommandResult` → TUI effects: `Message`/`Error` become notice blocks, `Prompt` and

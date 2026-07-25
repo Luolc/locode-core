@@ -61,6 +61,8 @@ pub enum UiAction {
 pub struct CommandCtx<'a> {
     /// The model id in use, for commands that report or change it.
     pub model: Option<&'a str>,
+    /// Whether a turn is in flight, for the commands that cannot run under one.
+    pub is_running: bool,
 }
 
 /// A slash command.
