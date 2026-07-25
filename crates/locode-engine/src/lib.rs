@@ -1124,6 +1124,112 @@ mod tests {
         assert_eq!(reminder_count(&reqs[1]), 1, "not re-injected on run 2");
     }
 
+    /// A session whose transcript is `replayed` — what resume does (the recovered
+    /// history becomes the preamble).
+    fn resumed_with_cfg(
+        script: Vec<Result<Completion, ProviderError>>,
+        cfg: EngineConfig,
+        replayed: Vec<Message>,
+    ) -> (Session, Arc<Mutex<Vec<Vec<Message>>>>) {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let provider = Arc::new(CapturingProvider {
+            inner: MockProvider::with_results(script),
+            requests: Arc::clone(&requests),
+        });
+        let session = Session::new(provider, Registry::new(), replayed, cfg, Box::new(NullSink));
+        (session, requests)
+    }
+
+    /// ADR-0023's Refresh rule says instructions are "never double-injected on
+    /// fork/resume". A remembered hash cannot deliver that — a resumed session starts
+    /// with the field empty and re-sends instructions the replayed transcript already
+    /// carries. The check reads the conversation instead.
+    #[tokio::test]
+    async fn resuming_does_not_re_inject_unchanged_instructions() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        std::fs::write(root.join("AGENTS.md"), "be terse").unwrap();
+
+        let (mut first, requests) =
+            capturing_with_cfg(vec![Ok(text_turn("ok"))], instr_config(root.clone()));
+        first.run_text("q1").await;
+        let replayed = requests.lock().unwrap()[0].clone();
+        assert_eq!(reminder_count(&replayed), 1, "precondition: injected once");
+
+        let (mut resumed, resumed_requests) =
+            resumed_with_cfg(vec![Ok(text_turn("ok2"))], instr_config(root), replayed);
+        resumed.run_text("q2").await;
+        let reqs = resumed_requests.lock().unwrap();
+        assert_eq!(
+            reminder_count(&reqs[0]),
+            1,
+            "still the one from before the resume, not a second copy: {:#?}",
+            reqs[0]
+        );
+    }
+
+    /// …but an `AGENTS.md` edited between sessions *is* re-injected, with the replace
+    /// banner that says the earlier copy no longer applies.
+    #[tokio::test]
+    async fn resuming_re_injects_instructions_that_changed_while_away() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        std::fs::write(root.join("AGENTS.md"), "be terse").unwrap();
+
+        let (mut first, requests) =
+            capturing_with_cfg(vec![Ok(text_turn("ok"))], instr_config(root.clone()));
+        first.run_text("q1").await;
+        let replayed = requests.lock().unwrap()[0].clone();
+
+        std::fs::write(root.join("AGENTS.md"), "be verbose").unwrap();
+        let (mut resumed, resumed_requests) =
+            resumed_with_cfg(vec![Ok(text_turn("ok2"))], instr_config(root), replayed);
+        resumed.run_text("q2").await;
+        let reqs = resumed_requests.lock().unwrap();
+        assert_eq!(reminder_count(&reqs[0]), 2, "the new body joins the old");
+        let latest = reqs[0]
+            .iter()
+            .rev()
+            .find_map(|m| reminder_text(std::slice::from_ref(m)))
+            .expect("a reminder");
+        assert!(latest.contains("be verbose"), "{latest}");
+        assert!(
+            latest.contains("replace all previously provided"),
+            "banner present: {latest}"
+        );
+    }
+
+    /// The other half of ADR-0023's Refresh rule: instructions dropped from the
+    /// conversation come back. A remembered hash would keep saying "already sent".
+    #[tokio::test]
+    async fn instructions_dropped_from_the_transcript_are_re_injected() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        std::fs::write(root.join("AGENTS.md"), "be terse").unwrap();
+
+        let (mut first, requests) =
+            capturing_with_cfg(vec![Ok(text_turn("ok"))], instr_config(root.clone()));
+        first.run_text("q1").await;
+        // Compaction: keep the conversation, drop the reminder.
+        let compacted: Vec<Message> = requests.lock().unwrap()[0]
+            .iter()
+            .filter(|m| reminder_text(std::slice::from_ref(m)).is_none())
+            .cloned()
+            .collect();
+
+        let (mut after, after_requests) =
+            resumed_with_cfg(vec![Ok(text_turn("ok2"))], instr_config(root), compacted);
+        after.run_text("q2").await;
+        assert_eq!(
+            reminder_count(&after_requests.lock().unwrap()[0]),
+            1,
+            "re-injected after being compacted away"
+        );
+    }
+
     /// A skills config rooted at `cwd` that never reads the real `~/.locode`
     /// (`discover` resolves the home root itself, so the temp repo is the only source
     /// as long as no skill exists in the developer's home — the project root is what

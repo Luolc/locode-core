@@ -24,6 +24,14 @@ impl Session {
     /// the files changed, or a removal notice when they vanished; a no-op when unchanged or
     /// disabled. Never mutates prior history — the transcript stays immutable. Shared
     /// machinery, identical for every pack.
+    ///
+    /// **The comparison is against the transcript, not a remembered hash.** ADR-0023's
+    /// Refresh rule asks for two things a stored hash cannot both give: "never
+    /// double-injected on fork/resume" and "re-injected after compaction". A resumed
+    /// session starts with an empty field and re-injects instructions the replayed
+    /// transcript already carries; a compacted one keeps the field and never re-injects
+    /// what was dropped. Reading the conversation instead gets both right, and is the
+    /// resolution ADR-0025 §3.1 already uses for skills.
     fn refresh_project_instructions(&mut self) {
         if !self.config.instructions.enabled {
             return;
@@ -32,30 +40,28 @@ impl Session {
             &self.config.cwd,
             &self.config.instructions,
         );
-        let new_hash = locode_instructions::instructions_hash(&discovered);
-        if new_hash == self.last_instructions {
-            return; // unchanged (including both-empty) — don't re-inject
-        }
-
-        let message = match (self.last_instructions, new_hash) {
-            // First appearance (or re-appearance after removal): inject fresh, no banner.
-            (None, Some(_)) => locode_instructions::render_instructions(
-                &discovered,
-                self.config.instructions.byte_budget,
-                false,
-            ),
-            // Changed mid-session: re-inject with a replace banner.
-            (Some(_), Some(_)) => locode_instructions::render_instructions(
-                &discovered,
-                self.config.instructions.byte_budget,
-                true,
-            ),
-            // Vanished: emit the removal notice.
-            (Some(_), None) => Some(locode_instructions::removal_message()),
-            // Both empty is filtered by the equality check above.
-            (None, None) => None,
+        let budget = self.config.instructions.byte_budget;
+        let message = match locode_instructions::render_body(&discovered, budget) {
+            Some(body) => {
+                if locode_instructions::already_delivered(&self.history, &body) {
+                    return; // this exact body is already in the conversation
+                }
+                // Anything delivered before — instructions or a removal notice — makes
+                // this a *replacement*, which the banner says out loud.
+                let replace = locode_instructions::any_delivered(&self.history);
+                locode_instructions::render_instructions(&discovered, budget, replace)
+            }
+            // Nothing to inject: say so once, and only if something was there before.
+            None => {
+                if locode_instructions::any_delivered(&self.history)
+                    && !locode_instructions::removal_delivered(&self.history)
+                {
+                    Some(locode_instructions::removal_message())
+                } else {
+                    None
+                }
+            }
         };
-        self.last_instructions = new_hash;
         if let Some(msg) = message {
             self.history.push(msg.clone());
             self.sink.emit(Event::Message { message: msg });

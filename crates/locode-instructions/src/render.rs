@@ -48,18 +48,7 @@ pub fn render_instructions(
         return None;
     }
 
-    let sections: Vec<String> = instructions
-        .entries
-        .iter()
-        .map(|entry| {
-            format!(
-                "## From: {}\n{}",
-                entry.source_path.display(),
-                entry.content.trim_end()
-            )
-        })
-        .collect();
-    let body = truncate_on_char_boundary(sections.join("\n\n"), byte_budget);
+    let body = render_body(instructions, byte_budget)?;
 
     let lead = if replace {
         format!("{REPLACE_BANNER}\n{PREAMBLE}")
@@ -79,7 +68,10 @@ pub fn removal_message() -> Message {
 }
 
 /// A stable hash of the discovered instructions, or `None` when nothing was discovered.
-/// Drives the per-turn diff: an unchanged hash means "don't re-inject" (ADR-0023 Refresh).
+///
+/// Retained for callers that want a cheap "did the files change?" signal. It is **not**
+/// what decides re-injection — see [`already_delivered`], and ADR-0023's Refresh rule
+/// that instructions are "never double-injected on fork/resume".
 #[must_use]
 pub fn instructions_hash(instructions: &ProjectInstructions) -> Option<u64> {
     if instructions.entries.is_empty() {
@@ -91,6 +83,91 @@ pub fn instructions_hash(instructions: &ProjectInstructions) -> Option<u64> {
         entry.content.hash(&mut hasher);
     }
     Some(hasher.finish())
+}
+
+/// The instructions body, without the envelope or the replace banner — the unit the
+/// delivery check compares.
+#[must_use]
+pub fn render_body(instructions: &ProjectInstructions, byte_budget: usize) -> Option<String> {
+    if instructions.entries.is_empty() {
+        return None;
+    }
+    let sections: Vec<String> = instructions
+        .entries
+        .iter()
+        .map(|entry| {
+            format!(
+                "## From: {}\n{}",
+                entry.source_path.display(),
+                entry.content.trim_end()
+            )
+        })
+        .collect();
+    Some(truncate_on_char_boundary(
+        sections.join("\n\n"),
+        byte_budget,
+    ))
+}
+
+/// Whether the conversation already carries exactly this instructions body.
+///
+/// Read off the **transcript**, not a field on the session — ADR-0023's Refresh rule
+/// requires instructions to be "never double-injected on fork/resume", and a
+/// remembered hash cannot deliver that: a resumed session starts with the field empty
+/// and re-injects instructions the replayed transcript already contains. This is the
+/// same resolution ADR-0025 §3.1 gives skills (codex's `PreviousSectionState`), and it
+/// buys the other half of ADR-0023's rule for free: drop the message in compaction and
+/// the next turn re-injects it.
+#[must_use]
+pub fn already_delivered(history: &[Message], body: &str) -> bool {
+    history.iter().rev().any(|m| {
+        m.role == Role::User
+            && m.content.iter().any(|b| match b {
+                ContentBlock::Text { text } => text.contains(PREAMBLE) && text.contains(body),
+                _ => false,
+            })
+    })
+}
+
+/// Whether the conversation carries any instructions message at all — including a
+/// removal notice.
+///
+/// Tells "never injected" from "injected, then the files vanished", so the removal
+/// notice is sent once and only when there was something to remove.
+#[must_use]
+pub fn any_delivered(history: &[Message]) -> bool {
+    history.iter().any(|m| {
+        m.role == Role::User
+            && m.content.iter().any(|b| match b {
+                ContentBlock::Text { text } => {
+                    text.contains(PREAMBLE) || text.contains(REMOVAL_NOTICE)
+                }
+                _ => false,
+            })
+    })
+}
+
+/// Whether the most recent instructions message in the conversation is a removal
+/// notice — i.e. the "no instructions apply" state has already been announced.
+#[must_use]
+pub fn removal_delivered(history: &[Message]) -> bool {
+    history
+        .iter()
+        .rev()
+        .find_map(|m| {
+            if m.role != Role::User {
+                return None;
+            }
+            m.content.iter().find_map(|b| match b {
+                ContentBlock::Text { text }
+                    if text.contains(PREAMBLE) || text.contains(REMOVAL_NOTICE) =>
+                {
+                    Some(text.as_str())
+                }
+                _ => None,
+            })
+        })
+        .is_some_and(|text| text.contains(REMOVAL_NOTICE))
 }
 
 /// A `User`-role `<system-reminder>` message wrapping `text`.

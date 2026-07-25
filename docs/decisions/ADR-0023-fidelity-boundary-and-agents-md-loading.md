@@ -198,6 +198,24 @@ walk is bounded (at most root-deep) and cheap, so re-scanning each turn and diff
 against the last-injected set is simpler than watch/invalidate and fast enough for
 the headless loop. This is engine machinery and therefore shared.
 
+> **Clarification (2026-07-25): "the last-injected set" is read off the transcript, not
+> remembered on the session.** The implementation originally kept a hash of the
+> last-injected files in a session field, which satisfies the mid-session change
+> detection above but silently breaks *both* of this paragraph's other guarantees:
+>
+> - **fork/resume** — a resumed session starts with the field empty, so the first turn
+>   re-injects instructions the replayed transcript already carries (reported from a
+>   smoke test, 2026-07-25);
+> - **after compaction** — the field survives a compaction that dropped the message, so
+>   the instructions never come back.
+>
+> The check is therefore "does the conversation I am about to send already contain this
+> exact body?", which gets both right with no bookkeeping. This is the resolution
+> [ADR-0025](ADR-0025-agent-skills.md) §3.1 already adopted for the skills listing
+> (codex's `PreviousSectionState`); the two now share one rule. The replace banner is
+> driven by the same scan — anything delivered earlier makes the new body a replacement
+> — and the removal notice is sent once, only when something was there to remove.
+
 **Enable/disable.** An env switch plus a `--bare`-style flag turns auto-discovery
 off atomically (Claude's `--bare` — `claude-code: main.tsx:976`; Codex's
 `--ignore-*` trio), while still honoring explicit `--add-dir`.

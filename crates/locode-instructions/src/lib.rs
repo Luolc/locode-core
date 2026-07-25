@@ -13,4 +13,7 @@ pub mod render;
 pub use load::{
     InstructionEntry, InstructionsConfig, ProjectInstructions, load_project_instructions,
 };
-pub use render::{instructions_hash, removal_message, render_instructions};
+pub use render::{
+    already_delivered, any_delivered, instructions_hash, removal_delivered, removal_message,
+    render_body, render_instructions,
+};
