@@ -14,10 +14,10 @@ Accepted
 - [ADR-0023](ADR-0023-fidelity-boundary-and-agents-md-loading.md) — §2's global
   instruction file gains one lower-precedence entry per extended dotfolder
   (Decision §6). See the ADR-0023 amendment dated 2026-07-24.
-- [ADR-0008](ADR-0008-dispatch-door-and-path-jail.md) — the locode home and
-  externally-contributed skill roots become **read-only reachable** from inside the
-  jail (Decision §4.1). See the second ADR-0008 amendment dated 2026-07-24, which
-  also resolves the question the first one left open.
+- [ADR-0008](ADR-0008-dispatch-door-and-path-jail.md) — §4.1 designed a read-only
+  jail exception for the locode home. It is **deferred, not implemented**: the same
+  day's later ADR-0008 amendment makes unrestricted the default, so the exception
+  buys nothing until `--restricted` becomes a real mode.
 
 Supersedes the *Recommendation* and *Open questions* sections of
 [`docs/research/harness-study-skills.md`](../research/harness-study-skills.md).
@@ -360,7 +360,18 @@ the trace is not silent about it either.
 > disproven, building it would have meant inventing a surface and attributing it
 > to a harness that does not have it.
 
-#### 4.1 Reachability — the locode home and skill roots are readable, never writable
+#### 4.1 Reachability — deferred
+
+> **Amendment (2026-07-24, later the same day): this section is deferred, not
+> implemented.** *(User decision.)* ADR-0008's later amendment the same day makes
+> **unrestricted the default** until the permission rules land, so a normal run has
+> no jail for skill reads to trip over and the exception below buys nothing today.
+> It is retained as the recorded design for the moment `--restricted` becomes a
+> real mode; **Task 32 does not implement it**, and until it does, skills under
+> `--restricted` reach only the project-local `<repo>/.locode/skills`.
+
+The design, for when it is needed:
+
 
 Reading `SKILL.md` only works if the model is allowed to. Project skills sit under
 the workspace root and are already reachable; **user, `extends` and `extra` skills
@@ -532,10 +543,10 @@ contributes a *root* inherits the same rule.
   discover, list and read skills identically. The default harness is unchanged
   (`claude`) — an earlier draft flipped it to `grok` only because the tool was to
   live there; with no tool, the reason is gone.
-- **A jail relaxation** (§4.1) — the first exception ADR-0008 has taken: the whole
-  locode home plus externally-contributed skill roots become readable, never
-  writable. Read-only bounds it, but it *is* a widening (past-session transcripts
-  included) and should be reviewed as one.
+- **No jail change ships** — §4.1's read-only exception is deferred behind
+  ADR-0008's default flip. Under `--restricted`, skills reach only
+  `<repo>/.locode/skills`; that limitation is the accepted cost of not building an
+  exception no one currently needs.
 - **A new engine seam: post-run work.** §3.2 needs a hook that fires after a run
   reaches its terminal state, so the rescan lands off the user's critical path.
   Nothing like it exists today (the loop ends and returns), and the TUI must invoke
@@ -579,10 +590,10 @@ contributes a *root* inherits the same rule.
 
 ## Open Questions
 
-- **The read-only locode-home exception** (§4.1) is recorded as decided, with the
-  narrower discovery-scoped variant explicitly overruled. It is still a jail
-  widening that exposes past-session transcripts to a jailed run; a reviewer who
-  disagrees should say so before the task ships.
+- **The read-only locode-home exception** (§4.1) is designed and deferred. It
+  becomes live work when the permission rules land and `--restricted` stops being a
+  preview; the cost recorded there (past-session transcripts readable) is what a
+  reviewer should weigh at that point, not now.
 - **`--bare`.** Referenced as the switch that turns skills (and, later, subagents)
   off wholesale for clean A/B runs. It does not exist yet; when it lands it must
   disable discovery, the listing and the §4.1 exception together, and it subsumes

@@ -96,12 +96,14 @@ convenience for exploring the engine, not a supported product.
 # Keyless demo (scripted mock wire — no API key):
 locode --api-schema mock
 
-# Against a real wire, with tool approvals prompted:
+# Against a real wire:
 LOCODE_API_KEY=… locode
-
-# …or skip approvals (auto-allow every tool, lift the path jail):
-LOCODE_API_KEY=… locode --yolo
 ```
+
+Tool calls run **without approval prompts**, and file access is not limited to the
+working directory. `--restricted` turns both on, but it is incomplete: there is no
+way to record an answer yet, so the same call asks again every time. That is why it
+is not the default — the finished permission rules are still being built.
 
 ## Development
 

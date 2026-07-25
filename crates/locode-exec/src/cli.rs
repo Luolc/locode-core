@@ -73,9 +73,19 @@ pub struct Cli {
     #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
     pub output_format: OutputFormat,
 
-    /// Disable the path jail (`PathPolicy::Unrestricted`). The shell's
-    /// timeout/output caps stay on (ADR-0008 amendment).
-    #[arg(long, visible_alias = "yolo")]
+    /// Restrict file access to the working directory and ask before each tool
+    /// call. Incomplete — there is no way to record an answer yet, so every call
+    /// asks again. Off by default.
+    #[arg(
+        long,
+        visible_alias = "no-yolo",
+        conflicts_with = "dangerously_skip_permissions"
+    )]
+    pub restricted: bool,
+
+    /// Accepted for compatibility and does nothing — this is the default now.
+    /// Use `--restricted` to turn the restrictions on.
+    #[arg(long, visible_alias = "yolo", hide = true)]
     pub dangerously_skip_permissions: bool,
 
     /// Strip harness identity sentences from the rendered system prompt

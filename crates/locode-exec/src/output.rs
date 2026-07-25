@@ -61,6 +61,24 @@ pub fn exit_code(status: Status) -> ExitCode {
     }
 }
 
+/// The notice shown when `--restricted` is used.
+///
+/// Restricted mode predates the permission rules that would make it usable: the
+/// approval seam exists (ADR-0017) but there is no allow/deny store behind it, so
+/// an answer cannot be remembered and every call asks again. Saying so is the
+/// truthful-user-facing-text rule (AGENTS.md) — a half-built mode that looks
+/// finished is worse than one that announces itself.
+pub const RESTRICTED_MODE_NOTICE: &str = "--restricted is incomplete: file access is limited to the working directory \
+     and every tool call asks for approval, but answers cannot be saved yet, so \
+     the same call asks again each time. Omit the flag to run without either.";
+
+/// The notice shown on a normal (unrestricted) run.
+///
+/// Kept to one line: the default changed to "no jail, no prompts", and a user who
+/// does not know that cannot make an informed choice about where they run this.
+pub const UNRESTRICTED_MODE_NOTICE: &str = "running without approval prompts, and with file access outside the working \
+     directory; pass --restricted to limit both.";
+
 #[cfg(test)]
 mod tests {
     use super::*;
