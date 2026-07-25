@@ -32,7 +32,10 @@ pub mod run;
 mod signal;
 
 pub use cli::{Cli, Harness, OutputFormat};
+// The permission-posture notices, shared verbatim with the interactive UI so the
+// two surfaces cannot drift (ADR-0008 amendment 2026-07-24).
 pub use locode_core::ProviderRegistry;
+pub use output::{RESTRICTED_MODE_NOTICE, UNRESTRICTED_MODE_NOTICE};
 
 /// Parse the CLI, install logging, and drive one session to its exit code —
 /// the whole binary, minus `fn main`. Custom providers come in through

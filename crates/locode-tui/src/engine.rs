@@ -278,7 +278,9 @@ fn build_session(
     let cwd_display = home_relative(&cwd);
 
     let mut host_config = HostConfig::new(&cwd);
-    if cli.dangerously_skip_permissions {
+    // Unrestricted is the default (ADR-0008 amendment 2026-07-24) — see the headless
+    // path for the rationale. `--restricted` opts back in.
+    if !cli.restricted {
         host_config.path_policy = PathPolicy::Unrestricted;
     }
     let host = Arc::new(Host::new(host_config).map_err(|e| e.to_string())?);
@@ -404,7 +406,7 @@ fn build_session(
     // The approver surfaces asks on the same channel; --yolo makes it
     // auto-allow without ever surfacing UI (ADR-0017 client-side stickiness).
     let approver = Arc::new(crate::approval::TuiApprover::new(
-        cli.dangerously_skip_permissions,
+        !cli.restricted,
         events.clone(),
     ));
 

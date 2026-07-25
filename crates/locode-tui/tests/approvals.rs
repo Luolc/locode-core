@@ -30,7 +30,8 @@ fn cli(dir: &tempfile::TempDir, yolo: bool) -> Cli {
         cwd: Some(dir.path().to_path_buf()),
         output_format: locode_exec::OutputFormat::Json,
         max_turns: None,
-        dangerously_skip_permissions: yolo,
+        restricted: !yolo,
+        dangerously_skip_permissions: false,
         strip_identity: false,
         stream: false,
         // Isolate these tests from AGENTS.md discovery (they assert fixed trajectories).

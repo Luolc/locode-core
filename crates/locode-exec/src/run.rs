@@ -52,10 +52,18 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
         .map_err(|e| PreRunError(format!("--cwd {}: {e}", cwd.display())))?;
 
     let mut host_config = HostConfig::new(&cwd);
-    if cli.dangerously_skip_permissions {
+    // Unrestricted is the default (ADR-0008 amendment 2026-07-24): the jail and the
+    // approval seam both ship, but the permission *rules* behind them do not, so the
+    // restricted path cannot remember an answer. `--restricted` opts back in.
+    if !cli.restricted {
         host_config.path_policy = PathPolicy::Unrestricted;
     }
     let host = Arc::new(Host::new(host_config)?);
+    output::warning_line(if cli.restricted {
+        output::RESTRICTED_MODE_NOTICE
+    } else {
+        output::UNRESTRICTED_MODE_NOTICE
+    });
 
     // ---- 2b. Settings (ADR-0024): the durable defaults *under* the flags —
     //          an explicit flag/env always wins. Layer degradations surface as

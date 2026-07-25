@@ -1,7 +1,7 @@
 //! The unified `locode` CLI: the interactive app by default, and a headless
 //! one-shot under `-p`/`--print` (Claude-Code's shape — `main_with` detects
 //! `-p` and dispatches; Task 28). Shared selection flags (`--harness`,
-//! `--api-schema`, `--cwd`, `--yolo`, `--strip-identity`) apply to both modes;
+//! `--api-schema`, `--cwd`, `--restricted`, `--strip-identity`) apply to both modes;
 //! `--output-format`/`--max-turns` are headless-only.
 
 use std::path::PathBuf;
@@ -76,9 +76,19 @@ pub struct Cli {
     #[arg(long)]
     pub max_turns: Option<u32>,
 
-    /// Auto-allow every tool call (no approval prompts) and lift the path jail
-    /// (full filesystem access). Use with care.
-    #[arg(long = "dangerously-skip-permissions", alias = "yolo")]
+    /// Restrict file access to the working directory and ask before each tool
+    /// call. Incomplete — there is no way to record an answer yet, so every call
+    /// asks again. Off by default.
+    #[arg(
+        long,
+        visible_alias = "no-yolo",
+        conflicts_with = "dangerously_skip_permissions"
+    )]
+    pub restricted: bool,
+
+    /// Accepted for compatibility and does nothing — this is the default now.
+    /// Use `--restricted` to turn the restrictions on.
+    #[arg(long = "dangerously-skip-permissions", alias = "yolo", hide = true)]
     pub dangerously_skip_permissions: bool,
 
     /// Strip the harness's identity sentence from the system prompt.
@@ -117,6 +127,7 @@ impl Cli {
             resume: self.resume.clone(),
             max_turns: self.max_turns,
             output_format: self.output_format,
+            restricted: self.restricted,
             dangerously_skip_permissions: self.dangerously_skip_permissions,
             strip_identity: self.strip_identity,
             stream: self.stream,

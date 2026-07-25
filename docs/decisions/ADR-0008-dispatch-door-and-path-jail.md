@@ -145,3 +145,41 @@ exception exists so that skills work in a *jailed* session too.
 The rest of the posture is unchanged: one dispatch door, one jail, and no per-tool
 policy. This is a data-scope exception with an asymmetric read/write rule, not a
 new mechanism.
+
+## Amendment (2026-07-24): unrestricted is the default; the jail is opt-in until permissions land
+
+The 2026-07-18 amendment made the jail "a configurable policy with a skip escape
+hatch", jailed by default. **The default now inverts** *(user decision)*: a run is
+`PathPolicy::Unrestricted` with an auto-allowing approver unless the user passes
+`--restricted` (alias `--no-yolo`).
+
+**Why.** The two halves of the restricted posture are not equally finished. The
+jail (this ADR) and the approval *seam* (ADR-0017) both ship, but the **permission
+rules behind the seam do not**: `permissions` `{allow, deny, ask, default_mode}` is
+still a reserved settings key (ADR-0024 §1.4). With nowhere to record an answer,
+the restricted path asks about the same command on every call and cannot be told
+"yes, always". That is not a safety feature; it is a prompt loop that trains the
+user to approve reflexively — which makes the gate *weaker* once it does exist.
+Defaulting to unrestricted states the real posture instead of implying an
+enforcement we have not built.
+
+**Both modes announce themselves**, because a silent default of "no jail, no
+prompts" is exactly the kind of thing a user must not discover by accident:
+
+- default → *"running without approval prompts, and with file access outside the
+  working directory; pass `--restricted` to limit both."*
+- `--restricted` → a notice that the mode is incomplete and answers cannot be saved.
+
+The strings live once in `locode-exec` and are used verbatim by both surfaces
+(stderr headless; a `Notice` block in the TUI, which has no stderr).
+
+**`--dangerously-skip-permissions` / `--yolo` is retained as an accepted no-op** —
+it names the default now. Removing it would break existing invocations (the README
+used it) for no gain; it is hidden from `--help` and errors if combined with
+`--restricted`, since asking for both is contradictory.
+
+**Nothing about the mechanism changes.** One dispatch door, one jail, no per-tool
+policy; `PathPolicy` keeps both variants and every jail test still runs both ways.
+This is a default, and it is expected to flip back when the permission rules land —
+at which point `--restricted` stops being a preview and this amendment should be
+revisited.
