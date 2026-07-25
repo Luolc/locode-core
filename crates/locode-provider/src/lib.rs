@@ -27,7 +27,9 @@ pub use openai::responses::OpenAiResponsesProvider;
 pub use openai::{OpenAiBackend, OpenAiModelConfig, SystemPlacement};
 pub use provider::{Provider, ProviderError};
 pub use repair::{RepairStats, repair_pairing};
-pub use request::{CacheHint, ConversationRequest, ReasoningEffort, SamplingArgs};
+pub use request::{
+    CacheHint, ConversationRequest, DEFAULT_MAX_TOKENS, ReasoningEffort, SamplingArgs,
+};
 
 #[cfg(test)]
 mod tests {

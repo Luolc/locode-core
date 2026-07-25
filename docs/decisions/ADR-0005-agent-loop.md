@@ -54,3 +54,20 @@ rule; codex has no special handling (checked: its `Incomplete` status is never
 branched on). Labeling such turns `Completed` would silently poison eval data.
 The report also now carries `stop_reason` (ADR-0009 amendment) so truncation is
 visible to the eval pipeline.
+
+## Amendment (2026-07-25): a truncated `tool_use` is answered, not dispatched
+
+`stop` stays advisory for the **structural** decision — the loop still ends a
+turn on "no `tool_use` blocks", never on `stop`. One narrow exception now
+reads it: when `stop` is `max_tokens` **and the last content block is a
+`tool_use`**, that call's arguments were cut mid-emission, so it is answered
+with a synthesized `is_error` result naming the output-token limit instead of
+being dispatched.
+
+Only the final block can be incomplete, which is what makes the rule precise;
+a model that lands its last token on the closing brace is a false positive,
+and skipping a complete call (the model re-emits it) is the safe side of that
+trade against running a half-written `Write`. This is ADR-0004's existing
+"synthesize `is_error` results for calls that didn't run", applied to a case
+we had not enumerated — see its 2026-07-25 amendment for why the generic
+decode error was actively harmful here.

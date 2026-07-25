@@ -27,8 +27,22 @@ pub const INTERLEAVED_THINKING_BETA: &str = "interleaved-thinking-2025-05-14";
 /// [`ReasoningEncoding::EffortAdaptive`] (opt-in; Claude Code `betas.ts:15`).
 pub const EFFORT_BETA: &str = "effort-2025-11-24";
 
-/// Default output-token cap (Claude Code's `CAPPED_DEFAULT_MAX_TOKENS`).
-pub const DEFAULT_MAX_TOKENS_CAP: u32 = 8000;
+/// Per-model **ceiling** clamped onto the request's `max_tokens`.
+///
+/// This is a guard against a caller asking for more than the model will accept
+/// — not the budget itself, which is
+/// [`SamplingArgs::max_tokens`](crate::SamplingArgs::max_tokens) (default
+/// [`DEFAULT_MAX_TOKENS`](crate::DEFAULT_MAX_TOKENS), 32k).
+///
+/// Was 8000, credited to Claude Code's `CAPPED_DEFAULT_MAX_TOKENS`. That
+/// citation was wrong twice over: the 8k constant is a *default*, not a
+/// ceiling, and it is gated on a slot-reservation experiment that is off by
+/// default outside first-party (`services/api/claude.ts:3394-3397`). Because
+/// the clamp is a `min`, an 8k ceiling silently overrode any larger budget a
+/// caller set. 64k matches Claude Code's `ESCALATED_MAX_TOKENS`
+/// (`utils/context.ts:25`) — the value it retries at after a truncation — and
+/// sits at or under the `upperLimit` of every model this wire targets.
+pub const DEFAULT_MAX_TOKENS_CAP: u32 = 64_000;
 
 /// Which endpoint family the wire talks to — selects auth header + quirks.
 ///

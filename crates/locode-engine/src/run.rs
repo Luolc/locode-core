@@ -227,6 +227,7 @@ impl Session {
                     _ => None,
                 })
                 .collect();
+            let truncated_call = truncated_tool_call(&completion);
             let assistant_text = join_text(&completion.content);
             acc.last_assistant_text = assistant_text.clone();
             let assistant_msg = Message {
@@ -247,7 +248,9 @@ impl Session {
             }
 
             // (e) Dispatch the batch SERIALLY (see `dispatch_batch`).
-            let (results, fatal) = self.dispatch_batch(calls, &mut acc).await;
+            let (results, fatal) = self
+                .dispatch_batch(calls, &mut acc, truncated_call.as_deref())
+                .await;
 
             // (f) Append the result batch as one User message (Anthropic shape).
             let tool_msg = Message {
@@ -309,6 +312,7 @@ impl Session {
         &mut self,
         calls: Vec<(String, String, Value)>,
         acc: &mut RunAcc,
+        truncated_call: Option<&str>,
     ) -> (Vec<ContentBlock>, Option<String>) {
         let mut results: Vec<ContentBlock> = Vec::with_capacity(calls.len());
         let mut fatal: Option<String> = None;
@@ -332,6 +336,14 @@ impl Session {
                     &id,
                     "tool not executed: the run was cancelled",
                 ));
+                continue;
+            }
+
+            // Arguments cut off by the output-token limit: never dispatched, so
+            // the check sits in front of the approval gate — the user is not
+            // asked to approve a call that cannot run.
+            if truncated_call == Some(id.as_str()) {
+                results.push(synthetic_error(&id, TRUNCATED_TOOL_CALL));
                 continue;
             }
 
@@ -562,6 +574,40 @@ fn denied_record(
         denial_reason: Some(reason),
     }
 }
+
+/// The id of the `tool_use` whose arguments the output-token limit cut short,
+/// if this turn ended that way.
+///
+/// A `max_tokens` stop halts generation mid-block, so ONLY the final content
+/// block can be incomplete — which makes the rule precise: `stop` is
+/// `max_tokens` *and* the last block is a `tool_use`. Its arguments are then
+/// partial, and the Anthropic wire hands us an empty `input` (`{}`) rather
+/// than partial JSON, so a typed decode would blame a missing required field
+/// and the model would retry the same oversized call (ADR-0004 amendment
+/// 2026-07-25).
+///
+/// A model that lands its last token exactly on the closing brace is a false
+/// positive; skipping a complete call is the safe side of that trade — the
+/// model simply re-emits it, whereas running a half-written `Write` is not
+/// recoverable.
+fn truncated_tool_call(completion: &locode_provider::Completion) -> Option<String> {
+    if !matches!(completion.stop, locode_provider::StopReason::MaxTokens) {
+        return None;
+    }
+    match completion.content.last() {
+        Some(ContentBlock::ToolUse { id, .. }) => Some(id.clone()),
+        _ => None,
+    }
+}
+
+/// The result text for a `tool_use` whose arguments the output-token limit cut
+/// short. Names the cause (the previous behavior surfaced the typed decode's
+/// "missing field" complaint, which reads as a model mistake) and tells the
+/// model not to re-send the call unchanged, which is what made it loop.
+const TRUNCATED_TOOL_CALL: &str = "tool not executed: the model reached its output-token limit \
+     (stop_reason: max_tokens) while writing this call, so the arguments arrived incomplete. \
+     Do not repeat the call unchanged — it will be cut off again. Re-issue it with a smaller \
+     payload, splitting the work across several calls (for a file write, write it in parts).";
 
 /// A synthesized `is_error` result to keep an un-run `tool_use` paired.
 fn synthetic_error(id: &str, message: &str) -> ContentBlock {

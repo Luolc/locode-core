@@ -28,7 +28,8 @@ pub struct ConversationRequest {
 /// Build uses the same layering: a neutral core plus per-wire superset structs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SamplingArgs {
-    /// The maximum number of tokens to generate.
+    /// The maximum number of tokens to generate; see
+    /// [`DEFAULT_MAX_TOKENS`] for the default and why.
     pub max_tokens: u32,
     /// Sampling temperature; a wire may omit it (e.g. Anthropic requires temp=1
     /// when thinking is on, so the wire drops it there).
@@ -40,10 +41,37 @@ pub struct SamplingArgs {
     pub reasoning_effort: Option<ReasoningEffort>,
 }
 
+/// The default output-token budget for one sample.
+///
+/// A file-writing agent spends most of a turn inside one `tool_use` argument
+/// blob, so this is not a "typical reply length" knob — it is the ceiling on
+/// the largest single tool call the model can emit. Set it too low and the
+/// wire truncates mid-call: the API returns the `tool_use` block with an
+/// **empty** `input` (`{}`) and `stop_reason: "max_tokens"`, the typed decode
+/// then reports a missing required field, and the model retries the same
+/// oversized call forever. That is what 4096 did here.
+///
+/// 32k is the value the studied harnesses converge on for this tier. Claude
+/// Code resolves a per-model `{default, upperLimit}` pair
+/// (`utils/context.ts:149-208`) — 32k default for the sonnet-4-6 / 4.5
+/// families, 64k for opus-4-6 — and its 8k `CAPPED_DEFAULT_MAX_TOKENS`
+/// (`utils/context.ts:24`) is **not** the shipped default: it is gated on the
+/// `tengu_otk_slot_v1` slot-reservation experiment, which defaults to *false*
+/// off first-party (`services/api/claude.ts:3394-3397`), and is paired with a
+/// one-shot escalate to `ESCALATED_MAX_TOKENS = 64_000` on truncation. Codex
+/// never sends a sampling cap at all; Grok Build leaves `max_tokens: None`.
+/// Our own Responses wire already caps at 32k (`openai/mod.rs:119`), so this
+/// also stops the Anthropic wire being the odd one out.
+///
+/// A per-model table (Claude Code's shape) is the eventual answer; a single
+/// safe default is the honest v0 — every current Anthropic and OpenAI model
+/// this crate targets accepts 32k.
+pub const DEFAULT_MAX_TOKENS: u32 = 32_000;
+
 impl Default for SamplingArgs {
     fn default() -> Self {
         Self {
-            max_tokens: 4096,
+            max_tokens: DEFAULT_MAX_TOKENS,
             temperature: None,
             top_p: None,
             reasoning_effort: None,
