@@ -266,8 +266,8 @@ impl CommandRegistry {
 
 #[cfg(test)]
 mod tests {
-    use crate::commands::command::{ArgItem, CommandResult, UiAction};
     use super::*;
+    use crate::commands::command::{ArgItem, CommandResult, UiAction};
 
     struct Fake {
         name: &'static str,
