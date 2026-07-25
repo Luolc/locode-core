@@ -37,7 +37,7 @@ curl -fsSL https://raw.githubusercontent.com/luolc/locode-core/main/install.sh |
 
 The script installs to `~/.locode/bin` (override with `LOCODE_BIN_DIR`),
 verifies the sha256 checksum, and puts the binary on your PATH. Pass a version
-for a specific release: `… | bash -s 0.1.10`. Then run `locode` for the
+for a specific release: `… | bash -s 0.1.11`. Then run `locode` for the
 interactive agent or `locode -p "task"` for a headless one-shot. The search
 tools shell out to [ripgrep](https://github.com/BurntSushi/ripgrep) — have `rg`
 on PATH or point `LOCODE_RG_PATH` at a binary.
@@ -76,6 +76,23 @@ first run; override the home with `LOCODE_HOME`). They layer **user →
 `extends` → project `.locode/settings.json` → `.locode/settings.local.json` →
 `--settings` flag**, and an explicit flag always wins. Keys include `harness`,
 `api_schema`, `model`, `instructions.root_stop_pattern`, and `skills.extra`.
+
+`extends` points at **another locode folder**, not at a settings file — a shared
+team config you want to inherit. All three of its parts merge: its
+`settings.json` (at the layer shown above), its `skills/`, and its `AGENTS.md`
+(ranked below your own global one, so yours still wins).
+
+## Skills
+
+A skill is a folder holding a `SKILL.md`: YAML frontmatter with `name` and
+`description`, then instructions in markdown. Put them in
+`<repo>/.agents/skills/` to share with the project (the same folder other agents
+read), or `~/.locode/skills/` for your own.
+
+Every run advertises the skills it found — name, description, and file path —
+and the agent opens the file when a task matches. `when-to-use` adds a trigger
+hint; `disable-model-invocation: true` hides a skill from the agent. Writing or
+editing a skill takes effect on the next turn, with no restart.
 
 Every run appends a JSONL trace under `~/.locode/sessions/`; `--continue`
 resumes the newest session for the current directory and `--resume <id>` resumes
