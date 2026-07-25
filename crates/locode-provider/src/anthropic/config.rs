@@ -27,23 +27,6 @@ pub const INTERLEAVED_THINKING_BETA: &str = "interleaved-thinking-2025-05-14";
 /// [`ReasoningEncoding::EffortAdaptive`] (opt-in; Claude Code `betas.ts:15`).
 pub const EFFORT_BETA: &str = "effort-2025-11-24";
 
-/// Per-model **ceiling** clamped onto the request's `max_tokens`.
-///
-/// This is a guard against a caller asking for more than the model will accept
-/// — not the budget itself, which is
-/// [`SamplingArgs::max_tokens`](crate::SamplingArgs::max_tokens) (default
-/// [`DEFAULT_MAX_TOKENS`](crate::DEFAULT_MAX_TOKENS), 32k).
-///
-/// Was 8000, credited to Claude Code's `CAPPED_DEFAULT_MAX_TOKENS`. That
-/// citation was wrong twice over: the 8k constant is a *default*, not a
-/// ceiling, and it is gated on a slot-reservation experiment that is off by
-/// default outside first-party (`services/api/claude.ts:3394-3397`). Because
-/// the clamp is a `min`, an 8k ceiling silently overrode any larger budget a
-/// caller set. 64k matches Claude Code's `ESCALATED_MAX_TOKENS`
-/// (`utils/context.ts:25`) — the value it retries at after a truncation — and
-/// sits at or under the `upperLimit` of every model this wire targets.
-pub const DEFAULT_MAX_TOKENS_CAP: u32 = 64_000;
-
 /// Which endpoint family the wire talks to — selects auth header + quirks.
 ///
 /// This is *configuration*, not a wire schema: all three speak Anthropic Messages
@@ -138,8 +121,20 @@ pub struct ModelConfig {
     pub betas: Vec<String>,
     /// Extra headers appended to every request (gateway auth quirks etc.).
     pub extra_headers: Vec<(String, String)>,
-    /// Hard ceiling clamped onto `SamplingArgs.max_tokens`.
-    pub max_tokens_cap: u32,
+    /// Optional ceiling clamped onto `SamplingArgs.max_tokens`. **`None` (the
+    /// default) sends the caller's budget through untouched.**
+    ///
+    /// A clamp here is silent by construction — it is a `min`, so a caller who
+    /// deliberately asks for more gets less with no error and no way to notice.
+    /// ADR-0007 already rejects that for `reasoning_effort` ("never silently
+    /// clamp — that would corrupt eval comparisons"); the same reasoning
+    /// applies to the output budget, so the wire now forwards the request and
+    /// lets the API's own error surface when a model will not accept it.
+    ///
+    /// Set it to `Some(n)` only to pin a model whose real ceiling is lower than
+    /// [`DEFAULT_MAX_TOKENS`](crate::DEFAULT_MAX_TOKENS) — e.g. `claude-3-haiku`
+    /// at 4096 — where the clamp turns a 400 into a working request.
+    pub max_tokens_cap: Option<u32>,
     /// How Developer messages are rendered.
     pub developer_rendering: DeveloperRendering,
     /// How `reasoning_effort` is encoded.
@@ -184,7 +179,7 @@ impl ModelConfig {
             anthropic_version: ANTHROPIC_VERSION.to_string(),
             betas: vec![INTERLEAVED_THINKING_BETA.to_string()],
             extra_headers: Vec::new(),
-            max_tokens_cap: DEFAULT_MAX_TOKENS_CAP,
+            max_tokens_cap: None,
             developer_rendering: DeveloperRendering::default(),
             reasoning_encoding: ReasoningEncoding::default(),
             provider_prefs: None,

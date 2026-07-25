@@ -190,7 +190,13 @@ pub fn build_request(req: &ConversationRequest, cfg: &OpenAiModelConfig) -> wire
         store: false,
         stream: false,
         include: vec!["reasoning.encrypted_content".to_string()],
-        max_output_tokens: Some(req.sampling_args.max_tokens.min(cfg.max_tokens_cap).max(16)),
+        max_output_tokens: Some(
+            cfg.max_tokens_cap
+                .map_or(req.sampling_args.max_tokens, |cap| {
+                    req.sampling_args.max_tokens.min(cap)
+                })
+                .max(16),
+        ),
         temperature: req.sampling_args.temperature,
         top_p: req.sampling_args.top_p,
         prompt_cache_key: cfg.prompt_cache_key.clone(),

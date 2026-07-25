@@ -51,22 +51,32 @@ pub struct SamplingArgs {
 /// then reports a missing required field, and the model retries the same
 /// oversized call forever. That is what 4096 did here.
 ///
-/// 32k is the value the studied harnesses converge on for this tier. Claude
-/// Code resolves a per-model `{default, upperLimit}` pair
-/// (`utils/context.ts:149-208`) — 32k default for the sonnet-4-6 / 4.5
-/// families, 64k for opus-4-6 — and its 8k `CAPPED_DEFAULT_MAX_TOKENS`
-/// (`utils/context.ts:24`) is **not** the shipped default: it is gated on the
-/// `tengu_otk_slot_v1` slot-reservation experiment, which defaults to *false*
-/// off first-party (`services/api/claude.ts:3394-3397`), and is paired with a
-/// one-shot escalate to `ESCALATED_MAX_TOKENS = 64_000` on truncation. Codex
-/// never sends a sampling cap at all; Grok Build leaves `max_tokens: None`.
-/// Our own Responses wire already caps at 32k (`openai/mod.rs:119`), so this
-/// also stops the Anthropic wire being the odd one out.
+/// 64k is the ceiling every current model this crate targets accepts, and the
+/// value Claude Code escalates to when a turn truncates (`ESCALATED_MAX_TOKENS`,
+/// `utils/context.ts:25`). Claude Code otherwise resolves a per-model
+/// `{default, upperLimit}` pair (`utils/context.ts:149-208`) — 64k default for
+/// opus-4-6, 32k for the sonnet-4-6 / 4.5 families — and its 8k
+/// `CAPPED_DEFAULT_MAX_TOKENS` is **not** the shipped default: it is gated on
+/// the `tengu_otk_slot_v1` slot-reservation experiment, which defaults to
+/// *false* off first-party (`services/api/claude.ts:3394-3397`).
 ///
-/// A per-model table (Claude Code's shape) is the eventual answer; a single
-/// safe default is the honest v0 — every current Anthropic and OpenAI model
-/// this crate targets accepts 32k.
-pub const DEFAULT_MAX_TOKENS: u32 = 32_000;
+/// Not 128k, even though the current frontier models allow it: `upperLimit` is
+/// per model, and Haiku 4.5 stops at 64k. 64k is the largest value that is
+/// correct everywhere, and the gap is academic — a single tool call whose
+/// arguments exceed 64k tokens is not a call worth completing.
+///
+/// This is a **ceiling on one response**, not a reservation: nothing is spent
+/// unless the model generates it, so a generous value costs only the risk of a
+/// long generation, never tokens.
+///
+/// The field itself cannot become `Option` to mean "let the API decide": the
+/// Anthropic Messages API requires `max_tokens` on every request. opencode
+/// encodes exactly that asymmetry — `max_tokens: Schema.Number` (required) for
+/// Anthropic against `Schema.optional` for both OpenAI protocols — and always
+/// sends a value, falling back to the model's declared output limit
+/// (`protocols/anthropic-messages.ts:510,546`). A per-model table is the same
+/// eventual answer here; one safe default is the honest v0.
+pub const DEFAULT_MAX_TOKENS: u32 = 64_000;
 
 impl Default for SamplingArgs {
     fn default() -> Self {

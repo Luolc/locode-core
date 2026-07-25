@@ -11,6 +11,20 @@ use super::wire;
 pub use crate::http::normalize_input_schema;
 use crate::request::{CacheHint, ConversationRequest, ReasoningEffort};
 
+/// The `max_tokens` this request will carry: the caller's budget, clamped only
+/// when the model config pins an explicit ceiling.
+///
+/// `max_tokens` is required on every Messages request, so there is always a
+/// value to compute — unlike the OpenAI protocols, where the field is optional
+/// (opencode encodes the same asymmetry: `Schema.Number` for Anthropic against
+/// `Schema.optional` for both OpenAI wires).
+fn effective_max_tokens(req: &ConversationRequest, cfg: &ModelConfig) -> u32 {
+    cfg.max_tokens_cap
+        .map_or(req.sampling_args.max_tokens, |cap| {
+            req.sampling_args.max_tokens.min(cap)
+        })
+}
+
 /// Build the Messages request from the neutral request + per-model config.
 ///
 /// # Panics
@@ -83,7 +97,7 @@ pub fn build_request(req: &ConversationRequest, cfg: &ModelConfig) -> wire::Mess
     let built = wire::MessagesRequest {
         model: cfg.model.clone(),
         messages,
-        max_tokens: req.sampling_args.max_tokens.min(cfg.max_tokens_cap),
+        max_tokens: effective_max_tokens(req, cfg),
         system,
         tools: (!tools.is_empty()).then_some(tools),
         tool_choice: None,
@@ -361,7 +375,7 @@ fn map_reasoning(
             let budget = if cfg.interleaved_thinking() {
                 budget
             } else {
-                budget.min(req.sampling_args.max_tokens.min(cfg.max_tokens_cap) - 1)
+                budget.min(effective_max_tokens(req, cfg).saturating_sub(1))
             };
             (
                 Some(wire::ThinkingConfig::Enabled {
