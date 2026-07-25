@@ -1,7 +1,7 @@
 # ADR-0026: Slash commands — the core contract
 
 ## Status
-Proposed
+Accepted
 
 ## Date
 2026-07-24
@@ -49,7 +49,7 @@ pub trait SlashCommand: Send + Sync {
     fn args_required(&self) -> bool { false }
     fn suggest_args(&self, ctx: &CommandCtx<'_>, query: &str) -> Option<Vec<ArgItem>> { None }
     fn visible(&self, ctx: &CommandCtx<'_>) -> bool { true }
-    fn execute(&self, ctx: &CommandExecCtx<'_>) -> CommandResult;
+    async fn execute(&self, ctx: &CommandExecCtx<'_>) -> CommandResult;  // §6
 }
 ```
 
@@ -122,7 +122,7 @@ parses `user-invocable` — which has had no effect until now. On registration, 
 discovered skill with `user-invocable: true` (the default) is registered as a command:
 `name` from the skill, `description` from its frontmatter, `usage` `/<name> [args]`.
 
-Invoking it reads the `SKILL.md`, applies argument substitution, and returns
+Invoking it reads the `SKILL.md`, appends the arguments block (§8), and returns
 `InjectSkill` — the body reaches the model as structured prompt blocks, which is
 grok's `CommandResult::InjectSkill` and the *zero-round-trip* path the skills study
 describes (the model does not have to go read the file it was just asked to use).
@@ -170,22 +170,72 @@ provenance field is designed for them, but nothing registers them yet), and comm
 - **Ordering is explicit and will need revisiting** once the command count grows; §3
   records MRU as the known next step rather than pretending the problem is solved.
 
+## Resolved (user decisions, 2026-07-25)
+
+### 6. `execute` is async from day 0
+
+*(User decision.)* `async_trait` is already a workspace dependency — `Tool` and
+`Provider` both use it — so an async trait costs essentially nothing now, while
+turning a sync trait async later is a breaking change to every implementation. The
+motivating case is a future `/model` that lists models from a provider rather than a
+hardcoded set; **v1 hardcodes the list**, and nothing in the command set needs `.await`
+yet.
+
+### 7. Where the code lives — three layers, most of it in the TUI
+
+*(User decision.)* The registry belongs in the core; the skill-specific parts belong
+with skills; everything else is UI and should stay there.
+
+| Layer | Contents |
+|---|---|
+| **`locode-commands`** (new crate) | the `SlashCommand` trait, `CommandResult`, `ArgItem`, and the registry (registration, provenance, visibility filtering, ordered lookup) |
+| **`locode-skills`** | building a skill *invocation*: read the `SKILL.md`, assemble the body + arguments block (§8). A pure function — skills stay unaware that commands exist |
+| **`locode-tui`** | everything visible: the dropdown, ranking and its highlight spans, ghost text, key handling, and the UI-only commands (`/new`, `/quit`) |
+
+The dependency runs `locode-commands → locode-skills`, not the reverse: the registry
+needs to enumerate skill-backed commands, while skills has no reason to know the
+command trait. Both harnesses put the whole thing in their TUI; we split only because
+`InjectSkill` genuinely needs skill loading, and a UI crate is the wrong home for it.
+
+**Release consequence:** an eleventh crate, published after `skills` in dependency
+order (`… → host → instructions → skills → commands → provider → …`).
+
+### 8. Arguments are plain text appended after the body
+
+*(User decision.)* `/commit fix the typo` injects the skill body **verbatim**, followed
+by a marker block carrying the argument text:
+
+```text
+<the SKILL.md body, unchanged>
+
+**ARGUMENTS:** fix the typo
+```
+
+No template syntax: no `$ARGUMENTS`, no `$1`, no `${SKILL_DIR}`. A skill that wants
+arguments refers to them in **ordinary prose** ("the user's request is in ARGUMENTS
+below"). With no arguments, no block is appended.
+
+**The reason is consistency, not simplicity.** The model's path physically cannot
+substitute: it opens `SKILL.md` with its read tool (ADR-0025 §4), and intercepting
+reads of skill files is exactly the machinery that ADR rejected. So any substitution
+scheme would apply on the slash path only — and the *same skill* would behave
+differently depending on who invoked it. A body containing `${SKILL_DIR}/scripts/x.sh`
+would work when the user types `/x` and break when the model reads it. Appending plain
+text is the only option where both paths see identical body text.
+
+Grok does substitution as its primary path with this append as its **fallback**
+(`apply_substitutions`, the `**ARGUMENTS:**` suffix); we take the fallback as the whole
+contract.
+
+**Known cost:** a skill imported from Claude Code or grok may contain a literal
+`$ARGUMENTS`, which will reach the model unexpanded. Not fatal — the argument text is
+right there under the marker — but visibly untidy. `${SKILL_DIR}` matters more, and is
+already covered without tokens: the listing carries each `SKILL.md`'s absolute path, so
+a skill can say "the scripts are in `scripts/` next to this file". **Revisit when
+importing other harnesses' skills becomes a real need** — and revisit it for *both*
+paths, rather than giving the slash path a private capability.
+
 ## Open Questions
 
-1. **`nucleo` as a dependency — ask-first.** Everything visible in the reference UI
-   comes from it: the ranking *and* the match indices that colour individual letters.
-   Hand-rolling it would repeat the mistake ADR-0025 §2 records about the frontmatter
-   reader — the harness we are copying uses a real library, and the hand-rolled version
-   loses cases silently. Needed before the UI work, not before the core.
-2. **Where the registry lives — ask-first (crate boundary).** Both harnesses put it in
-   the TUI. But a command that returns `InjectSkill` needs skill loading and argument
-   substitution, which is `locode-skills`; a command that returns `Prompt` needs
-   nothing. Candidate split: the trait, the result enum and the registry in a core
-   crate, with UI-only commands registered by the TUI.
-3. **Does `execute` need to be async?** `/model` may have to hit a provider to list
-   models. A sync trait is simpler and every command we can name today is sync; making
-   it async later is a breaking change to the trait.
-4. **Argument substitution reuse.** Skills invoked from the model read raw `SKILL.md`
-   text. Invoked from a slash command they take arguments — which is grok's
-   `$ARGUMENTS`/`$1` set, deliberately **not** implemented in ADR-0025. It becomes
-   necessary here, and should be specified with §4 rather than improvised.
+None outstanding. The `nucleo` dependency (needed by the UI work, not the core) is
+**approved** *(user decision, 2026-07-25)*.

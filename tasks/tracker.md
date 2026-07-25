@@ -172,8 +172,10 @@ and resolve the plan's open-questions section first.
   decision 2026-07-24). The holistic design pass this entry was waiting for is done:
   study [`../docs/research/harness-study-slash-commands.md`](../docs/research/harness-study-slash-commands.md),
   core decisions in [ADR-0026](../docs/decisions/ADR-0026-slash-commands-core.md)
-  (**Proposed** — two ask-first items open: the `nucleo` dependency and the registry's
-  crate placement).
+  (**Accepted** — `nucleo` approved; `execute` async from day 0; a new
+  **`locode-commands`** crate for the trait + registry, skill *invocation* assembly in
+  `locode-skills`, everything visible in `locode-tui`; arguments are plain text
+  appended after the body, no template syntax).
   - **Why first:** it is the missing half of skills — ADR-0025 parses `user-invocable`
     but has no user-invocation channel, so a shipped skill can only be reached by the
     model choosing to read it.
