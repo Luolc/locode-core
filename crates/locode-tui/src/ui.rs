@@ -64,7 +64,7 @@ pub fn draw(
     let queue_height = u16::try_from(app.prompt_queue.len()).unwrap_or(u16::MAX);
     // The command menu sits between the queue and the composer — directly above the
     // text it is completing, so the eye travels from the row to the caret.
-    let menu_height = dropdown::desired_rows(&app.slash);
+    let menu_height = dropdown::desired_rows(&app.slash, frame.area().width);
     let [
         _,
         tail_area,
@@ -128,7 +128,7 @@ pub fn live_rows(app: &App, width: u16, screen_h: u16) -> (u16, u16) {
     let non_tail = status
         .saturating_add(queue)
         .saturating_add(stream)
-        .saturating_add(dropdown::desired_rows(&app.slash))
+        .saturating_add(dropdown::desired_rows(&app.slash, width))
         .saturating_add(composer)
         .saturating_add(FOOTER_ROWS);
     (composer, non_tail)

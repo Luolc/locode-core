@@ -47,8 +47,11 @@ impl SlashCommand for Help {
             registry
                 .visible_triggers(ctx)
                 .into_iter()
+                // No leading slash: inside `/help`'s own menu a `/quit` row reads as
+                // "run /quit", when it means "explain quit". The bare name is also what
+                // the row inserts, so shown and inserted agree.
                 .map(|t| ArgItem {
-                    display: t.display.clone(),
+                    display: t.match_text.clone(),
                     match_text: t.match_text.clone(),
                     insert_text: t.match_text.clone(),
                     description: t.description.clone(),
@@ -243,10 +246,14 @@ mod tests {
         let (cmd, _) = r.resolve("/help").expect("resolves");
         let items = cmd.suggest_args(&ctx, "").expect("suggestions");
         let shown: Vec<&str> = items.iter().map(|i| i.display.as_str()).collect();
-        assert!(shown.contains(&"/quit"), "{shown:?}");
-        let quit = items.iter().find(|i| i.display == "/quit").unwrap();
-        assert_eq!(quit.match_text, "quit", "matched without the slash");
-        assert_eq!(quit.insert_text, "quit", "inserted without the slash");
+        assert!(shown.contains(&"quit"), "{shown:?}");
+        assert!(
+            !shown.iter().any(|s| s.starts_with('/')),
+            "no leading slash — these name a command, they do not run one: {shown:?}"
+        );
+        let quit = items.iter().find(|i| i.display == "quit").unwrap();
+        assert_eq!(quit.match_text, "quit");
+        assert_eq!(quit.insert_text, "quit");
     }
 
     /// `/model` reports; it does not switch. The message names the two surfaces that
