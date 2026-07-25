@@ -64,6 +64,13 @@ pub enum SkillsExtraEntry {
 pub struct SettingsLoad {
     /// The merged, typed settings.
     pub settings: Settings,
+    /// The resolved `extends` dotfolders, in list order (ADR-0024 §1.2 amendment).
+    ///
+    /// Each also contributes a `skills/` root and an `AGENTS.md` entry, read by their
+    /// own loaders. Resolving them once here is what makes the load order an invariant
+    /// rather than a convention (ADR-0025 §6.1): a caller cannot discover skills or
+    /// instructions without first holding this value.
+    pub extends_dirs: Vec<PathBuf>,
     /// Skipped layers, stripped keys, invalid entries — in discovery order.
     pub warnings: Vec<String>,
 }
@@ -98,6 +105,7 @@ pub fn load_settings(cwd: &Path, flag: Option<&str>) -> SettingsLoad {
     warnings.append(&mut load.warnings);
     SettingsLoad {
         settings: load.settings,
+        extends_dirs: load.extends_dirs,
         warnings,
     }
 }
@@ -113,38 +121,19 @@ pub fn load_settings_from(
 ) -> SettingsLoad {
     let mut warnings: Vec<String> = Vec::new();
     let mut merged = Value::Object(serde_json::Map::new());
+    // Resolved `extends` dotfolders, in list order — the *other* two things they
+    // contribute (skills roots, `AGENTS.md`) are read by their own loaders, which is
+    // why the resolved list has to leave this function.
+    let mut extends_dirs: Vec<PathBuf> = Vec::new();
 
-    // ---- 1. user layer + 2. its extends files ----
-    if let Some(user_dir) = user_dir {
-        let user_file = user_dir.join("settings.json");
-        if let Some(user_value) = read_layer(&user_file, &mut warnings) {
-            let extends = extract_extends(&user_value, &user_file, &mut warnings);
-            merge_values(&mut merged, strip_key(user_value, EXTENDS_KEY));
-            for entry in extends {
-                let path = expand_tilde(&entry, home_for_tilde, user_dir);
-                // The user explicitly pointed at this file — absence is loud
-                // (unlike the standard layers, whose absence is normal).
-                if !path.is_file() {
-                    warnings.push(format!(
-                        "settings: extends file {} not found; skipped",
-                        path.display()
-                    ));
-                    continue;
-                }
-                if let Some(mut value) = read_layer(&path, &mut warnings) {
-                    // Non-recursive (§1.2 amendment): a nested `extends` is ignored.
-                    if value.get(EXTENDS_KEY).is_some() {
-                        warnings.push(format!(
-                            "settings: nested `extends` in {} ignored (extends does not recurse)",
-                            path.display()
-                        ));
-                        value = strip_key(value, EXTENDS_KEY);
-                    }
-                    merge_values(&mut merged, value);
-                }
-            }
-        }
-    }
+    // ---- 1. user layer + 2. its extends dotfolders ----
+    merge_user_and_extends_layers(
+        user_dir,
+        home_for_tilde,
+        &mut merged,
+        &mut extends_dirs,
+        &mut warnings,
+    );
 
     // ---- 3. project + 4. project-local layers (denylisted) ----
     let root = find_root_from_markers(cwd, &[".git".to_string()], None);
@@ -214,6 +203,7 @@ pub fn load_settings_from(
             root_stop_pattern: raw.instructions.root_stop_pattern,
             skills_extra,
         },
+        extends_dirs,
         warnings,
     }
 }
@@ -308,6 +298,73 @@ fn read_layer(path: &Path, warnings: &mut Vec<String>) -> Option<Value> {
                 path.display()
             ));
             None
+        }
+    }
+}
+
+/// Merge the user layer and each dotfolder it `extends`, collecting the resolved
+/// dotfolders on the way (ADR-0024 §1.2 amendment 2026-07-24).
+///
+/// Split out of [`load_settings_from`] to keep that function readable; the ordering is
+/// the interesting part — the user file merges first, then each extended dotfolder in
+/// list order, so a later entry wins within the layer and everything here loses to the
+/// project layers.
+fn merge_user_and_extends_layers(
+    user_dir: Option<&Path>,
+    home_for_tilde: Option<&Path>,
+    merged: &mut Value,
+    extends_dirs: &mut Vec<PathBuf>,
+    warnings: &mut Vec<String>,
+) {
+    let Some(user_dir) = user_dir else { return };
+    let user_file = user_dir.join("settings.json");
+    let Some(user_value) = read_layer(&user_file, warnings) else {
+        return;
+    };
+    let extends = extract_extends(&user_value, &user_file, warnings);
+    merge_values(merged, strip_key(user_value, EXTENDS_KEY));
+
+    for entry in extends {
+        let dir = expand_tilde(&entry, home_for_tilde, user_dir);
+        // An entry is a **locode dotfolder**, not a settings file: its `settings.json`
+        // merges here, and its `skills/` + `AGENTS.md` are read by their own loaders
+        // from `extends_dirs`. A file-valued entry is refused explicitly rather than
+        // reinterpreted — §1.5 forbids silently changing what an existing key means,
+        // and the file form was valid until this amendment.
+        if dir.is_file() {
+            warnings.push(format!(
+                "settings: `extends` entry {} is a file; it must be a locode directory \
+                 (point it at the folder holding settings.json)",
+                dir.display()
+            ));
+            continue;
+        }
+        // The user explicitly pointed at this directory — absence is loud (unlike the
+        // standard layers, whose absence is normal).
+        if !dir.is_dir() {
+            warnings.push(format!(
+                "settings: extends directory {} not found; skipped",
+                dir.display()
+            ));
+            continue;
+        }
+        extends_dirs.push(dir.clone());
+
+        // A dotfolder that ships only skills or only `AGENTS.md` is normal.
+        let path = dir.join("settings.json");
+        if !path.is_file() {
+            continue;
+        }
+        if let Some(mut value) = read_layer(&path, warnings) {
+            // Non-recursive (§1.2 amendment): a nested `extends` is ignored.
+            if value.get(EXTENDS_KEY).is_some() {
+                warnings.push(format!(
+                    "settings: nested `extends` in {} ignored (extends does not recurse)",
+                    path.display()
+                ));
+                value = strip_key(value, EXTENDS_KEY);
+            }
+            merge_values(merged, value);
         }
     }
 }
@@ -472,10 +529,10 @@ mod tests {
         write(
             &f.user_dir.join("settings.json"),
             &json!({"model": "user", "harness": "user", "api_schema": "user",
-                    "extends": ["team.json"]}),
+                    "extends": ["team"]}),
         );
         write(
-            &f.user_dir.join("team.json"),
+            &f.user_dir.join("team/settings.json"),
             &json!({"model": "team", "harness": "team"}),
         );
         write(
@@ -504,20 +561,81 @@ mod tests {
         let f = fixture();
         write(
             &f.user_dir.join("settings.json"),
-            &json!({"extends": ["a.json", "b.json"]}),
+            &json!({"extends": ["a", "b"]}),
         );
-        write(&f.user_dir.join("a.json"), &json!({"model": "a"}));
+        write(&f.user_dir.join("a/settings.json"), &json!({"model": "a"}));
         write(
-            &f.user_dir.join("b.json"),
-            &json!({"model": "b", "extends": ["c.json"]}),
+            &f.user_dir.join("b/settings.json"),
+            &json!({"model": "b", "extends": ["c"]}),
         );
-        write(&f.user_dir.join("c.json"), &json!({"model": "c"}));
+        write(&f.user_dir.join("c/settings.json"), &json!({"model": "c"}));
 
         let got = load(&f, None);
-        // Later extends entry wins; c.json never loads (no recursion).
+        // Later extends entry wins; `c` never loads (no recursion).
         assert_eq!(got.settings.model.as_deref(), Some("b"));
         assert!(
             got.warnings.iter().any(|w| w.contains("nested `extends`")),
+            "{:?}",
+            got.warnings
+        );
+        assert_eq!(
+            got.extends_dirs,
+            vec![f.user_dir.join("a"), f.user_dir.join("b")],
+            "resolved dotfolders travel out in list order"
+        );
+    }
+
+    /// A dotfolder may ship only skills or only `AGENTS.md`; a missing
+    /// `settings.json` is normal and must stay silent.
+    #[test]
+    fn extends_dotfolder_without_settings_json_is_silent() {
+        let f = fixture();
+        write(
+            &f.user_dir.join("settings.json"),
+            &json!({"extends": ["team"]}),
+        );
+        std::fs::create_dir_all(f.user_dir.join("team/skills")).unwrap();
+
+        let got = load(&f, None);
+        assert_eq!(got.extends_dirs, vec![f.user_dir.join("team")]);
+        assert!(
+            got.warnings.is_empty(),
+            "a dotfolder with no settings.json is normal: {:?}",
+            got.warnings
+        );
+    }
+
+    /// The old form (an entry pointing at a settings *file*) is refused with a message
+    /// naming the fix — never reinterpreted as "a directory with no settings.json",
+    /// which would silently drop a layer the user still expects (ADR-0024 §1.5).
+    #[test]
+    fn extends_entry_pointing_at_a_file_is_refused_explicitly() {
+        let f = fixture();
+        write(
+            &f.user_dir.join("settings.json"),
+            &json!({"extends": ["team.json"]}),
+        );
+        write(&f.user_dir.join("team.json"), &json!({"model": "team"}));
+
+        let got = load(&f, None);
+        assert_eq!(got.settings.model, None, "the file must not be merged");
+        assert!(got.extends_dirs.is_empty());
+        let w = got.warnings.join(" | ");
+        assert!(w.contains("is a file"), "{w}");
+        assert!(w.contains("must be a locode directory"), "{w}");
+    }
+
+    #[test]
+    fn extends_missing_directory_warns_loudly() {
+        let f = fixture();
+        write(
+            &f.user_dir.join("settings.json"),
+            &json!({"extends": ["nope"]}),
+        );
+        let got = load(&f, None);
+        assert!(got.extends_dirs.is_empty());
+        assert!(
+            got.warnings.iter().any(|w| w.contains("not found")),
             "{:?}",
             got.warnings
         );

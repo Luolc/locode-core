@@ -80,7 +80,7 @@ The immediate queue, ahead of the remaining packs:
     real sessions (#180/#182). Reconciled into ADR-0024 (dated amendments).
 - [ ] **Task 32 — skills** (P0, ADR-0025 accepted; plan:
   [`plans/task-32-skills.md`](plans/task-32-skills.md)):
-  - [ ] **S1** — `extends` becomes a dotfolder (`settings.json` + `skills/` + `AGENTS.md`)
+  - [x] **S1** — `extends` becomes a dotfolder (`settings.json` + `skills/` + `AGENTS.md`)
     and settings-before-discovery becomes a load-order invariant.
   - [ ] **S2** — new `locode-skills` crate: discovery, five-key frontmatter, precedence,
     three-scope collisions.
