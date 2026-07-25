@@ -186,8 +186,8 @@ pub struct App {
     /// Shell `run_terminal_cmd` uses (status display); set at engine ready.
     pub shell: Option<String>,
     /// The **current context occupancy**: what the last request actually carried
-    /// (input + cache-read + output — i.e. what the next turn starts from), not a
-    /// cumulative generation total. Survives resume via an estimate until the
+    /// (input + both cache counters + output — i.e. what the next turn starts from),
+    /// not a cumulative generation total. Survives resume via an estimate until the
     /// first real usage report replaces it.
     pub context_tokens: u64,
     /// Whether `context_tokens` is a resume-time estimate (rendered `~N`).
@@ -576,11 +576,11 @@ impl App {
             RunState::Running { started, .. } => now.duration_since(started).as_secs(),
             RunState::Idle => 0,
         };
-        // Context occupancy = the last request's full prompt (input + cache reads)
-        // plus what it appended (output). A real report replaces any estimate.
-        self.context_tokens = report.usage.input_tokens
-            + report.usage.cache_read_tokens.unwrap_or(0)
-            + report.usage.output_tokens;
+        // Context occupancy = the **final** turn's full prompt (input + both cache
+        // counters) plus what it appended. `report.usage` is the run's *sum*, which
+        // counts the same history once per turn and says nothing about how full the
+        // window is. A real report replaces any estimate.
+        self.context_tokens = report.context_usage.context_tokens();
         self.context_estimated = false;
         // A cancelled/errored streaming turn never emits the whole `Message`, so
         // no finalize is pending: drop the in-progress (uncommitted) block (Q2 —
@@ -1124,15 +1124,55 @@ mod tests {
             structured_output: None,
             turns: 2,
             tool_calls: Vec::<ToolCallRecord>::new(),
+            // The run's sum; `context_usage` is the last turn's, deliberately different
+            // so a test can tell which one the footer reads.
             usage: Usage {
                 input_tokens: 100,
                 output_tokens: 20,
+                ..Usage::default()
+            },
+            context_usage: Usage {
+                input_tokens: 60,
+                output_tokens: 12,
+                cache_read_tokens: Some(30),
+                cache_creation_tokens: Some(8),
                 ..Usage::default()
             },
             session_id: "s".into(),
             stop_reason: None,
             error: None,
         }
+    }
+
+    /// The footer shows **context occupancy**, not accumulated usage: the final turn's
+    /// whole prompt (input plus both cache counters) plus its completion.
+    ///
+    /// Reading `report.usage` would show the run's sum, which counts the same
+    /// conversation once per turn and only ever grows — a number with no relationship
+    /// to the context window.
+    #[test]
+    fn the_token_counter_is_the_last_turn_not_the_run_total() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        let _ = app.update(run_started(), t0);
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::RunFinished(Box::new(report(
+                Status::Completed,
+            ))))),
+            t0,
+        );
+        assert_eq!(app.context_tokens, 60 + 30 + 8 + 12);
+        assert!(!app.context_estimated);
+
+        // A second run does not add to it — occupancy is replaced, never accumulated.
+        let _ = app.update(run_started(), t0);
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::RunFinished(Box::new(report(
+                Status::Completed,
+            ))))),
+            t0,
+        );
+        assert_eq!(app.context_tokens, 60 + 30 + 8 + 12, "replaced, not summed");
     }
 
     // ---- slice 1 interaction contract (unchanged semantics) ----

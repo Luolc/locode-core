@@ -210,6 +210,9 @@ impl Session {
             };
             acc.turns += 1;
             acc.usage += completion.usage;
+            // Overwritten, not accumulated: the last turn's request carried the whole
+            // conversation, so it alone measures how full the context is.
+            acc.last_usage = completion.usage;
             acc.last_stop = Some(stop_reason_str(&completion.stop));
 
             // (c) Extract tool calls, then append the assistant turn VERBATIM so
@@ -501,6 +504,7 @@ impl Session {
             turns: acc.turns,
             tool_calls: acc.tool_calls,
             usage: acc.usage,
+            context_usage: acc.last_usage,
             session_id: self.config.session_id.clone(),
             stop_reason: acc.last_stop,
             error,

@@ -1650,4 +1650,38 @@ mod tests {
         assert_eq!(report.usage.input_tokens, 30);
         assert_eq!(report.usage.output_tokens, 12);
     }
+
+    /// `context_usage` is the **final** turn's, not the sum.
+    ///
+    /// Every turn's request re-sends the whole conversation, so summing counts the same
+    /// history once per turn — a number that only grows and says nothing about how full
+    /// the context is. The last turn's request *is* the whole conversation.
+    #[tokio::test]
+    async fn context_usage_is_the_final_turn_not_the_sum() {
+        let mut first = tool_turn("c1", "echo");
+        first.usage = Usage {
+            input_tokens: 10,
+            output_tokens: 5,
+            ..Usage::default()
+        };
+        let mut second = text_turn("done");
+        second.usage = Usage {
+            input_tokens: 20,
+            output_tokens: 7,
+            cache_read_tokens: Some(4),
+            cache_creation_tokens: Some(3),
+            ..Usage::default()
+        };
+        let (mut s, _e) = session_with(vec![Ok(first), Ok(second)], echo_registry(), config());
+        let report = s.run_text("go").await;
+
+        assert_eq!(report.context_usage.input_tokens, 20, "the last turn only");
+        assert_eq!(report.context_usage.output_tokens, 7);
+        assert_eq!(
+            report.context_usage.context_tokens(),
+            20 + 4 + 3 + 7,
+            "both cache counters are prompt tokens"
+        );
+        assert_eq!(report.usage.input_tokens, 30, "the sum is still the sum");
+    }
 }

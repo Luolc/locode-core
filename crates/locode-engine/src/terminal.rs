@@ -34,6 +34,9 @@ pub(crate) struct RunAcc {
     pub(crate) turns: u32,
     pub(crate) tool_calls: Vec<ToolCallRecord>,
     pub(crate) usage: Usage,
+    /// The **final** turn's usage, kept alongside the running sum: the sum is the cost
+    /// basis, this one is the context occupancy the next request starts from.
+    pub(crate) last_usage: Usage,
     pub(crate) last_assistant_text: Option<String>,
     /// The final completion's stop reason, as the neutral string for the report
     /// (ADR-0009 amendment 2026-07-19).

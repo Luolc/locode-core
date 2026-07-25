@@ -169,9 +169,15 @@ impl TraceWriter {
             Event::Message { message } => self.append_message(message),
             // Per-run usage (additive record type, §2.4): lets resume
             // reconstruct the exact context occupancy instead of estimating.
+            //
+            // The **final turn's** usage, not the run's sum: this record exists to
+            // answer "how full is the context?" on resume, and a sum counts the same
+            // conversation once per turn. (Traces written before 2026-07-25 hold the
+            // sum here; a session resumed from one over-reports until its first run
+            // replaces the number.)
             Event::Result { report } => {
                 if self.file.is_some() {
-                    self.append_record("usage", &report.usage)
+                    self.append_record("usage", &report.context_usage)
                 } else {
                     Ok(())
                 }
@@ -794,10 +800,19 @@ mod tests {
             structured_output: None,
             turns: 1,
             tool_calls: vec![],
+            // The run's sum — deliberately different from `context_usage`, so the test
+            // proves which one the record carries.
             usage: Usage {
+                input_tokens: input * 3,
+                output_tokens: output * 3,
+                cache_read_tokens: Some(99),
+                ..Default::default()
+            },
+            context_usage: Usage {
                 input_tokens: input,
                 output_tokens: output,
                 cache_read_tokens: Some(7),
+                cache_creation_tokens: Some(5),
                 ..Default::default()
             },
             session_id: "sess-u".into(),
@@ -814,9 +829,16 @@ mod tests {
 
         let contents = read_rollout(writer.path().unwrap()).unwrap();
         let usage = contents.last_usage.expect("usage recovered");
-        assert_eq!(usage.input_tokens, 200, "the last run's usage");
+        assert_eq!(usage.input_tokens, 200, "the last run's context usage");
         assert_eq!(usage.output_tokens, 20);
         assert_eq!(usage.cache_read_tokens, Some(7));
+        // The record is the context occupancy, NOT the run's cost total: resuming from
+        // the sum would over-report a long run's context by a multiple.
+        assert_eq!(
+            usage.context_tokens(),
+            200 + 7 + 5 + 20,
+            "both cache counters are part of the prompt"
+        );
         // And an old-style rollout (no usage records) still reads fine.
         let bare = root.path().join("bare.jsonl");
         let meta_line = std::fs::read_to_string(writer.path().unwrap())

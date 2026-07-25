@@ -168,6 +168,15 @@ and resolve the plan's open-questions section first.
   [`../docs/research/markdown-rendering-study.md`](../docs/research/markdown-rendering-study.md)
   § *Raw HTML/XML markup*.
 - [ ] **OSC-8 hyperlinks** (P2) — clickable links (iTerm2 etc.).
+- [ ] **Cumulative token usage + cost** (P2) — the footer now shows *context occupancy*
+  (the last turn's `input + cache_read + cache_creation + output`), which is what a
+  context meter needs; `Report.usage` still carries the run's **sum**, the right basis
+  for a cost readout. Nothing accumulates that across runs yet, and no price table
+  exists. A separate feature — deliberately not folded into the context number *(user
+  decision, 2026-07-25)*.
+  - **Prerequisite for resume:** the trace's `usage` record holds context occupancy, not
+    a running total, so a cost readout needs its own record (or a re-read of every
+    `usage` line, which only covers runs traced in this session's file).
 - [ ] **`/model` switching** — persistence half is **done** (Task 31 shipped
   `~/.locode/settings.json` with a `model` field + a `--model` flag; there is no model env
   var). Still blocked on the other seam: model-selection on the ADR-0015

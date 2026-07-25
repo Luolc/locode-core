@@ -28,6 +28,13 @@
     "cache_creation_tokens": null,
     "reasoning_tokens": null
   },
+  "context_usage": {
+    "input_tokens": 80,
+    "output_tokens": 12,
+    "cache_read_tokens": 0,
+    "cache_creation_tokens": null,
+    "reasoning_tokens": null
+  },
   "session_id": "sess-abc",
   "error": null,
   "stop_reason": "end_turn"

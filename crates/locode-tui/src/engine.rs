@@ -186,7 +186,7 @@ pub fn spawn(
 fn recovered_context(contents: &locode_core::RolloutContents) -> RecoveredContext {
     if let Some(usage) = &contents.last_usage {
         return RecoveredContext {
-            tokens: usage.input_tokens + usage.cache_read_tokens.unwrap_or(0) + usage.output_tokens,
+            tokens: usage.context_tokens(),
             estimated: false,
         };
     }
