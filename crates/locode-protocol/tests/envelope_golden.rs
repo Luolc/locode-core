@@ -29,6 +29,15 @@ fn sample_report() -> Report {
             cache_creation_tokens: None,
             reasoning_tokens: None,
         },
+        // The run's sum above; the final turn's occupancy here (ADR-0018: an added
+        // optional field is non-breaking and does not bump `schema_version`).
+        context_usage: Usage {
+            input_tokens: 80,
+            output_tokens: 12,
+            cache_read_tokens: Some(0),
+            cache_creation_tokens: None,
+            reasoning_tokens: None,
+        },
         stop_reason: Some("end_turn".into()),
         session_id: "sess-abc".to_string(),
         error: None,
@@ -49,4 +58,15 @@ fn report_matches_committed_snapshot() {
 #[test]
 fn schema_version_is_frozen_at_1() {
     assert_eq!(sample_report().schema_version, 1);
+}
+
+/// A report written before `context_usage` existed still parses, reading as all-zero —
+/// the additive-field guarantee ADR-0018 makes.
+#[test]
+fn an_envelope_without_context_usage_still_parses() {
+    let mut value = serde_json::to_value(sample_report()).expect("serialize");
+    value.as_object_mut().unwrap().remove("context_usage");
+    let back: Report = serde_json::from_value(value).expect("older envelope parses");
+    assert_eq!(back.context_usage, Usage::default());
+    assert_eq!(back.usage.input_tokens, 100, "the run total is untouched");
 }

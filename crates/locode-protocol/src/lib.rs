@@ -200,8 +200,23 @@ pub struct Report {
     pub turns: u32,
     /// A record of every tool call made during the run.
     pub tool_calls: Vec<ToolCallRecord>,
-    /// Token accounting for the run.
+    /// Token accounting for the run: **summed over every turn**. This is the cost
+    /// basis — what the run generated in total — and grows without bound as a run takes
+    /// more turns.
     pub usage: Usage,
+    /// Token accounting for the run's **final turn only** — the context occupancy the
+    /// next request starts from.
+    ///
+    /// Not derivable from [`Report::usage`]: each turn's request re-sends the whole
+    /// conversation, so a per-turn sum counts the same history once per turn and has no
+    /// relationship to the context window. The last turn's request *is* the whole
+    /// conversation, which is why this one number answers "how full is the context?".
+    ///
+    /// Additive field (ADR-0018's envelope-evolution policy: new optional report fields
+    /// are non-breaking and do not bump `schema_version`); absent in traces written
+    /// before 2026-07-25, where it reads as all-zero.
+    #[serde(default)]
+    pub context_usage: Usage,
     /// The session identifier.
     pub session_id: String,
     /// The final model stop reason (`"end_turn"`, `"max_tokens"`, …), when a
@@ -285,6 +300,22 @@ pub struct Usage {
     /// Reasoning/thinking tokens (`None` on wires that fold them into
     /// `output_tokens`, e.g. Anthropic).
     pub reasoning_tokens: Option<u64>,
+}
+
+impl Usage {
+    /// Everything this turn put on the wire and got back: the full prompt (input plus
+    /// both cache counters) plus the completion.
+    ///
+    /// **Both cache counters belong in the total.** A cached read and a cache write are
+    /// prompt tokens that a provider bills differently — they occupy the context window
+    /// exactly like uncached input, so leaving either out under-reports how full it is.
+    #[must_use]
+    pub fn context_tokens(&self) -> u64 {
+        self.input_tokens
+            + self.cache_read_tokens.unwrap_or(0)
+            + self.cache_creation_tokens.unwrap_or(0)
+            + self.output_tokens
+    }
 }
 
 /// `Some+Some` sums; `None` is the identity — a run total is `None` only if no
@@ -565,6 +596,7 @@ mod tests {
             turns: 1,
             tool_calls: vec![],
             usage: Usage::default(),
+            context_usage: Usage::default(),
             session_id: "sess-1".into(),
             stop_reason: None,
             error: None,
