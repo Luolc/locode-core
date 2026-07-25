@@ -6,8 +6,8 @@ use locode_protocol::{
     ContentBlock, Message, ReasoningFormat, ResultChunk, Role, ToolInputFormat, ToolSpec,
 };
 use locode_provider::anthropic::{
-    ApiBackend, DeveloperRendering, ModelConfig, ReasoningEncoding, build_request,
-    count_cache_controls, normalize_input_schema,
+    ApiBackend, DeveloperRendering, ModelConfig, build_request, count_cache_controls,
+    normalize_input_schema,
 };
 use locode_provider::{
     CacheHint, ConversationRequest, DEFAULT_MAX_TOKENS, ReasoningEffort, SamplingArgs,
@@ -167,25 +167,6 @@ fn developer_beta_path_emits_mid_conversation_system() {
 
 // ---- temperature-omit + reasoning mapping (plan §4.3/§4.4/§9.3) ----
 
-#[test]
-fn temperature_omitted_when_thinking_on() {
-    let mut req = base_request(vec![msg(Role::User, vec![text("hi")])]);
-    req.sampling_args.temperature = Some(0.7);
-    req.sampling_args.reasoning_effort = Some(ReasoningEffort::Medium);
-    let built = build_request(&req, &native_cfg());
-    assert!(built.thinking.is_some());
-    assert!(
-        built.temperature.is_none(),
-        "temperature must be dropped when thinking is on"
-    );
-
-    // And absent thinking, temperature passes through.
-    req.sampling_args.reasoning_effort = None;
-    let built = build_request(&req, &native_cfg());
-    assert!(built.thinking.is_none());
-    assert_eq!(built.temperature, Some(0.7));
-}
-
 /// The default config pins no ceiling, so the caller's budget reaches the wire
 /// verbatim — a silent `min` would corrupt eval comparisons the same way a
 /// silently clamped `reasoning_effort` would (ADR-0007).
@@ -221,53 +202,75 @@ fn max_tokens_cap_clamps_only_when_pinned() {
     assert_eq!(build_request(&req, &cfg).max_tokens, 1024);
 }
 
+/// Adaptive thinking is unconditional on this wire: a request that names no
+/// effort still asks for it explicitly, rather than leaving the outcome to
+/// whatever the serving model does with an absent field.
 #[test]
-fn budget_mapping_with_interleaved_beta_unclamped() {
-    // Default config keeps the interleaved-thinking beta → no clamp (plan §9.3):
-    // High = 16384 even though max_tokens is 4096.
-    let mut req = base_request(vec![msg(Role::User, vec![text("hi")])]);
-    req.sampling_args.reasoning_effort = Some(ReasoningEffort::High);
-    let built = build_request(&req, &native_cfg());
-    let json = serde_json::to_value(&built).unwrap();
-    assert_eq!(json["thinking"]["type"], "enabled");
-    assert_eq!(json["thinking"]["budget_tokens"], 16384);
-}
+fn thinking_is_always_adaptive_even_with_no_effort() {
+    let req = base_request(vec![msg(Role::User, vec![text("hi")])]);
+    assert!(req.sampling_args.reasoning_effort.is_none());
 
-#[test]
-fn budget_mapping_clamps_without_the_beta() {
-    let mut cfg = native_cfg();
-    cfg.betas.clear(); // beta off → the clamp is mandatory
-    let mut req = base_request(vec![msg(Role::User, vec![text("hi")])]);
-    req.sampling_args.max_tokens = 4096;
-    req.sampling_args.reasoning_effort = Some(ReasoningEffort::High);
-    let built = build_request(&req, &cfg);
-    let json = serde_json::to_value(&built).unwrap();
-    assert_eq!(
-        json["thinking"]["budget_tokens"], 4095,
-        "min(16384, 4096-1)"
-    );
-}
-
-#[test]
-fn minimal_effort_means_no_thinking() {
-    let mut req = base_request(vec![msg(Role::User, vec![text("hi")])]);
-    req.sampling_args.reasoning_effort = Some(ReasoningEffort::Minimal);
-    let built = build_request(&req, &native_cfg());
-    assert!(built.thinking.is_none());
-    assert!(built.output_config.is_none());
-}
-
-#[test]
-fn effort_adaptive_encoding_emits_output_config() {
-    let mut cfg = native_cfg();
-    cfg.reasoning_encoding = ReasoningEncoding::EffortAdaptive;
-    let mut req = base_request(vec![msg(Role::User, vec![text("hi")])]);
-    req.sampling_args.reasoning_effort = Some(ReasoningEffort::Medium);
-    let built = build_request(&req, &cfg);
-    let json = serde_json::to_value(&built).unwrap();
+    let json = serde_json::to_value(build_request(&req, &native_cfg())).unwrap();
     assert_eq!(json["thinking"]["type"], "adaptive");
+    // Summarized, not the API's "omitted" default — otherwise every trace
+    // carries a multi-KB signature wrapped around empty text.
     assert_eq!(json["thinking"]["display"], "summarized");
-    assert_eq!(json["output_config"]["effort"], "medium");
+    // No effort named ⇒ no output_config; the API applies its own default.
+    assert!(json.get("output_config").is_none());
+}
+
+/// `budget_tokens` is removed on every model this wire targets — the old
+/// Budget encoding must not be reachable by any input.
+#[test]
+fn no_effort_tier_can_produce_budget_tokens() {
+    for effort in [
+        ReasoningEffort::None,
+        ReasoningEffort::Minimal,
+        ReasoningEffort::Low,
+        ReasoningEffort::Medium,
+        ReasoningEffort::High,
+        ReasoningEffort::XHigh,
+        ReasoningEffort::Other("max".into()),
+    ] {
+        let mut req = base_request(vec![msg(Role::User, vec![text("hi")])]);
+        req.sampling_args.reasoning_effort = Some(effort.clone());
+        let json = serde_json::to_value(build_request(&req, &native_cfg())).unwrap();
+        assert_eq!(json["thinking"]["type"], "adaptive", "{effort:?}");
+        assert!(
+            json["thinking"].get("budget_tokens").is_none(),
+            "{effort:?} must not emit budget_tokens"
+        );
+    }
+}
+
+#[test]
+fn effort_tiers_map_to_output_config() {
+    for (effort, expected) in [
+        (ReasoningEffort::None, "low"),
+        (ReasoningEffort::Minimal, "low"),
+        (ReasoningEffort::Low, "low"),
+        (ReasoningEffort::Medium, "medium"),
+        (ReasoningEffort::High, "high"),
+        (ReasoningEffort::XHigh, "xhigh"),
+        // Unknown tiers ride through verbatim so the API's own error surfaces,
+        // rather than being silently remapped (ADR-0007).
+        (ReasoningEffort::Other("max".into()), "max"),
+    ] {
+        let mut req = base_request(vec![msg(Role::User, vec![text("hi")])]);
+        req.sampling_args.reasoning_effort = Some(effort.clone());
+        let json = serde_json::to_value(build_request(&req, &native_cfg())).unwrap();
+        assert_eq!(json["output_config"]["effort"], expected, "{effort:?}");
+    }
+}
+
+/// Thinking is always on, so temperature is never sendable — the API demands
+/// temp=1 with thinking, and the current models reject the field outright.
+#[test]
+fn temperature_is_never_sent() {
+    let mut req = base_request(vec![msg(Role::User, vec![text("hi")])]);
+    req.sampling_args.temperature = Some(0.7);
+    req.sampling_args.reasoning_effort = None;
+    let json = serde_json::to_value(build_request(&req, &native_cfg())).unwrap();
     assert!(json.get("temperature").is_none());
 }
 

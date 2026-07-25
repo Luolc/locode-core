@@ -124,3 +124,54 @@ ceilings were the bug.
 
 **Deferred:** the per-model table (Claude Code's and opencode's shape). One
 safe default plus an opt-in pin is the honest v0.
+
+## Amendment (2026-07-25): the Anthropic wire always sends adaptive thinking
+
+`thinking: {type: "adaptive", display: "summarized"}` is now **unconditional**
+on this wire (user decision). `ReasoningEncoding` is removed along with the
+`budget_tokens` encoding it selected; `reasoning_effort` now chooses only the
+depth, rendered as `output_config.effort`.
+
+**Why unconditional.** `SamplingArgs.reasoning_effort` defaults to `None` and
+nothing in the TUI, exec, or engine ever set it, so `map_reasoning` returned
+early and the request carried no `thinking` field at all. That was read as
+"thinking off". It is not: omitting the field means *the serving model decides*
+— Fable 5 thinks unconditionally and rejects `{type:"disabled"}`, Opus 5 runs
+adaptive when the field is absent. Traces showed reasoning we never asked for,
+and the same request behaved differently per model. Sending the field states
+what was already happening, and makes it the same everywhere.
+
+**Why the Budget encoding is gone, not just off by default.** It emitted
+`{type: "enabled", budget_tokens: N}` from a fixed ladder (Low 4096 … XHigh
+32768). That shape is **removed on every model this wire targets** — Fable 5,
+Opus 5, Opus 4.8/4.7 and Sonnet 5 all 400 on it; only Opus 4.6 / Sonnet 4.6
+still accept it, deprecated. It was `ReasoningEncoding::default()`, so the
+default configuration was broken for every current model; it survived only
+because the branch was unreachable. Keeping a variant that cannot work on any
+supported model is keeping a footgun. Live check through a lenient gateway
+confirmed the failure is worse than a 400 there: the parameter is silently
+dropped, and Sonnet 5 returned no thinking at all while appearing to succeed.
+
+**`display: "summarized"`, not the default.** The API default is `"omitted"`,
+which still streams thinking blocks and still bills the same — it just empties
+the text while keeping a multi-KB signature. A real trace from this repo showed
+318 characters of reasoning against a 2044-character signature; under the
+default it would have been 0 against 2044. Display is a visibility knob, and an
+agent whose traces are the debugging surface wants it on.
+
+**Consequences.** `temperature` is never sent on this wire (the API requires
+temp=1 whenever thinking is on, and the current models reject the field
+outright) — the neutral `SamplingArgs.temperature` stays meaningful for other
+wires. `EFFORT_BETA` is removed: `output_config.effort` is GA and needs no beta
+header, and the const was never attached to `betas` anyway. The pre-send
+`ProviderError::Config` rejection of `ReasoningEffort::Other` is gone — every
+tier now rides through verbatim and an unsupported one surfaces the API's own
+error, which is what this ADR asks for.
+
+**Breaking:** `anthropic::ReasoningEncoding` and `anthropic::config::EFFORT_BETA`
+are removed, as is `ModelConfig.reasoning_encoding`.
+
+**Known gap:** adaptive thinking is unsupported on pre-4.6 models (Sonnet 4.5,
+Haiku 4.5 and older), which want `budget_tokens`. Those are out of scope by the
+same decision — if a cheap older model is ever wanted for subagents, this wire
+needs the per-model table that is already deferred above.

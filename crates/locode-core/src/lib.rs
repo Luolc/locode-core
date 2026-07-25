@@ -38,8 +38,7 @@ pub use locode_engine::{
 
 // ---- providers: the wire schemas ----
 pub use locode_provider::anthropic::{
-    ApiBackend, AuthRefresh, AuthScheme, DeveloperRendering, ModelConfig, ReasoningEncoding,
-    RetryPolicy,
+    ApiBackend, AuthRefresh, AuthScheme, DeveloperRendering, ModelConfig, RetryPolicy,
 };
 pub use locode_provider::{
     AnthropicProvider, CacheHint, Completion, ConversationRequest, MockProvider, OpenAiBackend,

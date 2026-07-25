@@ -6,7 +6,7 @@
 
 use locode_protocol::{ContentBlock, ImageSource, ResultChunk, Role};
 
-use super::config::{DeveloperRendering, ModelConfig, ReasoningEncoding};
+use super::config::{DeveloperRendering, ModelConfig};
 use super::wire;
 pub use crate::http::normalize_input_schema;
 use crate::request::{CacheHint, ConversationRequest, ReasoningEffort};
@@ -55,20 +55,13 @@ pub fn build_request(req: &ConversationRequest, cfg: &ModelConfig) -> wire::Mess
         _ => Some(wire::SystemParam::Blocks(system_blocks)),
     };
 
-    // ---- reasoning_effort → thinking (plan §4.4, §9.3) ----
-    let (thinking, output_config) = map_reasoning(req, cfg);
-    // Omit temperature whenever a thinking config is active — the API requires
-    // temp=1 with thinking and rejects anything else (plan §4.3; deliberate
-    // divergence from grok's unconditional forward).
-    let thinking_on = matches!(
-        thinking,
-        Some(wire::ThinkingConfig::Enabled { .. } | wire::ThinkingConfig::Adaptive { .. })
-    );
-    let temperature = if thinking_on {
-        None
-    } else {
-        req.sampling_args.temperature
-    };
+    // ---- thinking + effort (always adaptive; see `map_reasoning`) ----
+    let (thinking, output_config) = map_reasoning(req);
+    // Temperature is never sent: the API requires temp=1 whenever thinking is
+    // on, and thinking is now unconditional here (it is also removed outright
+    // on Opus 5 / Fable 5 / Opus 4.8 / 4.7 / Sonnet 5, which 400 on it). The
+    // neutral `SamplingArgs.temperature` stays meaningful for other wires.
+    let temperature = None;
 
     let tools: Vec<wire::ToolParam> = req
         .tools
@@ -106,7 +99,7 @@ pub fn build_request(req: &ConversationRequest, cfg: &ModelConfig) -> wire::Mess
         top_k: None,
         stream: Some(false),
         stop_sequences: None,
-        thinking,
+        thinking: Some(thinking),
         output_config,
         metadata: None,
         provider: cfg.effective_provider_prefs(),
@@ -346,66 +339,53 @@ fn mark_last_cache_capable(message: &mut wire::Message) {
     }
 }
 
-/// Map `reasoning_effort` per the configured encoding (plan §4.4, table).
-fn map_reasoning(
-    req: &ConversationRequest,
-    cfg: &ModelConfig,
-) -> (Option<wire::ThinkingConfig>, Option<wire::OutputConfig>) {
-    let Some(effort) = req.sampling_args.reasoning_effort.as_ref() else {
-        return (None, None);
+/// Build the thinking + output config. **Adaptive thinking is unconditional on
+/// this wire** (user decision, 2026-07-25); `reasoning_effort` only chooses the
+/// depth.
+///
+/// Omitting `thinking` does not mean "no thinking" on any model this wire
+/// targets — Fable 5 thinks unconditionally and rejects `{type:"disabled"}`,
+/// and Opus 5 runs adaptive when the field is absent. Leaving it unset bought
+/// no control, only ambiguity: the same request thought or didn't depending on
+/// which model served it, and traces showed reasoning we never asked for.
+/// Sending `{type:"adaptive"}` states what was already happening.
+///
+/// The old `budget_tokens` encoding is gone. `{type:"enabled", budget_tokens}`
+/// is **removed on every current model** — Fable 5, Opus 5, Opus 4.8/4.7,
+/// Sonnet 5 all 400 on it; only Opus 4.6 / Sonnet 4.6 still accept it, and
+/// deprecated. It survived here only because nothing ever set
+/// `reasoning_effort`, so the branch was never reached.
+///
+/// `display: "summarized"` is deliberate: the default is `"omitted"`, which
+/// streams thinking blocks whose text is empty while still carrying a
+/// multi-KB signature — a trace full of unreadable blobs. Display affects
+/// visibility only; thinking happens and is billed the same either way.
+fn map_reasoning(req: &ConversationRequest) -> (wire::ThinkingConfig, Option<wire::OutputConfig>) {
+    let thinking = wire::ThinkingConfig::Adaptive {
+        display: Some(wire::ThinkingDisplay::Summarized),
     };
-    match cfg.reasoning_encoding {
-        ReasoningEncoding::Budget => {
-            let budget = match effort {
-                // grok treats Minimal as thinking-off (types.rs:814); explicit
-                // None is likewise off on a budget encoding. Other(_) is
-                // rejected with a clear Config error in complete() BEFORE the
-                // build (no principled budget for an unknown tier) — here it
-                // is a dead arm folded into the off case.
-                ReasoningEffort::None | ReasoningEffort::Minimal | ReasoningEffort::Other(_) => {
-                    return (None, None);
-                }
-                ReasoningEffort::Low => 4096,
-                ReasoningEffort::Medium => 8192,
-                ReasoningEffort::High => 16384,
-                ReasoningEffort::XHigh => 32768,
-            };
-            // Clamp to max_tokens-1 — mandatory WITHOUT interleaved thinking;
-            // waived with the beta, where the budget spans the turn (plan §9.3).
-            let budget = if cfg.interleaved_thinking() {
-                budget
-            } else {
-                budget.min(effective_max_tokens(req, cfg).saturating_sub(1))
-            };
-            (
-                Some(wire::ThinkingConfig::Enabled {
-                    budget_tokens: budget,
-                }),
-                None,
-            )
-        }
-        ReasoningEncoding::EffortAdaptive => {
-            let effort_str = match effort {
-                ReasoningEffort::None | ReasoningEffort::Minimal => return (None, None),
-                ReasoningEffort::Low => "low",
-                ReasoningEffort::Medium => "medium",
-                ReasoningEffort::High => "high",
-                // Passed through verbatim — an unsupported tier surfaces the
-                // API's own error (never silently clamp).
-                ReasoningEffort::XHigh => "xhigh",
-                ReasoningEffort::Other(s) => s.as_str(),
-            };
-            (
-                Some(wire::ThinkingConfig::Adaptive {
-                    display: Some(wire::ThinkingDisplay::Summarized),
-                }),
-                Some(wire::OutputConfig {
-                    effort: Some(effort_str.to_string()),
-                    format: None,
-                }),
-            )
-        }
-    }
+    // No effort ⇒ omit `output_config` and take the API's own default (`high`).
+    // Every tier is forwarded verbatim, including `Other`: an unsupported one
+    // surfaces the API's error rather than being silently remapped (ADR-0007).
+    let effort = match req.sampling_args.reasoning_effort.as_ref() {
+        None => return (thinking, None),
+        // `None`/`Minimal` used to mean thinking-off, which this wire can no
+        // longer express (Fable 5 rejects `{type:"disabled"}` outright, and
+        // Opus 5 only accepts it at effort `high` or below). The nearest
+        // truthful rendering is the shallowest tier.
+        Some(ReasoningEffort::None | ReasoningEffort::Minimal | ReasoningEffort::Low) => "low",
+        Some(ReasoningEffort::Medium) => "medium",
+        Some(ReasoningEffort::High) => "high",
+        Some(ReasoningEffort::XHigh) => "xhigh",
+        Some(ReasoningEffort::Other(s)) => s.as_str(),
+    };
+    (
+        thinking,
+        Some(wire::OutputConfig {
+            effort: Some(effort.to_string()),
+            format: None,
+        }),
+    )
 }
 
 /// Count every `cache_control` across `system` + `messages` (the ≤4 guard).
