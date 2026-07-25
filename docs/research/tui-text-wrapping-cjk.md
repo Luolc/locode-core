@@ -117,3 +117,16 @@ Adopt the codex/grok stack and cover the features the surgical fix omits:
 (659) + `live_wrap.rs::take_prefix_by_width` (182); grok
 `xai-grok-pager-render/src/render/wrapping.rs::word_wrap_line` (267) + `fit_line_to_width`
 + `is_table_line` (323).
+
+## Related: raw HTML/XML markup in the renderer (2026-07-24)
+
+Not a wrapping issue, but it lives in the same module and was found the same way — by
+output that silently lost content. `pulldown-cmark` hands XML-ish tags over as
+`Event::Html`/`InlineHtml`; our `Writer`'s catch-all arm dropped them, taking every
+line of the HTML block with them. Fixed by emitting raw markup as text.
+
+The remaining depth (`<br>` → newline, inline-vs-block newline semantics, table-cell
+capture, streaming block boundaries) is tracked as **Phase 2.5** in
+[`markdown-rendering-study.md`](markdown-rendering-study.md), with the codex/grok
+citations. The table-cell item is a **prerequisite for the tables phase**, not optional
+polish: both harnesses have regression tests for inline HTML leaking into cells.

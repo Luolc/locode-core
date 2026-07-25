@@ -160,6 +160,13 @@ and resolve the plan's open-questions section first.
   `textwrap` 0.16 + UAX#14 (`unicode-linebreak`) + grapheme-cluster stack for punctuation-aware
   breaks, ZWJ/emoji clusters, optimal-fit, and table clip-vs-wrap. Research + migration plan +
   TODO checklist: [`../docs/research/tui-text-wrapping-cjk.md`](../docs/research/tui-text-wrapping-cjk.md).
+- [ ] **Markdown raw-markup depth (Phase 2.5)** — the `Event::Html` swallow-bug is fixed
+  (#205), but three things both Rust twins do are still missing: `<br>` → line break,
+  inline-vs-block newline semantics, and inline-HTML capture into table cells. That last
+  one is a **prerequisite for the tables phase** — leaking raw HTML into a cell is the
+  regression grok and codex each wrote tests for. Plan + citations:
+  [`../docs/research/markdown-rendering-study.md`](../docs/research/markdown-rendering-study.md)
+  § *Raw HTML/XML markup*.
 - [ ] **OSC-8 hyperlinks** (P2) — clickable links (iTerm2 etc.).
 - [ ] **Built-in slash commands** — deferred pending a *holistic* design pass
   (discovery/registry, syntax, pure-UI vs. seam- or persistence-backed), not piecemeal.
