@@ -179,6 +179,45 @@ core-touching feature).
 So our **parser choice already matches both Rust twins.** The gap is entirely in
 the styling depth + missing features, not the architecture.
 
+### Raw HTML/XML markup — a shipped fix, and the depth we still lack (2026-07-24)
+
+Worth recording as its own axis, because it bit us in production and both Rust
+twins had already solved it.
+
+**What happened.** Our `Writer` matched `Event::Text`, `Code`, `SoftBreak`, … and
+ended in a `_ => {}` catch-all. `pulldown-cmark` classifies XML-ish tags as HTML:
+`<system-reminder>` opens an **HTML block that runs to the next blank line**, and the
+whole block arrives as `Event::Html`. The catch-all swallowed it — deleting not just
+the tags but every line inside them. In practice that erased the first line of every
+injected reminder (including the skills listing's header) and any assistant paragraph
+containing a `<tag>` token. Fixed 2026-07-24 by emitting raw markup as text, honoring
+embedded newlines.
+
+**Both harnesses hit this and went further.** Their handling is the reference for
+what a complete version looks like:
+
+- **grok** (`xai-grok-markdown/src/parse.rs:741-747`) renders `Event::Html` as
+  *regular text, not code*, with a comment naming our exact failure mode:
+  "*pulldown-cmark treats XML-like tags (e.g. `<example>`) as HTML blocks, which
+  previously got code-block styling*". It special-cases **`<br>` → newline**
+  (`is_br_tag`), and captures inline HTML **into table cells** so it cannot leak as
+  raw text — three regression tests guard that (`render.rs:1743,1764,1782`).
+- **codex** (`tui/src/markdown_render.rs:490-491` → `fn html`) emits each line of the
+  chunk as a styled span, with a **separate table-cell path** (`push_table_cell_hard_break`)
+  and an explicit **inline-vs-block newline rule** (`needs_newline = !inline`). Its
+  streaming renderer also treats `Event::Html` as a **block boundary**
+  (`markdown_render/streaming.rs:77-82`).
+
+**What our fix does not yet cover** — folded into the plan below as Phase 2.5:
+
+1. `<br>` is not turned into a line break (grok does).
+2. Inline vs block HTML are treated identically; codex ends a block with a newline and
+   an inline run without one.
+3. No table-cell path, so once tables land (Phase 3) inline HTML would leak raw into
+   cells — the precise regression both harnesses wrote tests for.
+4. Our streaming renderer does not treat an HTML block as a boundary, so a partially
+   received `<tag>` block may reflow between frames.
+
 ---
 
 ## Recommendation for locode
@@ -201,6 +240,13 @@ Replace our hand-rolled wrap with **`textwrap`** (codex/grok both use it),
 preserving inline styles; keep **code unwrapped** for copy/paste. Add
 strikethrough styling (already parse it), ordered-list markers, and OSC-8
 hyperlinks (iTerm2 — your terminal — supports them). Small, low-risk.
+
+**Phase 2.5 — finish raw-markup handling.** Small, and mostly a matter of copying
+decisions both twins already made (see *Raw HTML/XML markup* above): `<br>` → line
+break, inline-vs-block newline semantics, and — **required before Phase 3 ships** — the
+table-cell capture path, since inline HTML leaking raw into a cell is the exact
+regression grok and codex each wrote tests for. The streaming boundary rule belongs
+with Phase 4.
 
 **Phase 3 — tables.** A bespoke column-width + cell-wrap pass with a key/value
 transpose fallback when too wide (all four do this). Meaningful work; schedule
