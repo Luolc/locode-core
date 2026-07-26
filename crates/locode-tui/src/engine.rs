@@ -25,6 +25,8 @@ pub enum UiCommand {
     /// Set the running session's effort rung and persist it (`/effort <rung>`).
     /// `None` clears the override (`/effort auto`).
     SetEffort(Option<locode_core::Effort>),
+    /// Widen the running session's jail and discovery roots (`/add-dir <path>`).
+    AddDir(std::path::PathBuf),
 }
 
 /// The context occupancy recovered for a resumed session: **exact** when the
@@ -59,6 +61,9 @@ pub enum EngineMsg {
     },
     /// Session assembly failed pre-run (bad schema, missing key, …).
     BuildFailed(String),
+    /// A plain line for the transcript — a command's outcome that changes no
+    /// tracked state (`/add-dir`).
+    Notice(String),
     /// `/effort` finished: the rung now in use and the line to show.
     EffortChanged {
         /// The rung actually in use after the attempt (`None` = the API default).
@@ -171,6 +176,9 @@ pub fn spawn(
                 }
                 UiCommand::SetEffort(effort) => {
                     let _ = msg_tx.send(switch_effort(&mut built, effort));
+                }
+                UiCommand::AddDir(dir) => {
+                    let _ = msg_tx.send(add_dir(&mut built, &dir));
                 }
                 // `/new` always starts FRESH — the resume intent does not stick.
                 UiCommand::NewSession => {
@@ -285,6 +293,9 @@ fn unwrap_user_query(text: &str) -> String {
 /// transcript to replay into the UI.
 struct BuiltSession {
     session: Session,
+    /// Kept so `/add-dir` can widen the jail of the **running** session; tools
+    /// already hold clones of this `Arc`.
+    host: std::sync::Arc<locode_core::Host>,
     model: String,
     /// The effort rung in use (`None` = no override, the API's default).
     effort: Option<locode_core::Effort>,
@@ -313,6 +324,27 @@ struct BuiltSession {
 /// after it: a failed write must not leave the user on a model the status bar says they
 /// left. The reported model is the one the factory *resolved*, not the one requested, so
 /// a redirected or refused switch cannot leave the footer lying.
+/// Widen a running session: the tool jail now, discovery from the next turn.
+///
+/// Deliberately **not** persisted, unlike `/model` and `/effort`. Those are
+/// preferences; a working directory is a property of the task at hand, and
+/// silently carrying it into every future session would keep widening the jail
+/// of unrelated runs. `--add-dir` is how a root becomes part of a session's
+/// startup.
+fn add_dir(built: &mut BuiltSession, dir: &std::path::Path) -> EngineMsg {
+    let canonical = match built.host.add_root(dir) {
+        Ok(root) => root,
+        Err(e) => {
+            return EngineMsg::Notice(format!("cannot add {}: {e}", dir.display()));
+        }
+    };
+    built.session.add_root(canonical.clone());
+    EngineMsg::Notice(format!(
+        "added {} — its AGENTS.md and skills apply from the next turn",
+        canonical.display()
+    ))
+}
+
 /// Apply an effort rung to the running session and persist it for the next one.
 ///
 /// Persisted to the user-global file for the same reason `/model` is: the
@@ -594,6 +626,7 @@ fn build_session(
         .unwrap_or_default();
     Ok(BuiltSession {
         session,
+        host,
         effort,
         model,
         cwd_display,

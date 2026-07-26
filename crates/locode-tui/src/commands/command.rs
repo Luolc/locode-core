@@ -56,6 +56,9 @@ pub enum UiAction {
     /// Set the effort rung this session samples with, and remember it. `None`
     /// clears the override, restoring the API's own default (`/effort auto`).
     SetEffort(Option<locode_core::Effort>),
+    /// Widen the jail with another directory and pick up its `AGENTS.md` and
+    /// skills from the next turn (`/add-dir <path>`).
+    AddDir(std::path::PathBuf),
 }
 
 /// Read-only context handed to `visible` and `suggest_args`.

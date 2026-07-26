@@ -123,7 +123,12 @@ impl HostConfig {
 #[derive(Debug, Clone)]
 pub struct Host {
     pub(crate) workspace_root: PathBuf,
-    pub(crate) extra_roots: Vec<PathBuf>,
+    /// Extra jail roots. Behind a lock because `/add-dir` widens the jail on a
+    /// **running** session: tools already hold `Arc<Host>`, so the alternative
+    /// is rebuilding the session — which would discard the conversation. Claude
+    /// Code keeps its `additionalWorkingDirectories` mutable for the same
+    /// reason. Shared across clones, so every tool sees one list.
+    pub(crate) extra_roots: std::sync::Arc<std::sync::RwLock<Vec<PathBuf>>>,
     /// Every jail root in its **as-given** (lexically normalized, not
     /// symlink-resolved) form. macOS `/var` → `/private/var` is the everyday
     /// case, and a monorepo reached through a symlinked path is the one that
@@ -131,7 +136,7 @@ pub struct Host {
     /// canonical check would then have accepted. Claude Code checks the same
     /// two forms (`permissions/filesystem.ts:688`). The canonical lists above
     /// remain the authoritative gate.
-    pub(crate) roots_as_given: Vec<PathBuf>,
+    pub(crate) roots_as_given: std::sync::Arc<std::sync::RwLock<Vec<PathBuf>>>,
     pub(crate) path_policy: PathPolicy,
     pub(crate) limits: ExecLimits,
     pub(crate) shell_program: String,
@@ -143,6 +148,38 @@ pub struct Host {
 }
 
 impl Host {
+    /// Widen the jail with another root at runtime (`/add-dir`).
+    ///
+    /// Returns the canonicalized root on success. Both forms are recorded, for
+    /// the same reason [`Host::new`] records both: a root behind a symlink must
+    /// still satisfy the lexical pre-check. Adding an already-present root is a
+    /// no-op rather than an error, so repeating the command is harmless.
+    ///
+    /// # Errors
+    /// [`PathError::InvalidRoot`] when `dir` does not exist or cannot be
+    /// canonicalized — the jail is left untouched.
+    pub fn add_root(&self, dir: &Path) -> Result<PathBuf, PathError> {
+        let canonical = std::fs::canonicalize(dir)
+            .map_err(|e| PathError::InvalidRoot(format!("{}: {e}", dir.display())))?;
+        let mut roots = self
+            .extra_roots
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !roots.contains(&canonical) {
+            roots.push(canonical.clone());
+        }
+        drop(roots);
+        let mut as_given = self
+            .roots_as_given
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let lexical = crate::path::normalize_lexical_pub(dir);
+        if !as_given.contains(&lexical) {
+            as_given.push(lexical);
+        }
+        Ok(canonical)
+    }
+
     /// Build a host, canonicalizing `workspace_root` (the jail root must be a real,
     /// symlink-resolved absolute path).
     ///
@@ -169,8 +206,8 @@ impl Host {
             .collect();
         Ok(Self {
             workspace_root,
-            extra_roots,
-            roots_as_given,
+            extra_roots: std::sync::Arc::new(std::sync::RwLock::new(extra_roots)),
+            roots_as_given: std::sync::Arc::new(std::sync::RwLock::new(roots_as_given)),
             path_policy: config.path_policy,
             limits: config.exec,
             shell_program: config.shell_program,
