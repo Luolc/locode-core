@@ -11,6 +11,7 @@
 pub mod anthropic;
 mod assemble;
 mod completion;
+mod effort;
 pub mod http;
 mod mock;
 pub mod openai;
@@ -21,6 +22,7 @@ mod request;
 pub use anthropic::{AnthropicProvider, AuthRefresh};
 pub use assemble::{AssembleError, ToolCallAssembler};
 pub use completion::{Completion, CompletionDelta, StopReason};
+pub use effort::Effort;
 pub use http::{HttpFailure, RetryPolicy};
 pub use mock::MockProvider;
 pub use openai::responses::OpenAiResponsesProvider;

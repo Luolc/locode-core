@@ -54,6 +54,8 @@ pub enum Cmd {
     /// Switch the running session's model, and persist it as the next session's
     /// default (`/model <id>`).
     SetModel(String),
+    /// Set the running session's effort rung, and persist it (`/effort <rung>`).
+    SetEffort(Option<locode_core::Effort>),
     /// Resolve and run this `/name args` line, then feed the result back through
     /// [`App::apply_command_result`].
     ///
@@ -184,6 +186,10 @@ pub struct App {
     history_saved: Option<String>,
     /// Resolved model id (status display); `None` until the engine is ready.
     pub model: Option<String>,
+    /// The effort rung in use (`None` = no override — the API's own default).
+    pub effort: Option<locode_core::Effort>,
+    /// The wire in use, so the effort menu can show each rung's mapping.
+    pub api_schema: Option<String>,
     /// Working directory, home-shortened (status display); set at engine ready.
     pub cwd: Option<String>,
     /// Shell `run_terminal_cmd` uses (status display); set at engine ready.
@@ -234,6 +240,8 @@ impl App {
         register_builtins(&mut registry);
         Self {
             composer: Composer::new(),
+            effort: None,
+            api_schema: None,
             registry,
             slash: SlashState::default(),
             matcher: FuzzyMatcher::new(),
@@ -298,6 +306,8 @@ impl App {
         // this call needs `slash` and `matcher` mutably alongside it.
         let ctx = CommandCtx {
             model: self.model.as_deref(),
+            effort: self.effort,
+            api_schema: self.api_schema.as_deref(),
             is_running: matches!(self.run, RunState::Running { .. }),
             registry: Some(&self.registry),
         };
@@ -387,6 +397,11 @@ impl App {
             // `/model` finished. The status bar takes the model the engine actually
             // resolved, so a refused or redirected switch cannot leave it claiming one
             // the session is not on.
+            EngineMsg::EffortChanged { effort, message } => {
+                self.effort = effort;
+                self.outbox.push(Block::Notice(message));
+                vec![]
+            }
             EngineMsg::ModelChanged { model, message } => {
                 self.model = Some(model);
                 self.outbox.push(Block::Notice(message));
@@ -903,6 +918,8 @@ impl App {
     #[must_use]
     pub fn command_ctx(&self) -> CommandCtx<'_> {
         CommandCtx {
+            effort: self.effort,
+            api_schema: self.api_schema.as_deref(),
             model: self.model.as_deref(),
             is_running: matches!(self.run, RunState::Running { .. }),
             registry: Some(&self.registry),
@@ -954,6 +971,7 @@ impl App {
             // so a failed build never leaves the status bar claiming a model that is
             // not in use.
             CommandResult::Action(UiAction::SetModel(model)) => vec![Cmd::SetModel(model)],
+            CommandResult::Action(UiAction::SetEffort(effort)) => vec![Cmd::SetEffort(effort)],
         }
     }
 
@@ -2185,7 +2203,10 @@ mod tests {
         let t0 = Instant::now();
         type_str(&mut app, "/", t0);
         assert!(app.slash.open, "a bare slash offers everything");
-        assert_eq!(menu(&app), vec!["/help", "/model", "/new", "/quit"]);
+        assert_eq!(
+            menu(&app),
+            vec!["/effort", "/help", "/model", "/new", "/quit"]
+        );
 
         type_str(&mut app, "q", t0);
         assert_eq!(menu(&app), vec!["/quit"], "narrowed to the match");

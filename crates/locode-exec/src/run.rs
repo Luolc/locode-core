@@ -54,8 +54,7 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
     // `--add-dir` roots: canonicalized here so a typo fails at startup with the
     // path the user typed, before any model call (ADR-0008 amendment 2026-07-25).
     let add_dirs = canonicalize_add_dirs(&cli.add_dir)?;
-    let mut host_config = HostConfig::new(&cwd);
-    host_config.extra_roots.clone_from(&add_dirs);
+    let mut host_config = host_config_for(&cwd, &add_dirs);
     // Unrestricted is the default (ADR-0008 amendment 2026-07-24): the jail and the
     // approval seam both ship, but the permission *rules* behind them do not, so the
     // restricted path cannot remember an answer. `--restricted` opts back in.
@@ -72,11 +71,9 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
     // ---- 2b. Settings (ADR-0024): the durable defaults *under* the flags —
     //          an explicit flag/env always wins. Layer degradations surface as
     //          stderr warnings, never hard errors. ----
-    let settings_load = locode_core::load_settings(&cwd, cli.settings.as_deref());
-    for warning in &settings_load.warnings {
-        output::warning_line(warning);
-    }
+    let settings_load = load_settings_reporting(&cwd, cli.settings.as_deref());
     let settings = settings_load.settings;
+    let effort = resolve_effort_reporting(cli.effort, settings.effort.as_deref());
     // The resolved `extends` dotfolders travel with the settings — instruction and
     // (later) skill discovery are consumers of this value, which is what keeps the
     // load order an invariant (ADR-0025 §6.1).
@@ -144,7 +141,10 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
         cwd: cwd.clone(),
         workspace_root: cwd,
         max_turns: cli.max_turns,
-        sampling_args: SamplingArgs::default(),
+        sampling_args: SamplingArgs {
+            reasoning_effort: effort.map(Into::into),
+            ..SamplingArgs::default()
+        },
         cache_hint: CacheHint::Standard,
         // Opt-in headless streaming (`--stream`) — required for unbounded output
         // (Anthropic rejects non-streaming past ~10 min). Off by default keeps
@@ -494,6 +494,68 @@ pub fn canonicalize_add_dirs(
                 .map_err(|e| PreRunError(format!("--add-dir {}: {e}", dir.display())))
         })
         .collect()
+}
+
+/// [`locode_core::load_settings`] plus its stderr warnings, so `run` stays
+/// under the line cap.
+fn load_settings_reporting(
+    cwd: &std::path::Path,
+    inline: Option<&str>,
+) -> locode_core::SettingsLoad {
+    let load = locode_core::load_settings(cwd, inline);
+    for warning in &load.warnings {
+        output::warning_line(warning);
+    }
+    load
+}
+
+/// The host config for `cwd`, widened by any `--add-dir` roots.
+fn host_config_for(cwd: &std::path::Path, add_dirs: &[std::path::PathBuf]) -> HostConfig {
+    let mut config = HostConfig::new(cwd);
+    config.extra_roots = add_dirs.to_vec();
+    config
+}
+
+/// [`resolve_effort`] plus the stderr report, so `run` stays under the line cap.
+fn resolve_effort_reporting(
+    flag: Option<crate::EffortArg>,
+    setting: Option<&str>,
+) -> Option<locode_core::Effort> {
+    let mut warnings = Vec::new();
+    let effort = resolve_effort(flag, setting, &mut warnings);
+    for warning in &warnings {
+        output::warning_line(warning);
+    }
+    effort
+}
+
+/// Resolve the effort rung: `--effort` wins, then the `effort` setting, then
+/// `None` (send no `output_config` and take the API's own default).
+///
+/// An unparseable settings value warns and falls through rather than failing —
+/// a stale rung in a config file must not stop a run (ADR-0024 §1.5 tolerance).
+#[must_use]
+pub fn resolve_effort(
+    flag: Option<crate::EffortArg>,
+    setting: Option<&str>,
+    warnings: &mut Vec<String>,
+) -> Option<locode_core::Effort> {
+    if let Some(flag) = flag {
+        return Some(flag.into());
+    }
+    let raw = setting?;
+    if let Some(effort) = locode_core::Effort::parse(raw) {
+        return Some(effort);
+    }
+    warnings.push(format!(
+        "settings: unknown effort {raw:?} — using the API default (expected one of {})",
+        locode_core::Effort::ALL
+            .iter()
+            .map(|e| e.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+    None
 }
 
 #[cfg(test)]

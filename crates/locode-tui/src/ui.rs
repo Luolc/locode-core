@@ -410,7 +410,12 @@ mod tests {
         terminal.draw(|frame| draw(frame, &app, &[], cr)).unwrap();
         let text = buffer_text(&terminal);
         let rows: Vec<&str> = text.lines().collect();
-        let menu_row = rows.iter().position(|r| r.contains("/quit")).unwrap();
+        // Any menu row will do — this asserts geometry, not contents, and the
+        // command set is free to grow past what a 12-row frame can show.
+        let menu_row = rows
+            .iter()
+            .position(|r| r.contains("/effort"))
+            .expect("a menu row is on screen");
         // The selected menu row carries a `❯` of its own, so the composer is the
         // *last* one on screen.
         let composer_row = rows.iter().rposition(|r| r.contains('❯')).unwrap();

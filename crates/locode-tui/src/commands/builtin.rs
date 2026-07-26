@@ -11,6 +11,7 @@ use super::registry::{CommandRegistry, CommandSource};
 /// Register every builtin. Called before skills so a skill cannot shadow one
 /// (ADR-0026 §4).
 pub fn register_builtins(registry: &mut CommandRegistry) {
+    registry.register(Arc::new(EffortCmd), CommandSource::Builtin);
     registry.register(Arc::new(Help), CommandSource::Builtin);
     registry.register(Arc::new(Model), CommandSource::Builtin);
     registry.register(Arc::new(NewSession), CommandSource::Builtin);
@@ -158,6 +159,101 @@ impl SlashCommand for Model {
             return CommandResult::Message(format!("already using {wanted}"));
         }
         CommandResult::Action(UiAction::SetModel(wanted.to_string()))
+    }
+}
+
+/// `/effort [rung]` — report or change how hard the model thinks.
+///
+/// The rungs are **locode's**, not a provider's (see `locode_provider::Effort`):
+/// effort vocabularies differ per vendor and per model generation, so the menu
+/// stays fixed and each wire maps it. The second column shows what the rung
+/// becomes on the wire in use, so a future collapse (a provider with three
+/// tiers) is visible rather than silent.
+///
+/// `auto` clears the override and lets the API apply its own default, mirroring
+/// Claude Code's `/effort [low|medium|high|max|auto]`.
+struct EffortCmd;
+
+/// The menu entry that clears the override.
+const EFFORT_AUTO: &str = "auto";
+
+#[async_trait::async_trait]
+impl SlashCommand for EffortCmd {
+    fn name(&self) -> &'static str {
+        "effort"
+    }
+
+    fn description(&self) -> &'static str {
+        "show or set how hard the model thinks"
+    }
+
+    fn usage(&self) -> &'static str {
+        "/effort [low|medium|high|xhigh|max|auto]"
+    }
+
+    fn takes_args(&self) -> bool {
+        true
+    }
+
+    fn suggest_args(&self, ctx: &CommandCtx<'_>, _query: &str) -> Option<Vec<ArgItem>> {
+        let wire = ctx.api_schema.unwrap_or("");
+        let mut items: Vec<ArgItem> = locode_core::Effort::ALL
+            .iter()
+            .map(|effort| {
+                let mapped = effort.maps_to(wire);
+                let mut description = if mapped == effort.as_str() {
+                    effort.hint().to_string()
+                } else {
+                    // Only worth the noise when the rung is NOT 1:1 on this wire.
+                    format!("{} — sends {mapped}", effort.hint())
+                };
+                if ctx.effort == Some(*effort) {
+                    description = format!("in use · {description}");
+                }
+                ArgItem {
+                    display: effort.as_str().to_string(),
+                    match_text: effort.as_str().to_string(),
+                    insert_text: effort.as_str().to_string(),
+                    description,
+                }
+            })
+            .collect();
+        items.push(ArgItem {
+            display: EFFORT_AUTO.to_string(),
+            match_text: EFFORT_AUTO.to_string(),
+            insert_text: EFFORT_AUTO.to_string(),
+            description: if ctx.effort.is_none() {
+                "in use · let the API choose".to_string()
+            } else {
+                "let the API choose".to_string()
+            },
+        });
+        Some(items)
+    }
+
+    async fn execute(&self, ctx: &CommandCtx<'_>, args: &str) -> CommandResult {
+        let wanted = args.trim();
+        if wanted.is_empty() {
+            let current = ctx.effort.map_or_else(
+                || "auto (the API's default)".to_string(),
+                |e| e.as_str().to_string(),
+            );
+            return CommandResult::Message(format!("{current}\ntype /effort <rung> to change it"));
+        }
+        if wanted.eq_ignore_ascii_case(EFFORT_AUTO) {
+            return CommandResult::Action(UiAction::SetEffort(None));
+        }
+        match locode_core::Effort::parse(wanted) {
+            Some(effort) => CommandResult::Action(UiAction::SetEffort(Some(effort))),
+            None => CommandResult::Error(format!(
+                "unknown effort {wanted:?} — expected one of {}, or {EFFORT_AUTO}",
+                locode_core::Effort::ALL
+                    .iter()
+                    .map(|e| e.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+        }
     }
 }
 

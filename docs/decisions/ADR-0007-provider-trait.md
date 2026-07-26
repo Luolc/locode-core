@@ -175,3 +175,39 @@ are removed, as is `ModelConfig.reasoning_encoding`.
 Haiku 4.5 and older), which want `budget_tokens`. Those are out of scope by the
 same decision — if a cheap older model is ever wanted for subagents, this wire
 needs the per-model table that is already deferred above.
+
+## Amendment (2026-07-25): locode owns the effort ladder
+
+Effort is now a first-class, **locode-named** setting: a `--effort` flag on both
+CLIs, an `effort` settings key, and an `/effort` command — all speaking
+`locode_provider::Effort` (`low` · `medium` · `high` · `xhigh` · `max`), which
+each wire maps onto its own vocabulary. `ReasoningEffort` gains a `Max` tier so
+the deepest rung is first-class rather than riding through as `Other("max")`.
+
+**Why a ladder of our own.** Effort naming is not portable — vendors ship
+different tiers under different names, and a tier valid on one model is a 400 on
+the next. Exposing the provider's vocabulary directly would make `/effort` mean
+different things on different days and break the moment the model changes. The
+five rungs mirror Anthropic's because Anthropic is what we run today and a 1:1
+mapping is the honest starting point; the indirection exists so a wire with
+fewer tiers collapses rungs in *its* mapping rather than forcing a different
+menu on the user. `Effort::maps_to` surfaces that mapping in the menu's second
+column, so a collapse is visible rather than silent.
+
+**The rungs were verified against the live API, not read off the vendored
+source.** The Claude Code snapshot predates Fable 5 and lists only
+`low|medium|high|max` (`utils/effort.ts:14-19`). Probing `claude-fable-5`,
+`claude-opus-5` and `claude-sonnet-5` directly: `low`, `medium`, `high`,
+`xhigh`, `max` are all accepted; `ultra`, `ultrathink`, `extreme` are 400s.
+**`max` is the top rung**, with `xhigh` between `high` and it.
+
+**"ultrathink" is deliberately not a rung.** In Claude Code it is a keyword
+matched in the *prompt* (`utils/thinking.ts:45`) that bumps effort for that turn
+(`utils/effort.ts:321`) — a per-message nudge layered over the setting, not a
+level of it. Modelling it as a rung would conflate two different mechanisms.
+
+**`auto` clears rather than sets.** `/effort auto` (and an absent flag/setting)
+sends no `output_config`, leaving the API its own default — mirroring Claude
+Code's `/effort [low|medium|high|max|auto]`. Precedence is flag > setting >
+auto; an unparseable settings value warns and degrades to auto rather than
+failing a run (ADR-0024 §1.5 tolerance).
