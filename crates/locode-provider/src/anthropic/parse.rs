@@ -82,8 +82,16 @@ fn map_usage(usage: &wire::MessagesUsage) -> Usage {
         // (ADR-0009 amendment — Some(0) is a real zero, None is N/A).
         cache_read_tokens: usage.cache_read_input_tokens,
         cache_creation_tokens: usage.cache_creation_input_tokens,
-        // Anthropic folds thinking tokens into output_tokens — never reported.
-        reasoning_tokens: None,
+        // Reported as `usage.output_tokens_details.thinking_tokens` where the
+        // endpoint supplies it; `None` when it does not (older responses, and
+        // gateways that drop the breakdown). Deliberately NOT added into
+        // `Usage::context_tokens` — thinking blocks are replayed into the next
+        // request, so they land in that turn's `input_tokens`; counting them
+        // here as well would double-count the same tokens one turn apart.
+        reasoning_tokens: usage
+            .output_tokens_details
+            .as_ref()
+            .and_then(|d| d.thinking_tokens),
     }
 }
 

@@ -392,6 +392,20 @@ pub struct MessagesUsage {
     /// Tokens served from the prompt cache.
     #[serde(default)]
     pub cache_read_input_tokens: Option<u64>,
+    /// Output-token breakdown, when the endpoint reports one.
+    #[serde(default)]
+    pub output_tokens_details: Option<OutputTokensDetails>,
+}
+
+/// The `output_tokens` breakdown (`usage.output_tokens_details`).
+///
+/// Optional throughout: not every endpoint sends it, and the field is absent on
+/// older responses — a missing breakdown must never fail the parse.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct OutputTokensDetails {
+    /// Tokens the model spent thinking.
+    #[serde(default)]
+    pub thinking_tokens: Option<u64>,
 }
 
 /// A structured error body (`{"type":"error","error":{"type":…,"message":…}}`).
