@@ -670,8 +670,18 @@ impl App {
             .as_ref()
             .is_some_and(locode_core::InputQueue::is_empty);
         if taken {
+            // The engine put these on the wire *now*, riding the tool-result
+            // batch of the iteration that just finished. Echo at this point and
+            // not when they were typed: a prompt typed during round 1 but
+            // drained after round 2 belongs after round 2 in the transcript.
+            // Echoing at queue time renders it a full tool round too early, so
+            // the reply appears to arrive later than the question that caused
+            // it — verified against a session trace where the text landed in
+            // batch 2 while the UI had drawn it before batch 1's reply.
             let n = self.mid_run_pushed.min(self.prompt_queue.len());
-            self.prompt_queue.drain(..n);
+            for queued in self.prompt_queue.drain(..n) {
+                self.outbox.push(Block::UserPrompt(queued.display));
+            }
             self.mid_run_pushed = 0;
         }
     }
@@ -697,8 +707,12 @@ impl App {
         }
         self.mid_run_pushed = 0;
         match self.prompt_queue.pop_front() {
-            // No echo here: every queued prompt was echoed when it was queued.
-            Some(queued) => vec![Cmd::Submit(queued.wire)],
+            // Never taken by the engine, so this is where it enters the
+            // conversation — echo it here.
+            Some(queued) => {
+                self.outbox.push(Block::UserPrompt(queued.display));
+                vec![Cmd::Submit(queued.wire)]
+            }
             None => vec![],
         }
     }
@@ -950,12 +964,9 @@ impl App {
                 queue.push(prompt.wire.clone());
                 self.mid_run_pushed += 1;
             }
-            // Echo NOW, not at turn end. Once the engine drains it mid-run the
-            // text is already in the transcript on the wire, and the delivered
-            // path deliberately submits nothing — so turn end is not a place an
-            // echo can still happen. Echoing here also makes the queued prompt
-            // visible immediately, which is what ADR-0028 asks for.
-            self.outbox.push(Block::UserPrompt(prompt.display.clone()));
+            // No transcript echo yet — queued is not delivered. The pending
+            // list renders it meanwhile; the transcript gets it at the point
+            // the engine actually takes it, which is a later tool round.
             self.prompt_queue.push_back(prompt);
             return vec![];
         }
@@ -1836,19 +1847,9 @@ mod tests {
         assert_eq!(app.prompt_queue.len(), 1);
         // Echoed when QUEUED, not at turn end — once the engine drains a prompt
         // mid-run there is no turn-end submit left to echo from (ADR-0028).
-        let echoes: Vec<&str> = app
-            .outbox
-            .iter()
-            .filter_map(|b| match b {
-                Block::UserPrompt(p) => Some(p.as_str()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            echoes,
-            vec!["next prompt", "and another"],
-            "each queued prompt is visible exactly once, in order"
-        );
+        // Never taken by the engine, so the fallback submit is where it enters
+        // the conversation — and that is where it is echoed.
+        assert!(matches!(app.outbox.last(), Some(Block::UserPrompt(p)) if p == "next prompt"));
     }
 
     /// Regression: a mid-run prompt the engine delivers must still be visible.
@@ -1869,13 +1870,23 @@ mod tests {
         type_str(&mut app, "what is the date?", t0);
         let _ = app.update(key(KeyCode::Enter), t0);
 
+        // NOT in the transcript yet — queued is not delivered. It renders in
+        // the pending list until the engine actually takes it.
+        assert!(
+            !app.outbox
+                .iter()
+                .any(|b| matches!(b, Block::UserPrompt(p) if p == "what is the date?")),
+            "queued must not appear in the transcript"
+        );
+        assert_eq!(app.prompt_queue.len(), 1);
+
+        // The engine takes it, riding a later tool-result batch.
+        let _ = queue.take_all();
+        let _ = app.update(Msg::Tick, t0);
         assert!(
             matches!(app.outbox.last(), Some(Block::UserPrompt(p)) if p == "what is the date?"),
-            "visible as soon as it is queued"
+            "echoed at the point it actually entered the conversation"
         );
-
-        // The engine takes it mid-run; the echo must survive to turn end.
-        let _ = queue.take_all();
         let _ = app.update(
             Msg::Engine(Box::new(EngineMsg::RunFinished(Box::new(report(
                 Status::Completed,
