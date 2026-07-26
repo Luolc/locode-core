@@ -213,3 +213,50 @@ fn missing_stop_reason_never_invents_one() {
     let completion = response_to_completion(response_with_stop(None)).expect("ok");
     assert!(matches!(completion.stop, StopReason::Unknown(_)));
 }
+
+/// `thinking_tokens` rides in `usage.output_tokens_details`, and must not be
+/// folded into the context total — the next turn replays the thinking blocks,
+/// so those tokens arrive again as that turn's `input_tokens`.
+#[test]
+fn thinking_tokens_populate_reasoning_tokens_but_not_the_context_total() {
+    let resp: wire::MessagesResponse = serde_json::from_value(serde_json::json!({
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-fable-5",
+        "content": [{"type": "text", "text": "hi"}],
+        "stop_reason": "end_turn",
+        "usage": {
+            "input_tokens": 100,
+            "output_tokens": 40,
+            "output_tokens_details": {"thinking_tokens": 25}
+        }
+    }))
+    .expect("parses");
+    let completion = response_to_completion(resp).expect("completion");
+
+    assert_eq!(completion.usage.reasoning_tokens, Some(25));
+    assert_eq!(
+        completion.usage.context_tokens(),
+        140,
+        "input + output only — the 25 thinking tokens are already inside output_tokens' turn"
+    );
+}
+
+/// A response with no breakdown (older endpoints, gateways that drop it) must
+/// parse cleanly with `reasoning_tokens: None`, not fail.
+#[test]
+fn a_missing_output_tokens_details_is_not_an_error() {
+    let resp: wire::MessagesResponse = serde_json::from_value(serde_json::json!({
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-opus-4-8",
+        "content": [{"type": "text", "text": "hi"}],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 10, "output_tokens": 5}
+    }))
+    .expect("parses without a breakdown");
+    let completion = response_to_completion(resp).expect("completion");
+    assert_eq!(completion.usage.reasoning_tokens, None);
+}

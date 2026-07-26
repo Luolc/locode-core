@@ -63,3 +63,23 @@ An added optional field, so per this ADR's own evolution policy (and ADR-0018's)
 
 Accumulated usage and its cost translation stay out of scope — they are a separate,
 later feature, and this field deliberately does not try to serve both purposes.
+
+## Amendment (2026-07-25): `reasoning_tokens` is reported, not counted
+
+`Usage.reasoning_tokens` is now populated on the Anthropic wire from
+`usage.output_tokens_details.thinking_tokens`. It had been hardcoded `None`
+behind a comment claiming Anthropic "folds thinking tokens into output_tokens —
+never reported"; the endpoint does report a breakdown, so the field was empty
+for no reason. It stays `Option`: not every endpoint sends the breakdown, and a
+missing one must never fail the parse.
+
+**It is deliberately excluded from `Usage::context_tokens`.** That total answers
+"how full is the window", computed from the last turn's usage. Thinking blocks
+are replayed into the next request (ADR-0013 keeps their signatures), so those
+tokens arrive again as the *next* turn's `input_tokens` — adding them here as
+well would count the same tokens twice, one turn apart. Measured shape argues
+the same way: `output_tokens` and `thinking_tokens` overlap ambiguously rather
+than partitioning cleanly (a probe returned `output_tokens: 22` against
+`thinking_tokens: 27`), so treating them as disjoint buckets to sum is not
+supportable. The field is a reporting/telemetry counter — what did thinking
+cost — not a context-occupancy input.
