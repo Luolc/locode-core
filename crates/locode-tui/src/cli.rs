@@ -114,6 +114,12 @@ pub struct Cli {
     /// on by default.
     #[arg(long)]
     pub no_project_instructions: bool,
+
+    /// Add a directory the agent may read and write, beyond the working
+    /// directory. Repeatable. Its `AGENTS.md` and `.agents/skills` are picked up
+    /// too — the point of pointing at a subtree of a large monorepo.
+    #[arg(long = "add-dir", value_name = "DIR")]
+    pub add_dir: Vec<std::path::PathBuf>,
 }
 
 impl Cli {
@@ -139,6 +145,7 @@ impl Cli {
             strip_identity: self.strip_identity,
             stream: self.stream,
             no_project_instructions: self.no_project_instructions,
+            add_dir: self.add_dir.clone(),
         }
     }
 }

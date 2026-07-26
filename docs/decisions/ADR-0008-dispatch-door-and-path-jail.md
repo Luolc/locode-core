@@ -183,3 +183,39 @@ policy; `PathPolicy` keeps both variants and every jail test still runs both way
 This is a default, and it is expected to flip back when the permission rules land —
 at which point `--restricted` stops being a preview and this amendment should be
 revisited.
+
+## Amendment (2026-07-25): the jail may hold more than one root (`--add-dir`)
+
+`HostConfig.extra_roots` (default empty) adds jail roots beyond
+`workspace_root`. A jailed path is accepted when it resolves under the
+workspace root **or** any extra root. This lifts the deferral recorded in
+ADR-0023, whose `--add-dir` design was accepted but blocked on exactly this
+security-posture change.
+
+**Additive, never relaxing.** Extra roots do not weaken any check: `..`,
+absolute, and symlink escapes are rejected the same way, and a path outside
+*every* root is still an `Escape`. The only difference is the size of the
+allowed set, and it grows only when a caller passes `--add-dir`. Roots are
+canonicalized at `Host::new`, so a non-existent directory is a startup error
+naming the path the user typed — never a silently narrower jail.
+
+**Two forms in the lexical pre-check.** Step (1) is a cheap lexical prefix test
+and step (2) is the authoritative canonical one. Checking step (1) against the
+canonical roots alone breaks a root reached through a symlink: on macOS
+`/var/…` canonicalizes to `/private/var/…`, so an absolute path the canonical
+check would accept is rejected before it gets there — and a monorepo mounted
+behind a symlinked path is the case that matters. Each root is therefore kept
+in both its as-given (lexically normalized) and canonical form; step (1)
+accepts either, step (2) still requires canonical. Claude Code checks the same
+two forms (`permissions/filesystem.ts:688`). Widening a pre-filter ahead of an
+unchanged authoritative check cannot admit an escape.
+
+**One flag, three effects.** `--add-dir` widens the jail *and* contributes the
+directory's `AGENTS.md` (ADR-0023's `extra_roots`) *and* its `.agents/skills`
+(ADR-0025). Claude and Codex likewise bind jail-widening to the same flag
+(`claude-code: main.tsx:1000`; `codex: shared_options.rs:61`). Claude Code gates
+the CLAUDE.md half behind `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD`,
+default off (`claudemd.ts:938-975`); we do not, because instruction and skill
+discovery is loop-adjacent engine machinery rather than pack fidelity
+(ADR-0023 §fidelity boundary), and the motivating case — pointing at one
+subtree of a monorepo too large to open at its root — is worthless without them.

@@ -39,6 +39,7 @@ fn cli(dir: &tempfile::TempDir, api_schema: &str) -> Cli {
         strip_identity: false,
         stream: false,
         // Isolate these tests from AGENTS.md discovery (they assert fixed trajectories).
+        add_dir: Vec::new(),
         no_project_instructions: true,
     }
 }

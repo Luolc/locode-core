@@ -86,6 +86,12 @@ impl Default for ExecLimits {
 pub struct HostConfig {
     /// The path-jail root (canonicalized at [`Host::new`]).
     pub workspace_root: PathBuf,
+    /// Additional jail roots (`--add-dir`), canonicalized at [`Host::new`].
+    ///
+    /// A jailed path is accepted when it resolves under `workspace_root` **or** any
+    /// of these. Empty by default — the jail stays single-rooted unless a caller
+    /// explicitly widens it (ADR-0008 amendment 2026-07-25).
+    pub extra_roots: Vec<PathBuf>,
     /// Whether FS tools are jailed to `workspace_root` (default [`PathPolicy::Jailed`]).
     pub path_policy: PathPolicy,
     /// Shell execution limits.
@@ -103,6 +109,7 @@ impl HostConfig {
     pub fn new(workspace_root: impl Into<PathBuf>) -> Self {
         Self {
             workspace_root: workspace_root.into(),
+            extra_roots: Vec::new(),
             path_policy: PathPolicy::default(),
             exec: ExecLimits::default(),
             shell_program: "bash".to_string(),
@@ -116,6 +123,15 @@ impl HostConfig {
 #[derive(Debug, Clone)]
 pub struct Host {
     pub(crate) workspace_root: PathBuf,
+    pub(crate) extra_roots: Vec<PathBuf>,
+    /// Every jail root in its **as-given** (lexically normalized, not
+    /// symlink-resolved) form. macOS `/var` → `/private/var` is the everyday
+    /// case, and a monorepo reached through a symlinked path is the one that
+    /// matters: without this the lexical pre-check rejects an absolute path the
+    /// canonical check would then have accepted. Claude Code checks the same
+    /// two forms (`permissions/filesystem.ts:688`). The canonical lists above
+    /// remain the authoritative gate.
+    pub(crate) roots_as_given: Vec<PathBuf>,
     pub(crate) path_policy: PathPolicy,
     pub(crate) limits: ExecLimits,
     pub(crate) shell_program: String,
@@ -137,8 +153,24 @@ impl Host {
         let workspace_root = std::fs::canonicalize(&config.workspace_root).map_err(|e| {
             PathError::InvalidRoot(format!("{}: {e}", config.workspace_root.display()))
         })?;
+        // Every extra root must exist too — a typo'd `--add-dir` should fail loudly
+        // at startup, not silently narrow the jail back to one root.
+        let extra_roots = config
+            .extra_roots
+            .iter()
+            .map(|dir| {
+                std::fs::canonicalize(dir)
+                    .map_err(|e| PathError::InvalidRoot(format!("{}: {e}", dir.display())))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let roots_as_given = std::iter::once(&config.workspace_root)
+            .chain(config.extra_roots.iter())
+            .map(|p| crate::path::normalize_lexical_pub(p))
+            .collect();
         Ok(Self {
             workspace_root,
+            extra_roots,
+            roots_as_given,
             path_policy: config.path_policy,
             limits: config.exec,
             shell_program: config.shell_program,

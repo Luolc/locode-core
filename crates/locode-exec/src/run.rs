@@ -51,7 +51,11 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
     let cwd = std::fs::canonicalize(&cwd)
         .map_err(|e| PreRunError(format!("--cwd {}: {e}", cwd.display())))?;
 
+    // `--add-dir` roots: canonicalized here so a typo fails at startup with the
+    // path the user typed, before any model call (ADR-0008 amendment 2026-07-25).
+    let add_dirs = canonicalize_add_dirs(&cli.add_dir)?;
     let mut host_config = HostConfig::new(&cwd);
+    host_config.extra_roots.clone_from(&add_dirs);
     // Unrestricted is the default (ADR-0008 amendment 2026-07-24): the jail and the
     // approval seam both ship, but the permission *rules* behind them do not, so the
     // restricted path cannot remember an answer. `--restricted` opts back in.
@@ -153,6 +157,7 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
             enabled: !cli.no_project_instructions,
             root_stop_pattern: settings.root_stop_pattern.clone(),
             extends_dirs: extends_dirs.clone(),
+            extra_roots: add_dirs.clone(),
             ..InstructionsConfig::default()
         },
         // Skills (ADR-0025): the same resolved settings feed discovery, which is what
@@ -160,6 +165,7 @@ pub async fn run(cli: Cli, providers: &ProviderRegistry) -> Result<ExitCode, Pre
         skills: SkillsConfig {
             extends_dirs,
             extra: settings.skills_extra.clone(),
+            extra_roots: add_dirs.clone(),
             ..SkillsConfig::enabled()
         },
         ..EngineConfig::default()
@@ -468,6 +474,26 @@ fn new_session_id() -> String {
 /// trace stays replayable/whole-message even under `--stream`.
 fn in_whole_message_trace(event: &locode_core::Event) -> bool {
     !matches!(event, locode_core::Event::MessageDelta { .. })
+}
+
+/// Canonicalize `--add-dir` roots, failing with the path the user typed.
+///
+/// Resolving here (rather than deep in the host) means a typo is a startup error
+/// naming the bad directory, not a silently narrower jail or a confusing
+/// mid-run escape. Each root must already exist — `--add-dir` widens access to a
+/// tree, it does not create one.
+///
+/// # Errors
+/// [`PreRunError`] when a directory does not exist or cannot be canonicalized.
+pub fn canonicalize_add_dirs(
+    dirs: &[std::path::PathBuf],
+) -> Result<Vec<std::path::PathBuf>, PreRunError> {
+    dirs.iter()
+        .map(|dir| {
+            std::fs::canonicalize(dir)
+                .map_err(|e| PreRunError(format!("--add-dir {}: {e}", dir.display())))
+        })
+        .collect()
 }
 
 #[cfg(test)]
