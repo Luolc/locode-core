@@ -19,6 +19,21 @@ enum SampleError {
 }
 
 impl Session {
+    /// Append anything the user typed mid-run to this iteration's tool-result
+    /// batch (ADR-0028).
+    ///
+    /// The text goes **after** the results, and the order is load-bearing
+    /// rather than cosmetic: the Responses wire lowers a `User` message into a
+    /// flat item array and flushes a leading text run *ahead* of the
+    /// `function_call_output` items, which would read as the user speaking
+    /// before the tools reported. Appending is correct on both wires.
+    fn with_queued_input(&self, mut results: Vec<ContentBlock>) -> Vec<ContentBlock> {
+        if let Some(text) = self.input_queue.take_marked() {
+            results.push(ContentBlock::Text { text });
+        }
+        results
+    }
+
     /// Refresh the shared project-instruction `<system-reminder>` (ADR-0023), rescanning
     /// every turn. Injects a `User` message on first appearance, a replace-bannered one when
     /// the files changed, or a removal notice when they vanished; a no-op when unchanged or
@@ -184,6 +199,7 @@ impl Session {
             // (0) Cancellation check at the iteration top (ADR-0018): also the
             // exit taken after a mid-batch cancel paired the rest of the batch.
             if self.cancel.is_cancelled() {
+                self.input_queue.clear();
                 break Terminal::Cancelled;
             }
 
@@ -201,7 +217,13 @@ impl Session {
                 Ok(completion) => completion,
                 // Cancelled mid-sample: no assistant message was appended —
                 // the history is unchanged since the last append.
-                Err(SampleError::Cancelled) => break Terminal::Cancelled,
+                Err(SampleError::Cancelled) => {
+                    // Undelivered input is dropped: it was written for a run the
+                    // user then abandoned (ADR-0028). Anything already drained is
+                    // in `history` and stays there — cancel rolls nothing back.
+                    self.input_queue.clear();
+                    break Terminal::Cancelled;
+                }
                 Err(SampleError::Provider(err)) => {
                     break Terminal::ModelError {
                         error: err.to_string(),
@@ -252,10 +274,18 @@ impl Session {
                 .dispatch_batch(calls, &mut acc, truncated_call.as_deref())
                 .await;
 
-            // (f) Append the result batch as one User message (Anthropic shape).
+            // (f) Drain anything the user typed mid-run into THIS batch, then
+            // append it as one User message (Anthropic shape).
+            //
+            // The text goes **after** the tool results, and the order is
+            // load-bearing rather than cosmetic (ADR-0028): the Responses wire
+            // lowers a User message into a flat item array and flushes a leading
+            // text run *ahead* of the `function_call_output` items, which would
+            // read as the user speaking before the tools reported. Appending is
+            // correct on both wires.
             let tool_msg = Message {
                 role: Role::User,
-                content: results,
+                content: self.with_queued_input(results),
             };
             self.history.push(tool_msg.clone());
             self.sink.emit(Event::Message { message: tool_msg });

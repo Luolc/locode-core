@@ -9,6 +9,7 @@
 
 mod approve;
 mod config;
+mod queue;
 mod run;
 mod session;
 mod sink;
@@ -16,6 +17,7 @@ mod terminal;
 
 pub use approve::{AllowAll, ApprovalRequest, Approver, Decision};
 pub use config::EngineConfig;
+pub use queue::{InputQueue, MID_RUN_PREAMBLE};
 pub use session::Session;
 pub use sink::{EventSink, FnSink, NullSink};
 // The type `Session::cancel_handle` returns (ADR-0018) — re-exported so
@@ -381,6 +383,90 @@ mod tests {
     /// arguments short. The Anthropic wire surfaces the loss as an empty
     /// `input`, so dispatching would report a missing required field and blame
     /// the model; the loop names the real cause instead and keeps going.
+    /// Text typed mid-run rides the tool-result batch of the iteration that
+    /// drains it — **after** the results, which the Responses wire's lowering
+    /// makes load-bearing (ADR-0028).
+    #[tokio::test]
+    async fn queued_input_rides_the_tool_result_batch_after_the_results() {
+        let (mut session, events) = session_with(
+            vec![Ok(tool_turn("c1", "echo")), Ok(text_turn("done"))],
+            echo_registry(),
+            config(),
+        );
+        let queue = session.input_queue();
+        queue.push("actually, use tabs");
+
+        let report = session.run_text("go").await;
+        assert_eq!(report.status, Status::Completed);
+
+        let batch = dump(&events)
+            .into_iter()
+            .find_map(|e| match e {
+                Event::Message { message }
+                    if message.role == Role::User
+                        && message
+                            .content
+                            .iter()
+                            .any(|b| matches!(b, ContentBlock::ToolResult { .. })) =>
+                {
+                    Some(message)
+                }
+                _ => None,
+            })
+            .expect("a tool-result batch was appended");
+
+        let kinds: Vec<&str> = batch
+            .content
+            .iter()
+            .map(|b| match b {
+                ContentBlock::ToolResult { .. } => "result",
+                ContentBlock::Text { .. } => "text",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            vec!["result", "text"],
+            "the queued text must follow the results, never precede them"
+        );
+
+        let text = batch
+            .content
+            .iter()
+            .find_map(|b| match b {
+                ContentBlock::Text { text } => Some(text.clone()),
+                _ => None,
+            })
+            .expect("the queued text landed");
+        assert!(
+            text.starts_with(crate::MID_RUN_PREAMBLE),
+            "the mid-run path is marked: {text}"
+        );
+        assert!(text.contains("actually, use tabs"));
+        assert!(queue.is_empty(), "draining consumes");
+    }
+
+    /// A run whose turn emits no tool calls has no batch to carry the text, so
+    /// the item stays queued for the frontend's next-prompt fallback.
+    #[tokio::test]
+    async fn queued_input_with_no_tool_calls_stays_for_the_fallback() {
+        let (mut session, _events) = session_with(
+            vec![Ok(text_turn("nothing to do"))],
+            echo_registry(),
+            config(),
+        );
+        let queue = session.input_queue();
+        queue.push("one more thing");
+
+        let report = session.run_text("go").await;
+        assert_eq!(report.status, Status::Completed);
+        assert_eq!(
+            queue.pending(),
+            vec!["one more thing".to_string()],
+            "no carrier this run — the frontend submits it as an ordinary prompt"
+        );
+    }
+
     #[tokio::test]
     async fn truncated_tool_call_is_not_executed_and_names_the_cause() {
         let truncated = Completion {

@@ -35,4 +35,4 @@ live in `~/dev/coding-cli-survey`.
 | [0025](ADR-0025-agent-skills.md) | Agent Skills — shared discovery + whole-body-diffed `<system-reminder>` listing (rescanned post-run); no tool — the model reads `SKILL.md` (amends 0008, 0023, 0024) | Accepted |
 | [0026](ADR-0026-slash-commands-core.md) | Slash commands — the **core** contract: a `SlashCommand` trait, a value-returning result, every `user-invocable` skill becomes a command; plain-text arguments (UI is a later plan) | Accepted |
 | [0027](ADR-0027-parallel-tool-dispatch.md) | Parallel tool dispatch — batched approval then per-path locking (supersedes 0005's deferral; amends 0017) | **Draft — not approved**, P1 |
-| [0028](ADR-0028-mid-run-user-input.md) | Mid-run user input — one addressed queue, iteration-granular drain riding the tool-result batch, visible queued/delivered state (amends 0005; the queue P0.5 notifications reuse) | **Draft — not approved** |
+| [0028](ADR-0028-mid-run-user-input.md) | Mid-run user input — one addressed queue, iteration-granular drain riding the tool-result batch, visible queued/delivered state (amends 0005; the queue P0.5 notifications reuse) | Accepted |

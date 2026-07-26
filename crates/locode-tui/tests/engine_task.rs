@@ -181,7 +181,7 @@ async fn esc_cancels_a_running_turn_via_the_handle() {
     // Capture the run's cancel handle from RunStarted, then fire it after the
     // dispatch has had a beat to spawn the sleep.
     let cancel = match recv(&mut rx).await {
-        EngineMsg::RunStarted { cancel } => cancel,
+        EngineMsg::RunStarted { cancel, .. } => cancel,
         other => panic!("expected RunStarted, got {other:?}"),
     };
     tokio::time::sleep(std::time::Duration::from_millis(400)).await;

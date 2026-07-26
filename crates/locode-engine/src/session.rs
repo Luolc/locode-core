@@ -43,6 +43,9 @@ pub struct Session {
     /// The listing body from the most recent scan, injected on the next turn
     /// (ADR-0025 §3.2 — scanning happens after a run, never at the top of one).
     pub(crate) skills_body: Option<String>,
+    /// Text typed while a run is in flight, drained into the next tool-result
+    /// batch (ADR-0028).
+    pub(crate) input_queue: crate::InputQueue,
 }
 
 impl Session {
@@ -70,6 +73,7 @@ impl Session {
             turns_run: 0,
             approver: Arc::new(AllowAll),
             skills_body: None,
+            input_queue: crate::InputQueue::new(),
         }
     }
 
@@ -129,6 +133,16 @@ impl Session {
         if !self.config.skills.extra_roots.contains(&root) {
             self.config.skills.extra_roots.push(root);
         }
+    }
+
+    /// A clonable handle to this session's mid-run input queue (ADR-0028).
+    ///
+    /// Clone it **before** calling [`Session::run`] — `run` takes `&mut self`,
+    /// so nothing on the session is reachable while a turn is in flight. Same
+    /// shape as [`Session::cancel_handle`] and for the same reason.
+    #[must_use]
+    pub fn input_queue(&self) -> crate::InputQueue {
+        self.input_queue.clone()
     }
 
     /// Set the reasoning effort subsequent turns sample with.
