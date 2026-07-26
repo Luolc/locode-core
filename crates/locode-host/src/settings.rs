@@ -41,6 +41,10 @@ pub struct Settings {
     pub api_schema: Option<String>,
     /// Default harness pack (`--harness` wins).
     pub harness: Option<String>,
+    /// Default reasoning effort, as a locode ladder name (`--effort` wins).
+    /// Kept as a string here so this crate stays free of provider types; the
+    /// caller parses it and warns on an unknown rung rather than failing.
+    pub effort: Option<String>,
     /// `instructions.root_stop_pattern` — activates ADR-0023's root-detection
     /// regex (matching itself lands in Task 31 S2).
     pub root_stop_pattern: Option<String>,
@@ -200,6 +204,7 @@ pub fn load_settings_from(
             model: raw.model,
             api_schema: raw.api_schema,
             harness: raw.harness,
+            effort: raw.effort,
             root_stop_pattern: raw.instructions.root_stop_pattern,
             skills_extra,
         },
@@ -334,6 +339,7 @@ struct RawSettings {
     model: Option<String>,
     api_schema: Option<String>,
     harness: Option<String>,
+    effort: Option<String>,
     #[serde(default)]
     instructions: RawInstructions,
     #[serde(default)]

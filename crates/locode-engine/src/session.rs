@@ -114,6 +114,16 @@ impl Session {
         }
     }
 
+    /// Set the reasoning effort subsequent turns sample with.
+    ///
+    /// Unlike [`Session::set_model`] this announces nothing: effort changes how
+    /// hard the model thinks, not who it is, so there is no stale statement in
+    /// the transcript to correct — and injecting a reminder would cost a cache
+    /// breakpoint for no gain.
+    pub fn set_effort(&mut self, effort: Option<locode_provider::ReasoningEffort>) {
+        self.config.sampling_args.reasoning_effort = effort;
+    }
+
     /// Append a message to the conversation and emit it, exactly as a turn would.
     pub fn announce(&mut self, message: Message) {
         self.history.push(message.clone());

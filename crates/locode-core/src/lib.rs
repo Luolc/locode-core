@@ -41,9 +41,9 @@ pub use locode_provider::anthropic::{
     ApiBackend, AuthRefresh, AuthScheme, DeveloperRendering, ModelConfig, RetryPolicy,
 };
 pub use locode_provider::{
-    AnthropicProvider, CacheHint, Completion, ConversationRequest, MockProvider, OpenAiBackend,
-    OpenAiModelConfig, OpenAiResponsesProvider, Provider, ProviderError, ReasoningEffort,
-    SamplingArgs, StopReason, SystemPlacement,
+    AnthropicProvider, CacheHint, Completion, ConversationRequest, Effort, MockProvider,
+    OpenAiBackend, OpenAiModelConfig, OpenAiResponsesProvider, Provider, ProviderError,
+    ReasoningEffort, SamplingArgs, StopReason, SystemPlacement,
 };
 
 // ---- packs: harness selection ----

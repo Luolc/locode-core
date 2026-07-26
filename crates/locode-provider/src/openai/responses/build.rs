@@ -312,6 +312,7 @@ fn reasoning_param(req: &ConversationRequest, cfg: &OpenAiModelConfig) -> Option
             ReasoningEffort::Medium => "medium".to_string(),
             ReasoningEffort::High => "high".to_string(),
             ReasoningEffort::XHigh => "xhigh".to_string(),
+            ReasoningEffort::Max => "max".to_string(),
             ReasoningEffort::Other(s) => s.clone(),
         });
     let effort = effort?;

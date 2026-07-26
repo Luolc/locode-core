@@ -31,8 +31,8 @@ pub mod run;
 #[cfg(unix)]
 mod signal;
 
-pub use cli::{Cli, Harness, OutputFormat};
-pub use run::canonicalize_add_dirs;
+pub use cli::{Cli, EffortArg, Harness, OutputFormat};
+pub use run::{canonicalize_add_dirs, resolve_effort};
 // The permission-posture notices, shared verbatim with the interactive UI so the
 // two surfaces cannot drift (ADR-0008 amendment 2026-07-24).
 pub use locode_core::ProviderRegistry;

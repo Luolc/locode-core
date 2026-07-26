@@ -53,6 +53,9 @@ pub enum UiAction {
     Quit,
     /// Switch the model this session samples with, and remember it for the next one.
     SetModel(String),
+    /// Set the effort rung this session samples with, and remember it. `None`
+    /// clears the override, restoring the API's own default (`/effort auto`).
+    SetEffort(Option<locode_core::Effort>),
 }
 
 /// Read-only context handed to `visible` and `suggest_args`.
@@ -65,6 +68,11 @@ pub struct CommandCtx<'a> {
     pub model: Option<&'a str>,
     /// Whether a turn is in flight, for the commands that cannot run under one.
     pub is_running: bool,
+    /// The effort rung in use, for the command that reports or changes it.
+    /// `None` means no override — the API's own default.
+    pub effort: Option<locode_core::Effort>,
+    /// The wire in use, so the effort menu can show what each rung maps to.
+    pub api_schema: Option<&'a str>,
     /// The command set, for the commands that describe it (`/help`).
     ///
     /// A shared reference, so a command reading the registry it lives in is an

@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use locode_exec::{Harness, OutputFormat};
+use locode_exec::{EffortArg, Harness, OutputFormat};
 
 /// `locode` — an interactive coding agent (default), or a headless one-shot
 /// with `-p`.
@@ -120,6 +120,11 @@ pub struct Cli {
     /// too — the point of pointing at a subtree of a large monorepo.
     #[arg(long = "add-dir", value_name = "DIR")]
     pub add_dir: Vec<std::path::PathBuf>,
+
+    /// How hard the model should think. Omitted uses the `effort` setting, then
+    /// the API's own default.
+    #[arg(long, value_name = "LEVEL")]
+    pub effort: Option<EffortArg>,
 }
 
 impl Cli {
@@ -146,6 +151,7 @@ impl Cli {
             stream: self.stream,
             no_project_instructions: self.no_project_instructions,
             add_dir: self.add_dir.clone(),
+            effort: self.effort,
         }
     }
 }

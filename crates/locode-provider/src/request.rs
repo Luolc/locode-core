@@ -115,6 +115,10 @@ pub enum ReasoningEffort {
     High,
     /// Extra-high reasoning effort.
     XHigh,
+    /// The deepest tier a wire offers. Distinct from [`ReasoningEffort::XHigh`]:
+    /// Anthropic exposes both, and `max` is the "correctness matters more than
+    /// cost" setting rather than one more notch of `xhigh`.
+    Max,
     /// A vendor/model-specific tier, passed through verbatim by wires that
     /// take effort strings; wires with fixed mappings soft-reject it.
     Other(String),

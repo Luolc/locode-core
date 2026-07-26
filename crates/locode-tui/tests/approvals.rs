@@ -37,6 +37,7 @@ fn cli(dir: &tempfile::TempDir, yolo: bool) -> Cli {
         stream: false,
         // Isolate these tests from AGENTS.md discovery (they assert fixed trajectories).
         add_dir: Vec::new(),
+        effort: None,
         no_project_instructions: true,
     }
 }

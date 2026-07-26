@@ -110,6 +110,41 @@ pub struct Cli {
     /// too — the point of pointing at a subtree of a large monorepo.
     #[arg(long = "add-dir", value_name = "DIR")]
     pub add_dir: Vec<std::path::PathBuf>,
+
+    /// How hard the model should think. Omitted uses the `effort` setting, then
+    /// the API's own default.
+    #[arg(long, value_name = "LEVEL")]
+    pub effort: Option<EffortArg>,
+}
+
+/// How hard the model should think. locode's own ladder — each wire maps it
+/// onto whatever that API accepts, so the same word means the same intent
+/// whichever model is in use.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum EffortArg {
+    /// Fastest; short, scoped tasks.
+    Low,
+    /// Balanced.
+    Medium,
+    /// The API default.
+    High,
+    /// Best for coding and agentic work.
+    XHigh,
+    /// Deepest; correctness over cost.
+    Max,
+}
+
+impl From<EffortArg> for locode_core::Effort {
+    fn from(arg: EffortArg) -> Self {
+        match arg {
+            EffortArg::Low => locode_core::Effort::Low,
+            EffortArg::Medium => locode_core::Effort::Medium,
+            EffortArg::High => locode_core::Effort::High,
+            EffortArg::XHigh => locode_core::Effort::XHigh,
+            EffortArg::Max => locode_core::Effort::Max,
+        }
+    }
 }
 
 /// The registered harness packs (a closed set — clap validates and lists them).

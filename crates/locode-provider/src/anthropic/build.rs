@@ -377,6 +377,7 @@ fn map_reasoning(req: &ConversationRequest) -> (wire::ThinkingConfig, Option<wir
         Some(ReasoningEffort::Medium) => "medium",
         Some(ReasoningEffort::High) => "high",
         Some(ReasoningEffort::XHigh) => "xhigh",
+        Some(ReasoningEffort::Max) => "max",
         Some(ReasoningEffort::Other(s)) => s.as_str(),
     };
     (

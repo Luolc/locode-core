@@ -22,6 +22,9 @@ pub enum UiCommand {
     /// Swap the running session's model, and persist it as the next session's
     /// default (`/model <id>`).
     SetModel(String),
+    /// Set the running session's effort rung and persist it (`/effort <rung>`).
+    /// `None` clears the override (`/effort auto`).
+    SetEffort(Option<locode_core::Effort>),
 }
 
 /// The context occupancy recovered for a resumed session: **exact** when the
@@ -56,6 +59,13 @@ pub enum EngineMsg {
     },
     /// Session assembly failed pre-run (bad schema, missing key, …).
     BuildFailed(String),
+    /// `/effort` finished: the rung now in use and the line to show.
+    EffortChanged {
+        /// The rung actually in use after the attempt (`None` = the API default).
+        effort: Option<locode_core::Effort>,
+        /// User-facing outcome.
+        message: String,
+    },
     /// `/model` finished: the model now in use (unchanged when the switch failed) and
     /// the line to show. Carrying the resolved model — not the requested one — is what
     /// keeps the status bar honest when a factory resolves something else or refuses.
@@ -158,6 +168,9 @@ pub fn spawn(
                 }
                 UiCommand::SetModel(model) => {
                     let _ = msg_tx.send(switch_model(&mut built, &registry, &model));
+                }
+                UiCommand::SetEffort(effort) => {
+                    let _ = msg_tx.send(switch_effort(&mut built, effort));
                 }
                 // `/new` always starts FRESH — the resume intent does not stick.
                 UiCommand::NewSession => {
@@ -273,6 +286,8 @@ fn unwrap_user_query(text: &str) -> String {
 struct BuiltSession {
     session: Session,
     model: String,
+    /// The effort rung in use (`None` = no override, the API's default).
+    effort: Option<locode_core::Effort>,
     cwd_display: String,
     /// The effective harness (a resumed session's recorded pack wins).
     harness: String,
@@ -298,6 +313,30 @@ struct BuiltSession {
 /// after it: a failed write must not leave the user on a model the status bar says they
 /// left. The reported model is the one the factory *resolved*, not the one requested, so
 /// a redirected or refused switch cannot leave the footer lying.
+/// Apply an effort rung to the running session and persist it for the next one.
+///
+/// Persisted to the user-global file for the same reason `/model` is: the
+/// running session already changed, and the file is what the *next* one starts
+/// with. `None` writes JSON `null`, which the loader reads back as "unset".
+fn switch_effort(built: &mut BuiltSession, effort: Option<locode_core::Effort>) -> EngineMsg {
+    built.session.set_effort(effort.map(Into::into));
+    built.effort = effort;
+
+    let value = effort.map_or(serde_json::Value::Null, |e| {
+        serde_json::Value::String(e.as_str().to_string())
+    });
+    let saved = locode_core::locode_home()
+        .map_err(|e| e.clone())
+        .and_then(|home| locode_core::update_user_setting(&home, "effort", value));
+
+    let label = effort.map_or("auto", locode_core::Effort::as_str);
+    let message = match saved {
+        Ok(_) => format!("effort: {label}"),
+        Err(e) => format!("effort: {label} (this session only — could not save: {e})"),
+    };
+    EngineMsg::EffortChanged { effort, message }
+}
+
 fn switch_model(built: &mut BuiltSession, registry: &ProviderRegistry, model: &str) -> EngineMsg {
     let init = ProviderInit {
         session_id: built.session_id.clone(),
@@ -369,6 +408,11 @@ fn build_session(
     let settings_load = locode_core::load_settings(&cwd, cli.settings.as_deref());
     let extends_dirs = settings_load.extends_dirs;
     let settings = settings_load.settings;
+    // Same precedence as headless; the TUI has no stderr surface, so an unknown
+    // rung degrades silently to the API default here (matching how this path
+    // already drops layer warnings).
+    let effort =
+        locode_exec::resolve_effort(cli.effort, settings.effort.as_deref(), &mut Vec::new());
 
     // Resume target (`-c`/`-r`, ADR-0024 §2.5): the rollout header wins the
     // identity; an explicit conflicting flag errors (no silent pack/wire swap).
@@ -471,7 +515,10 @@ fn build_session(
         cwd: cwd.clone(),
         workspace_root: cwd.clone(),
         max_turns: None,
-        sampling_args: SamplingArgs::default(),
+        sampling_args: SamplingArgs {
+            reasoning_effort: effort.map(Into::into),
+            ..SamplingArgs::default()
+        },
         cache_hint: CacheHint::Standard,
         // The interactive TUI always streams (ADR-0021) — live token render.
         streaming: true,
@@ -547,6 +594,7 @@ fn build_session(
         .unwrap_or_default();
     Ok(BuiltSession {
         session,
+        effort,
         model,
         cwd_display,
         harness: harness_name,
