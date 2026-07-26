@@ -345,6 +345,7 @@ impl App {
     /// the loop injects `now` so tests control time.
     pub fn update(&mut self, msg: Msg, now: Instant) -> Vec<Cmd> {
         self.dirty = true;
+        self.reconcile_delivered_input();
         match msg {
             Msg::SignalQuit => {
                 self.should_quit = true;
@@ -650,6 +651,31 @@ impl App {
         self.drain_queued_prompt()
     }
 
+    /// Retire local copies of prompts the engine has already taken (ADR-0028).
+    ///
+    /// The engine drains mid-run, asynchronously — nothing tells the reducer
+    /// when. Without this the entry lingers in `prompt_queue`, which `ui.rs`
+    /// renders as the pending list, so a prompt that is already on the wire
+    /// keeps showing as "queued". Checked on every update, which the run's
+    /// ticks make frequent enough to feel immediate.
+    ///
+    /// Gated on `mid_run_pushed` because an empty engine queue is equally true
+    /// when nothing was ever handed over.
+    fn reconcile_delivered_input(&mut self) {
+        if self.mid_run_pushed == 0 {
+            return;
+        }
+        let taken = self
+            .input_queue
+            .as_ref()
+            .is_some_and(locode_core::InputQueue::is_empty);
+        if taken {
+            let n = self.mid_run_pushed.min(self.prompt_queue.len());
+            self.prompt_queue.drain(..n);
+            self.mid_run_pushed = 0;
+        }
+    }
+
     /// Pop and submit the next queued prompt, if any (called at turn end).
     fn drain_queued_prompt(&mut self) -> Vec<Cmd> {
         // Delivered mid-run: the engine took the batch, so the transcript
@@ -671,10 +697,8 @@ impl App {
         }
         self.mid_run_pushed = 0;
         match self.prompt_queue.pop_front() {
-            Some(queued) => {
-                self.outbox.push(Block::UserPrompt(queued.display));
-                vec![Cmd::Submit(queued.wire)]
-            }
+            // No echo here: every queued prompt was echoed when it was queued.
+            Some(queued) => vec![Cmd::Submit(queued.wire)],
             None => vec![],
         }
     }
@@ -926,6 +950,12 @@ impl App {
                 queue.push(prompt.wire.clone());
                 self.mid_run_pushed += 1;
             }
+            // Echo NOW, not at turn end. Once the engine drains it mid-run the
+            // text is already in the transcript on the wire, and the delivered
+            // path deliberately submits nothing — so turn end is not a place an
+            // echo can still happen. Echoing here also makes the queued prompt
+            // visible immediately, which is what ADR-0028 asks for.
+            self.outbox.push(Block::UserPrompt(prompt.display.clone()));
             self.prompt_queue.push_back(prompt);
             return vec![];
         }
@@ -1804,7 +1834,91 @@ mod tests {
         );
         assert_eq!(cmds, vec![Cmd::Submit("next prompt".into())]);
         assert_eq!(app.prompt_queue.len(), 1);
-        assert!(matches!(app.outbox.last(), Some(Block::UserPrompt(p)) if p == "next prompt"));
+        // Echoed when QUEUED, not at turn end — once the engine drains a prompt
+        // mid-run there is no turn-end submit left to echo from (ADR-0028).
+        let echoes: Vec<&str> = app
+            .outbox
+            .iter()
+            .filter_map(|b| match b {
+                Block::UserPrompt(p) => Some(p.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            echoes,
+            vec!["next prompt", "and another"],
+            "each queued prompt is visible exactly once, in order"
+        );
+    }
+
+    /// Regression: a mid-run prompt the engine delivers must still be visible.
+    /// It was echoed nowhere — `send` skipped the echo while running, and the
+    /// delivered path submits nothing, so the only echo site never ran.
+    #[test]
+    fn a_delivered_mid_run_prompt_is_echoed_into_the_transcript() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        let queue = locode_core::InputQueue::new();
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::RunStarted {
+                cancel: locode_core::CancellationToken::new(),
+                input_queue: queue.clone(),
+            })),
+            t0,
+        );
+        type_str(&mut app, "what is the date?", t0);
+        let _ = app.update(key(KeyCode::Enter), t0);
+
+        assert!(
+            matches!(app.outbox.last(), Some(Block::UserPrompt(p)) if p == "what is the date?"),
+            "visible as soon as it is queued"
+        );
+
+        // The engine takes it mid-run; the echo must survive to turn end.
+        let _ = queue.take_all();
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::RunFinished(Box::new(report(
+                Status::Completed,
+            ))))),
+            t0,
+        );
+        let echoes = app
+            .outbox
+            .iter()
+            .filter(|b| matches!(b, Block::UserPrompt(p) if p == "what is the date?"))
+            .count();
+        assert_eq!(echoes, 1, "exactly once — not zero, not duplicated");
+    }
+
+    /// Regression: the pending list must stop showing a prompt the engine has
+    /// already taken, or the UI reports it as queued forever.
+    #[test]
+    fn a_delivered_prompt_stops_rendering_as_queued() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        let queue = locode_core::InputQueue::new();
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::RunStarted {
+                cancel: locode_core::CancellationToken::new(),
+                input_queue: queue.clone(),
+            })),
+            t0,
+        );
+        type_str(&mut app, "mid-run", t0);
+        let _ = app.update(key(KeyCode::Enter), t0);
+        assert_eq!(
+            app.prompt_queue.len(),
+            1,
+            "pending while the engine holds it"
+        );
+
+        // The engine drains mid-run — still the same run, no RunFinished yet.
+        let _ = queue.take_all();
+        let _ = app.update(Msg::Tick, t0);
+        assert!(
+            app.prompt_queue.is_empty(),
+            "on the wire now, so no longer pending"
+        );
     }
 
     /// A prompt typed mid-run is handed to the engine's queue so it lands at
