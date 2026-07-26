@@ -57,6 +57,15 @@ The immediate queue, ahead of the remaining packs:
   reproduction workstream **ends with skills**: `claude` / `codex` / `grok` are the three
   packs we ship, and no fourth port is built. The drafted plan
   ([`plans/task-15-opencode-pack.md`](plans/task-15-opencode-pack.md)) stays as a record.
+- **P1 — parallel tool dispatch** ([ADR-0027](../docs/decisions/ADR-0027-parallel-tool-dispatch.md),
+  **Draft — not approved**, 2026-07-26). Source study done and captured while fresh; the
+  implementation effort is real, so it waits. Two pieces, in order: (1) split approval into
+  a batch phase that completes before any execution — needed regardless, and the piece with
+  the actual design content; (2) per-path locking following grok (`tool_calls.rs:387-404`),
+  **not** the global `RwLock` ADR-0005 prescribed — that serializes edits to unrelated
+  files, the commonest multi-tool turn. `ToolKind::Shell`/`Other` stay exclusive (Claude
+  Code's rule; a shell call declares no path). Model-emitted order stays an invariant so
+  eval A/Bs don't acquire scheduling noise. Serial dispatch remains shipped until accepted.
 - **P1 — our own `locode` best-of pack** (the other half of Task 15) — now the **only**
   remaining pack work, and the home for every capability after skills (background tasks,
   todo, subagents, …): those are built once, on `locode`, not ported per harness.
