@@ -206,3 +206,36 @@ and codex (AGENTS.md "planning is a research task"):
   the clock/time is **dim** (the same lighter gray the old separators used) and
   not bold. Exact-RGB pinning is deferred to the future color-theme system.
   Implemented in `ui.rs` (`footer_lines` / `footer_row` / `footer_clock`).
+
+## Amendment (2026-07-26): the teardown owns every mode it turned on
+
+Decision §5's robustness floor ("teardown sequence defined once (idempotent),
+shared by exit/error/panic-hook/signal paths") was true of the *sequence* but
+not of its *reach*, and the gap shipped a broken shell:
+
+- **The error path never reached it.** `event_loop::run` restored the terminal
+  only on the `break`; every `?` in the loop (`paint`, `terminal.size`,
+  `terminal.clear`) returned past that line, leaving raw mode and the kitty
+  keyboard enhancement on — the one path §5 names but never had. The teardown is
+  now owned by an RAII `term::RestoreGuard` handed out by `term::init`, so no
+  return can skip it. `main_with`'s comment claimed this guard existed; it now
+  does.
+- **A balanced pop is not a safe teardown.** The kitty keyboard enhancement
+  (`CSI > 1 u`, added for Shift+Enter) is a *stack push*, and we popped only
+  when our own push had succeeded. That balances our push and nothing else: an
+  entry leaked by any other program — a full-screen editor a tool spawned and
+  killed, an earlier locode killed with SIGKILL before its teardown ran —
+  survives, and the shell inherits CSI-u mode, where **Ctrl+C arrives as the
+  literal `ESC [ 9 9 ; 5 u` and Esc as `ESC [ 2 7 u`** instead of interrupting.
+  Teardown is now unconditional and healing: pop (`CSI < 1 u` — a no-op on an
+  empty stack per the kitty protocol, so it is safe when we never pushed), then
+  clear the flags on whatever entry is left (`CSI = 0 ; 1 u`). Order matters:
+  clearing first would zero the entry we are about to discard. Claude Code's ink
+  reaches the same shape from the same bug (`src/ink/ink.tsx:883-887,1492`,
+  `src/ink/termio/csi.ts:301-307`).
+
+**The invariant**, for every terminal mode the TUI adds later (mouse tracking,
+focus reporting, synchronized output): *enabling* is capability-gated and
+best-effort, *disabling* is unconditional and runs on every exit path. The
+asymmetry is deliberate — a mode we fail to turn on costs a feature, a mode we
+fail to turn off costs the user their shell.

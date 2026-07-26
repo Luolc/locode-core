@@ -57,8 +57,8 @@ pub fn main_with(registry: ProviderRegistry) -> ExitCode {
     match runtime.block_on(event_loop::run(cli, registry)) {
         Ok(code) => code,
         Err(e) => {
-            // The terminal was restored by the guard/teardown before we get
-            // here; report the failure on stderr like any CLI.
+            // `term::RestoreGuard` tore the terminal down on the way out of
+            // `run`; report the failure on stderr like any CLI.
             term::error_line(&e.to_string());
             ExitCode::from(1)
         }

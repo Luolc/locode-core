@@ -42,7 +42,10 @@ impl<E: std::error::Error> From<E> for RunError {
 #[allow(clippy::too_many_lines)] // the one cohesive select! loop — splitting hurts clarity
 pub async fn run(cli: Cli, registry: ProviderRegistry) -> Result<ExitCode, RunError> {
     term::install_panic_hook();
-    let mut terminal = term::init()?;
+    // The guard, not the tail of this function, owns the teardown: every `?`
+    // below (paint, size, clear) used to return past `term::restore()` and
+    // leave the terminal raw with the keyboard enhancement still on.
+    let (mut terminal, _restore_guard) = term::init()?;
     let mut input_rx = term::spawn_input_reader();
     let mut signal_rx = spawn_signal_task();
     // Pre-fill from a positional prompt before `cli` moves into the engine.
@@ -202,8 +205,7 @@ pub async fn run(cli: Cli, registry: ProviderRegistry) -> Result<ExitCode, RunEr
         }
     };
 
-    term::restore();
-    Ok(exit_code)
+    Ok(exit_code) // `_restore_guard` tears the terminal down on the way out
 }
 
 /// Render finalized blocks into the transcript `tail` (ADR-0022): no
