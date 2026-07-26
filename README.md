@@ -37,7 +37,7 @@ curl -fsSL https://raw.githubusercontent.com/luolc/locode-core/main/install.sh |
 
 The script installs to `~/.locode/bin` (override with `LOCODE_BIN_DIR`),
 verifies the sha256 checksum, and puts the binary on your PATH. Pass a version
-for a specific release: `… | bash -s 0.1.14`. Then run `locode` for the
+for a specific release: `… | bash -s 0.1.15`. Then run `locode` for the
 interactive agent or `locode -p "task"` for a headless one-shot. The search
 tools shell out to [ripgrep](https://github.com/BurntSushi/ripgrep) — have `rg`
 on PATH or point `LOCODE_RG_PATH` at a binary.

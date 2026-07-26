@@ -11,7 +11,7 @@ behind each decision lives in the ADRs ([`../docs/decisions/`](../docs/decisions
 > anymore: they were merged into this tracker (2026-07-22) precisely because keeping status
 > in three files let the least-edited copy rot. Keep it to one.
 
-Current release: **0.1.14**. Sizes: XS = 1 file · S = 1–2 · M = 3–5 · L = 5–8 (split if larger).
+Current release: **0.1.15**. Sizes: XS = 1 file · S = 1–2 · M = 3–5 · L = 5–8 (split if larger).
 
 ## Architecture at a glance
 
@@ -68,6 +68,21 @@ The immediate queue, ahead of the remaining packs:
   deleting it. Raised 2026-07-25 alongside the `max_tokens` truncation fix.
 
 ### Fixes
+- [x] **`/effort` + `/add-dir` commands, and locode's own effort ladder** (2026-07-26,
+  #235/#236). Effort was reachable but unwired — nothing ever set `reasoning_effort`, so
+  every run took the API default. Now a `--effort` flag, an `effort` settings key, and an
+  `/effort` command over **our** ladder (`low·medium·high·xhigh·max`), each wire mapping
+  it; `Effort::maps_to` shows the wire value in the menu's second column so a future
+  collapse is visible. Rungs verified against the live API, not the vendored source (which
+  predates Fable 5 and lists no `xhigh`): `ultra`/`ultrathink`/`extreme` all 400.
+  `ultracode` is a composite mode ("xhigh + workflows" in Claude Code's own UI), not a
+  sixth rung. `/add-dir <path>` widens a **running** session — jail now, AGENTS.md +
+  skills next turn — with the root lists behind an `Arc<RwLock<…>>` because tools already
+  hold `Arc<Host>`. Not persisted (a working dir belongs to the task, not the profile).
+- [x] **`reasoning_tokens` reported** (2026-07-25, #234). Parsed from
+  `output_tokens_details.thinking_tokens`; deliberately **not** in `context_tokens()` —
+  thinking is replayed into the next request, so it already lands in that turn's
+  `input_tokens`.
 - [x] **`--add-dir` (multi-root)** (2026-07-25). Lifts ADR-0023's deferred seam now that
   the ADR-0008 jail change is made. One repeatable flag on both CLIs with three effects:
   widens the path jail, adds the directory's `AGENTS.md` to the instruction walk
