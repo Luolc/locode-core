@@ -533,11 +533,46 @@ envelope, `get_task_output`/`kill_task`. Concrete shape:
 3. **Completion re-entry via the event protocol.** Emit a new
    `Event::TaskNotification { task_id, status, output_path, summary }` in
    `locode-protocol` (extends ADR-0014's `#[non_exhaustive]` enum), and inject a
-   **synthetic user-role `Message`** at the next turn boundary carrying a
-   `<task-notification>` block — exactly Claude Code's `query.ts:1560-1633` drain
-   and Grok's notification bridge. The loop (ADR-0005 sample→dispatch→append)
-   gets one new step: *before re-sampling, drain completed background tasks into
-   history.* This is additive, not a rewrite.
+   **synthetic user-role `Message`** carrying a `<task-notification>` block.
+
+   **Corrected 2026-07-26 — the injection point is the loop *iteration*
+   boundary, not the turn boundary.** An earlier draft of this section said
+   "at the next turn boundary", which reads as "once the run finishes and
+   control returns to the user" and would defeat the whole feature. Claude Code
+   drains **inside** the iteration, after tool results are collected and before
+   re-sampling, and *appends the notification to that iteration's tool-result
+   batch* (`query.ts:1580-1590`):
+
+   ```ts
+   for await (const attachment of getAttachmentMessages(..., queuedCommandsSnapshot, ...)) {
+       yield attachment
+       toolResults.push(attachment)   // ← rides along with this batch
+   }
+   ```
+
+   So the model sees a completed background task on its **very next sample**,
+   mid-run — it does not wait for the agentic loop to end. The neighbouring
+   comment confirms the granularity: *"the prefetch gets as many chances as
+   there are loop iterations before the turn ends."*
+
+   Riding an existing `User` message rather than inserting a new one is also
+   what keeps ADR-0004's pairing invariant and the prompt-cache prefix intact.
+
+   **One queue, two payload kinds, addressed.** The same drain carries
+   `mode:'task-notification'` and `mode:'prompt'` (a user typing mid-run).
+   Addressing differs: user prompts reach the main thread only; a subagent
+   drains only notifications stamped with its own `agentId` and never sees the
+   prompt stream (`query.ts:1565-1578`). Slash commands are deliberately
+   excluded from mid-run injection and handled after the turn ends.
+
+   **Open edge case for the ADR:** an iteration that emits *no* tool calls ends
+   the loop, so a notification arriving then has no batch to ride. Claude Code
+   has an after-turn queue processor as the second injection point; our ADR must
+   state both, or state that a late notification waits for the next user turn.
+
+   The loop (ADR-0005 sample→dispatch→append) therefore gets one new step:
+   *after dispatch and before re-sampling, drain completed background tasks into
+   the tool-result batch.* Additive, not a rewrite.
 4. **Cancellation (ADR-0018).** Each task holds a child token derived from the
    session token; session cancel reaps all tasks; a per-task `kill_task` cancels
    one. **Background tasks are excluded from the turn-level cancel** (copy Grok)
