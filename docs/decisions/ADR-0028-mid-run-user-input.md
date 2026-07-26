@@ -259,3 +259,33 @@ to the next turn's prompt (§Decision 3) is an ordinary prompt and carries none.
 ## Open Questions
 
 None outstanding — the three original questions are resolved above.
+
+## Amendment (2026-07-26): transcript position must equal wire position
+
+Implementing §Decision 1's "visible" half took three passes, all failing the
+same way, so the rule is promoted from an implementation detail to an invariant:
+
+> **A message renders at the point it occupies on the wire — not where the user
+> typed it, and not where the UI first learned about it.**
+
+Queued input is the case that makes this non-obvious. A prompt typed during tool
+round 1 may not be drained until after round 2; those are different positions in
+the conversation, and only the second is where the model saw it. Echoing at
+queue time renders the question *before* the assistant turn that preceded its
+delivery, so the reply appears to arrive a turn late — which is precisely how
+the bug was spotted, by reasoning about the ordering rather than reading code
+("if it had been inserted there, the next message would have answered it").
+
+Two consequences worth stating, because both were violated in turn:
+
+- **Queued and delivered are different states and must not share a rendering.**
+  Queued belongs in the pending list; delivered belongs in the transcript.
+  Collapsing them — pushing to the transcript on queue — is what produced the
+  early-by-one-round ordering.
+- **Every delivery path needs its own echo, at its own position.** There are
+  three: taken by the engine mid-run, never taken and submitted by the fallback,
+  and sent while idle. An echo attached to one path silently disappears when
+  another path is what runs.
+
+This binds the P0.5 task notifications that reuse the queue: a notification
+renders where it was drained, not where it arrived.

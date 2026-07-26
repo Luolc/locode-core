@@ -59,3 +59,54 @@ Both slices shipped in one PR.
   that way, a prompt queued for a *later* turn would be silently dropped at the
   next turn end. `App::mid_run_pushed` counts what was actually handed over, and
   only that many entries are consumed. An existing turn-end test caught it.
+
+## Follow-up fixes (#244, #245) — two UI bugs, one root cause
+
+The engine half was right first time; the transcript rendering took two more
+passes. Both bugs came from the same place: **the ADR asked for two visibly
+distinct states, queued and delivered, and the implementation kept collapsing
+them into one.**
+
+**#244 — the prompt was invisible.** `send` skipped the transcript echo while a
+run was active, relying on turn end to echo it when the queue popped and
+submitted. S2 then made the delivered path submit *nothing* — which quietly
+removed the only echo site. A delivered prompt appeared nowhere at all, while
+the model plainly answered it.
+
+*Lesson:* deleting a code path also deletes whatever else it was carrying. The
+delivered path was removed for being redundant as a **submit**; nobody checked
+what it was doing as an **echo**.
+
+**#244 also — a delivered prompt kept rendering as queued.** `ui.rs` renders
+`prompt_queue` as the pending list, and entries lived there until turn end even
+though the engine had already put the text on the wire. The engine drains
+mid-run and asynchronously, and *nothing tells the reducer* — so
+`reconcile_delivered_input` polls on every update. Same `mid_run_pushed` gate as
+above, for the same reason.
+
+**#245 — echoed a full tool round too early.** #244's fix echoed at *queue*
+time, i.e. the moment Enter was pressed. But a prompt typed during tool round 1
+may not be drained until after round 2, and those are different positions in the
+conversation. The transcript showed the question before the assistant turn that
+*preceded* its delivery, so the model's answer looked like it arrived a turn
+late.
+
+*How it was caught:* not by reading code. The user reasoned from the rendering —
+"if it had been inserted there, the next message would have answered it" — and
+the session trace confirmed the text landed in tool batch 2, not batch 1.
+
+*Lesson, and the invariant now in ADR-0028:* **a message's position in the
+transcript must be the position it occupies on the wire.** For queued input that
+means echoing at the point the engine *takes* it, never when the user types it.
+The three delivery paths each echo exactly once, each at their own real entry
+point: delivered → `reconcile_delivered_input`; never-taken → the fallback
+submit; idle → `send`.
+
+**Where to be careful in this area, for whoever extends it (P0.5 notifications
+reuse all of this):**
+
+- An empty engine queue never means "the engine took it" on its own.
+- The reducer is not notified of a drain; it polls.
+- Every echo site must correspond to a real wire position, and there are three.
+- The trace is the ground truth for ordering questions — read
+  `~/.locode/sessions/**/rollout-*.jsonl` before trusting a rendering.
