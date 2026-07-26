@@ -34,3 +34,4 @@ live in `~/dev/coding-cli-survey`.
 | [0024](ADR-0024-locode-home-settings-and-traces.md) | `~/.locode` — layered JSON settings + resumable JSONL session trace (cwd-keyed, open extension contract) | Accepted (skills §3 resolved by 0025; default `harness` → `grok`) |
 | [0025](ADR-0025-agent-skills.md) | Agent Skills — shared discovery + whole-body-diffed `<system-reminder>` listing (rescanned post-run); no tool — the model reads `SKILL.md` (amends 0008, 0023, 0024) | Accepted |
 | [0026](ADR-0026-slash-commands-core.md) | Slash commands — the **core** contract: a `SlashCommand` trait, a value-returning result, every `user-invocable` skill becomes a command; plain-text arguments (UI is a later plan) | Accepted |
+| [0027](ADR-0027-parallel-tool-dispatch.md) | Parallel tool dispatch — batched approval then per-path locking (supersedes 0005's deferral; amends 0017) | **Draft — not approved**, P1 |
