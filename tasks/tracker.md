@@ -50,6 +50,17 @@ The immediate queue, ahead of the remaining packs:
   + external skill roots (§4.1), and `extends` becoming a **dotfolder** pointer whose
   `settings.json` + `skills/` + `AGENTS.md` all merge (§6) with the settings-first load
   order (§6.1). Plan (5 slices): [`plans/task-32-skills.md`](plans/task-32-skills.md) — **the immediate next task**.
+- **P0.5a — Mid-run user input (queue-jumping)** ([ADR-0028](../docs/decisions/ADR-0028-mid-run-user-input.md),
+  **Draft**, 2026-07-26). **Sequenced before background tasks**, which reuse its queue as a
+  payload variant rather than building a second mechanism. Today a prompt typed mid-run waits
+  for the whole loop; all three studied harnesses do better (grok included — the earlier
+  "grok can't" assumption was wrong: `pending_interjections` + PTY tests). They differ only in
+  drain granularity, and that alone explains the UX gap: Claude Code drains per **loop
+  iteration** into the tool-result batch (fast, so its UI is quiet), Codex per **turn** (slow,
+  so it ships a "Queued follow-up inputs" pane). We take Claude Code's granularity and Codex's
+  visibility — independent axes. Engine: a `QueuedInput` enum, `InputQueued`/`InputDelivered`
+  events, one drain step between dispatch and re-sample, a no-tool-calls fallback, cancel
+  clears. UI: queued vs delivered must be visibly distinct.
 - **P0.5 — Background Bash + Subagents.** Background/async bash commands, and subagents /
   agent-groups (their distinctions + implementations are hard to read off the UIs — needs a
   source dig). After the two P0s. Also unblocks codex `shell_command` → unified exec.
