@@ -163,14 +163,93 @@ naming it makes the invariant checkable.
   no longer a pure function of the initial prompt. For eval reproducibility this
   is fine (evals do not type mid-run) but it should be stated.
 
+## Cross-wire validity (verified 2026-07-26)
+
+"Riding the tool-result batch" is a **neutral-protocol** statement, not an
+Anthropic one. Our `Message { role: User, content: Vec<ContentBlock> }` may hold
+`ToolResult` and `Text` blocks together; each wire lowers that shape its own way,
+and both of ours already do:
+
+- **Anthropic Messages** — one `user` message carrying both block kinds. Native.
+- **OpenAI Responses** — a flat item array, so the two simply become adjacent
+  items. `openai/responses/build.rs:90-97` already handles the mix: a
+  `ToolResult` block *flushes any pending text/image run first*, emitting the
+  text as its own item before the `function_call_output`.
+
+**This makes block order load-bearing, and the invariant is: append the drained
+text AFTER the tool-result blocks.** On Responses, text placed *before* them
+would flush into an item that precedes the tool outputs — the user appearing to
+speak before the tools reported. Claude Code's `toolResults.push(attachment)`
+appends, so the natural implementation is already correct; it is written down
+here because the Responses lowering makes it silently wrong the other way round,
+and its own comment already warns that "order is load-bearing for the prefix
+cache".
+
+**OpenAI Chat is the shape that would not carry it** — a `role:"tool"` message
+takes only the tool output, so a mid-run prompt must lower to the `tool` messages
+plus a separate `role:"user"` message. We ship no Chat wire (`anthropic`,
+`openai-responses`, `mock`), so this costs nothing today; it is recorded because
+it proves the carrier must stay a protocol concept that wires lower, never a
+literal "one message" rule baked into the engine.
+
+## Resolved (user decisions + source, 2026-07-26)
+
+**Ordering of a prompt against a same-iteration notification — FIFO by arrival.**
+Claude Code has no notification-vs-prompt ranking. `getCommandsByMaxPriority`
+(`messageQueueManager.ts:525-532`) filters `PRIORITY_ORDER[cmd.priority ??
+'next'] <= threshold` over the queue array, preserving insertion order; both
+kinds default to `'next'`. The `'later'` tier is an *idle* axis — the drain asks
+for it only when a Sleep tool ran (`query.ts:1570`), i.e. "deliver when nothing
+is happening". We copy this: one FIFO queue, arrival order, with `'later'`
+reserved unused.
+
+**Multiple queued prompts — concatenate into one.** The common case is a user
+typing several lines and hitting Enter, not issuing competing instructions.
+Joining them into a single text block avoids presenting the model with what looks
+like two separate turns.
+
+**The model IS told the message arrived mid-run.** Grok already does exactly
+this, and its constant is the phrasing:
+
+```rust
+const INTERJECTION_WIRE_PREFIX: &str = "The user sent a message while you were working";
+```
+
+Its PTY tests assert the distinction precisely: a genuine mid-turn interjection
+carries the preamble, while a queued message that lands as an ordinary next-turn
+prompt is a standard `<user_query>` with **no** preamble. Claude Code does the
+same to its own agent — this session received, verbatim: *"The user sent a new
+message while you were working … This is how Claude Code surfaces messages the
+user sends mid-turn — within the running turn, often alongside the next tool
+result."* First-hand confirmation of both the marker and the carrier.
+
+The rationale is semantic, not cosmetic: a mid-run message is *not* the same
+speech act as a fresh prompt. It may amend an earlier instruction, be a
+by-the-way aside, or be an instruction for after the current work ("when you
+finish this, also…"). The model can only act correctly — including changing
+course *within* the running loop — if it knows which it is. An unmarked message
+reads as though it had been there from the start.
+
+The marker applies **only** to the mid-run path. A queued message that degrades
+to the next turn's prompt (§Decision 3) is an ordinary prompt and carries none.
+
+## Remaining edge cases (from the state machine, to settle in implementation)
+
+- **Delivered cannot be recalled.** §Decision 4's "cancel clears the queue"
+  covers only *undelivered* items. Once drained, the text is inside a `Message`
+  already pushed to `history`; cancel breaks the loop but rolls nothing back, so
+  the model sees it next turn. The asymmetry is fine but must be stated, or an
+  implementer will assume cancel undoes both.
+- **A cancelled prompt stays in history — today, undecided.** `drive()` pushes
+  the user message *before* the loop (`run.rs:178`), and a mid-sample cancel
+  appends no assistant message ("the history is unchanged since the last
+  append", `run.rs:202-204`). So a cancelled turn leaves a trailing user
+  message, and the next submit appends another: `[…, user: p1, user: p2]`, both
+  visible to the model. The API permits consecutive same-role messages, so
+  nothing errors — but "cancel the execution, keep the intent" is currently an
+  accident rather than a decision. Options: keep it, pop the message on cancel,
+  or keep it with a cancelled marker.
+
 ## Open Questions
 
-- **Ordering against a same-iteration notification.** When a prompt and a task
-  notification drain together, which comes first? Claude Code's two-level
-  priority suggests notifications first (context before instruction), but this
-  is unverified.
-- **Multiple queued prompts.** Deliver all in one batch, or one per iteration?
-  Codex delivers all; batching risks the model conflating two instructions.
-- **Should the model be told the message arrived mid-run?** A bare user message
-  reads as if it were there all along. A `<mid-run>` marker would be honest but
-  costs a divergence from the plain-prompt shape.
+None outstanding — the three original questions are resolved above.
