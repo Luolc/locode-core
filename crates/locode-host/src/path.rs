@@ -62,7 +62,10 @@ impl Host {
         }
 
         // (1) Lexical prefix check — catches `../etc/passwd`, `/etc/passwd`, `a/../../b`.
-        if !normalized.starts_with(&self.workspace_root) {
+        //     A path may sit under the workspace root OR any `--add-dir` root; both
+        //     lists are already canonical, and both checks below use the same set so a
+        //     symlink cannot enter through one root and escape via another.
+        if !self.is_under_a_root(&normalized) && !self.is_under_a_root_as_given(&normalized) {
             return Err(PathError::Escape(normalized.display().to_string()));
         }
         // (2) Symlink check — canonicalize the deepest *existing* ancestor and confirm it
@@ -75,10 +78,32 @@ impl Host {
                     path: normalized.display().to_string(),
                     source,
                 })?;
-        if !canonical_ancestor.starts_with(&self.workspace_root) {
+        if !self.is_under_a_root(&canonical_ancestor) {
             return Err(PathError::Escape(normalized.display().to_string()));
         }
         Ok(normalized)
+    }
+
+    /// Whether `path` sits under the workspace root or any `--add-dir` root.
+    ///
+    /// Roots are canonical by construction ([`Host::new`]), so this is a pure
+    /// prefix test. Extra roots widen the jail additively: they never relax the
+    /// checks applied to the primary root, and a path outside every root is still
+    /// an escape.
+    fn is_under_a_root(&self, path: &Path) -> bool {
+        path.starts_with(&self.workspace_root)
+            || self.extra_roots.iter().any(|root| path.starts_with(root))
+    }
+
+    /// The lexical pre-check's second form: roots as the caller wrote them.
+    ///
+    /// Only ever *widens* step (1), which is a cheap filter — step (2) then
+    /// canonicalizes and re-checks against the canonical roots, so a symlink
+    /// that actually leaves every root is still rejected.
+    fn is_under_a_root_as_given(&self, path: &Path) -> bool {
+        self.roots_as_given
+            .iter()
+            .any(|root| path.starts_with(root))
     }
 }
 
@@ -123,6 +148,11 @@ fn expand_home_prefix<'a>(path: &'a Path, home: Option<&Path>) -> std::borrow::C
     }
 }
 
+/// Crate-internal alias so `Host::new` can normalize roots before canonicalizing.
+pub(crate) fn normalize_lexical_pub(path: &Path) -> PathBuf {
+    normalize_lexical(path)
+}
+
 /// Syntactically resolve `.`/`..` without touching the filesystem.
 fn normalize_lexical(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
@@ -158,6 +188,56 @@ mod tests {
     use super::*;
     use crate::{PathPolicy, test_host};
     use tempfile::tempdir;
+
+    /// `--add-dir` widens the jail additively: a path under an extra root
+    /// resolves, while anything outside *every* root is still an escape.
+    #[tokio::test]
+    async fn extra_roots_widen_the_jail_without_opening_it() {
+        let main = tempdir().expect("main root");
+        let extra = tempdir().expect("extra root");
+        let outside = tempdir().expect("unrelated dir");
+
+        let mut config = crate::HostConfig::new(main.path());
+        config.extra_roots = vec![extra.path().to_path_buf()];
+        let host = crate::Host::new(config).expect("host with an extra root");
+        let cwd = host.workspace_root().to_path_buf();
+
+        // The primary root still works.
+        host.resolve_in_jail(&cwd, Path::new("in_main.txt"))
+            .await
+            .expect("primary root still resolves");
+
+        // The added root is reachable by absolute path, including a leaf that
+        // does not exist yet (create-new-file must keep working there).
+        let added_file = extra.path().join("subdir/new.txt");
+        host.resolve_in_jail(&cwd, &added_file)
+            .await
+            .expect("a path under an --add-dir root resolves");
+
+        // Everything else is still an escape — widening is not disabling.
+        let err = host
+            .resolve_in_jail(&cwd, &outside.path().join("secret.txt"))
+            .await
+            .expect_err("an unrelated directory is still out of bounds");
+        assert!(matches!(err, PathError::Escape(_)), "{err:?}");
+
+        let err = host
+            .resolve_in_jail(&cwd, Path::new("/etc/passwd"))
+            .await
+            .expect_err("absolute escapes are unaffected by extra roots");
+        assert!(matches!(err, PathError::Escape(_)), "{err:?}");
+    }
+
+    /// A non-existent `--add-dir` fails at construction, naming the directory —
+    /// never a silently narrower jail.
+    #[test]
+    fn a_missing_extra_root_is_a_construction_error() {
+        let main = tempdir().expect("main root");
+        let mut config = crate::HostConfig::new(main.path());
+        config.extra_roots = vec![main.path().join("does-not-exist")];
+        let err = crate::Host::new(config).expect_err("must not silently drop the root");
+        assert!(matches!(err, PathError::InvalidRoot(msg) if msg.contains("does-not-exist")));
+    }
 
     #[test]
     fn expands_bare_tilde_and_tilde_slash() {

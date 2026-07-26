@@ -104,6 +104,12 @@ pub struct Cli {
     /// (ADR-0023). Auto-discovery is otherwise on by default.
     #[arg(long)]
     pub no_project_instructions: bool,
+
+    /// Add a directory the agent may read and write, beyond the working
+    /// directory. Repeatable. Its `AGENTS.md` and `.agents/skills` are picked up
+    /// too — the point of pointing at a subtree of a large monorepo.
+    #[arg(long = "add-dir", value_name = "DIR")]
+    pub add_dir: Vec<std::path::PathBuf>,
 }
 
 /// The registered harness packs (a closed set — clap validates and lists them).

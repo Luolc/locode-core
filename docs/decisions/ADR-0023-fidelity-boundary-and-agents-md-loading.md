@@ -375,7 +375,13 @@ surfaced three scope/sequencing facts. None change the decisions above; they rec
   loader reads the discovered `AGENTS.md` files directly, bounded to those names along
   the bounded walk. This is what makes §2's "route reads through the host seam" work
   without widening the jail.
-- **`--add-dir` / `extra_roots` is deferred to a later task; a config seam only.** Its
+- **`--add-dir` / `extra_roots` — SHIPPED 2026-07-25** (see the ADR-0008 amendment of
+  the same date for the jail half, and the `--add-dir` flag on both the TUI and headless
+  CLIs). The design below stood; only the ADR-0008 security-posture change was blocking.
+  Settled at implementation time: the flag is CLI-only for now (no `settings.json` key —
+  the "still unreviewed" question below), and an added root contributes its
+  `.agents/skills` as well as its `AGENTS.md`. The original deferral note follows.
+- **[superseded] `--add-dir` / `extra_roots` is deferred to a later task; a config seam only.** Its
   instruction-loading half is feasible now, but its other half — widening the tool
   path-jail so *tools* may reach the extra dirs — is an ADR-0008 security-posture
   change (`Host` holds a single `workspace_root`), and `--add-dir`'s final home is

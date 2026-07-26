@@ -353,7 +353,9 @@ fn build_session(
     let cwd = std::fs::canonicalize(&cwd).map_err(|e| format!("--cwd {}: {e}", cwd.display()))?;
     let cwd_display = home_relative(&cwd);
 
+    let add_dirs = locode_exec::canonicalize_add_dirs(&cli.add_dir).map_err(|e| e.0)?;
     let mut host_config = HostConfig::new(&cwd);
+    host_config.extra_roots.clone_from(&add_dirs);
     // Unrestricted is the default (ADR-0008 amendment 2026-07-24) — see the headless
     // path for the rationale. `--restricted` opts back in.
     if !cli.restricted {
@@ -479,12 +481,14 @@ fn build_session(
             enabled: !cli.no_project_instructions,
             root_stop_pattern: settings.root_stop_pattern.clone(),
             extends_dirs: extends_dirs.clone(),
+            extra_roots: add_dirs.clone(),
             ..InstructionsConfig::default()
         },
         // Skills (ADR-0025): the same resolved settings feed discovery, which is what
         // keeps "settings before discovery" an invariant rather than a convention.
         skills: SkillsConfig {
             extends_dirs,
+            extra_roots: add_dirs,
             extra: settings.skills_extra.clone(),
             ..SkillsConfig::enabled()
         },

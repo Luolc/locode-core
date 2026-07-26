@@ -32,6 +32,7 @@ pub mod run;
 mod signal;
 
 pub use cli::{Cli, Harness, OutputFormat};
+pub use run::canonicalize_add_dirs;
 // The permission-posture notices, shared verbatim with the interactive UI so the
 // two surfaces cannot drift (ADR-0008 amendment 2026-07-24).
 pub use locode_core::ProviderRegistry;

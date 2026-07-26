@@ -68,6 +68,17 @@ The immediate queue, ahead of the remaining packs:
   deleting it. Raised 2026-07-25 alongside the `max_tokens` truncation fix.
 
 ### Fixes
+- [x] **`--add-dir` (multi-root)** (2026-07-25). Lifts ADR-0023's deferred seam now that
+  the ADR-0008 jail change is made. One repeatable flag on both CLIs with three effects:
+  widens the path jail, adds the directory's `AGENTS.md` to the instruction walk
+  (`InstructionsConfig.extra_roots`, the seam that already existed), and adds its
+  `.agents/skills` (new `SkillsConfig.extra_roots`). Roots canonicalize at startup so a
+  typo names the path. The jail's lexical pre-check now matches roots in **both**
+  as-given and canonical form — without that, a root behind a symlink (macOS `/var`, and
+  any symlinked monorepo mount) rejects absolute paths the canonical check would accept.
+  Verified end-to-end under `--restricted`: read a file outside cwd, and picked up the
+  added dir's AGENTS.md rule + skill with zero tool calls. **Not built:** a
+  `settings.json` key (ADR-0023 flagged it unreviewed — CLI-only for now).
 - [x] **Thinking was left to the serving model** (2026-07-25, #231, **breaking**). Nothing
   ever set `reasoning_effort`, so the wire sent no `thinking` field at all — which does
   **not** mean "off": Opus 4.8 read the absent field as no-thinking (verified:

@@ -96,6 +96,10 @@ pub struct SkillsConfig {
     pub extends_dirs: Vec<PathBuf>,
     /// `skills.extra` entries from settings.
     pub extra: Vec<SkillsExtraEntry>,
+    /// Extra project roots (`--add-dir`). Each contributes its own
+    /// `.agents/skills` at `Project` scope, so a directory added on the command
+    /// line brings its skills with it.
+    pub extra_roots: Vec<PathBuf>,
 }
 
 impl SkillsConfig {
@@ -106,6 +110,7 @@ impl SkillsConfig {
             enabled: true,
             root_markers: vec![".git".to_string()],
             extends_dirs: Vec::new(),
+            extra_roots: Vec::new(),
             extra: Vec::new(),
         }
     }
@@ -160,6 +165,14 @@ fn discover_impl(cwd: &Path, cfg: &SkillsConfig, user_root: Option<&Path>) -> Di
         collect_root(
             &dir.join("skills"),
             SkillScope::User,
+            &mut found,
+            &mut warnings,
+        );
+    }
+    for dir in &cfg.extra_roots {
+        collect_root(
+            &dir.join(PROJECT_SKILLS_DIR[0]).join(PROJECT_SKILLS_DIR[1]),
+            SkillScope::Project,
             &mut found,
             &mut warnings,
         );
