@@ -2,8 +2,14 @@
 
 ## Status
 
-**Draft — not approved.** Scheduled ahead of ADR-0027; the background-task
+**Accepted** (user, 2026-07-26). Scheduled ahead of ADR-0027; the background-task
 notification work (P0.5) is designed to reuse the queue this introduces.
+
+**Implementation note.** The queue is a **handle taken before the run**, not a
+`UiCommand`. `Session::run` takes `&mut self` and the engine task awaits it, so
+its command loop is not polled mid-run — the same constraint that made
+`cancel_handle()` a pre-run clone (ADR-0018). `Session::input_queue()` follows
+that established shape exactly.
 
 ## Date
 

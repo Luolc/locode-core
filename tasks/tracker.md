@@ -50,8 +50,9 @@ The immediate queue, ahead of the remaining packs:
   + external skill roots (§4.1), and `extends` becoming a **dotfolder** pointer whose
   `settings.json` + `skills/` + `AGENTS.md` all merge (§6) with the settings-first load
   order (§6.1). Plan (5 slices): [`plans/task-32-skills.md`](plans/task-32-skills.md) — **the immediate next task**.
-- **P0.5a — Mid-run user input (queue-jumping)** ([ADR-0028](../docs/decisions/ADR-0028-mid-run-user-input.md),
-  **Draft**, 2026-07-26). **Sequenced before background tasks**, which reuse its queue as a
+- [x] **P0.5a — Mid-run user input (queue-jumping)** — **SHIPPED 2026-07-26**
+  ([ADR-0028](../docs/decisions/ADR-0028-mid-run-user-input.md), Accepted; plan +
+  Result: [`plans/task-33-mid-run-user-input.md`](plans/task-33-mid-run-user-input.md)). **Sequenced before background tasks**, which reuse its queue as a
   payload variant rather than building a second mechanism. Today a prompt typed mid-run waits
   for the whole loop; all three studied harnesses do better (grok included — the earlier
   "grok can't" assumption was wrong: `pending_interjections` + PTY tests). They differ only in

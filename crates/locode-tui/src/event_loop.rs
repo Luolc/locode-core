@@ -364,11 +364,17 @@ async fn route_engine(
     approvals: &mut PendingApprovals,
 ) {
     match msg {
-        EngineMsg::RunStarted { cancel } => {
+        EngineMsg::RunStarted {
+            cancel,
+            input_queue,
+        } => {
             *current_cancel = Some(cancel.clone());
             dispatch_engine(
                 app,
-                EngineMsg::RunStarted { cancel },
+                EngineMsg::RunStarted {
+                    cancel,
+                    input_queue,
+                },
                 engine_tx,
                 current_cancel.as_ref(),
                 approvals,

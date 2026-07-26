@@ -180,6 +180,16 @@ pub struct App {
     /// Prompts submitted while a run was active — drained one per turn end
     /// (codex's queue-and-drain).
     pub prompt_queue: VecDeque<QueuedPrompt>,
+    /// The running session's mid-run input queue (ADR-0028). `Some` only while
+    /// a run is active; pushing into it delivers the text at the next
+    /// tool-result boundary instead of at turn end.
+    pub input_queue: Option<locode_core::InputQueue>,
+    /// How many of `prompt_queue`'s front entries were handed to the current
+    /// run's engine queue. Needed because "the engine queue is empty" alone
+    /// cannot distinguish *the engine took them* from *nothing was ever
+    /// pushed* — conflating the two would silently drop a prompt queued for a
+    /// later turn.
+    pub mid_run_pushed: usize,
     /// Prompt history, most-recent-first (move-to-front dedup, cap 200).
     history: Vec<String>,
     /// History browse cursor (`None` = not browsing); index into `history`.
@@ -256,6 +266,8 @@ impl App {
             approval_queue: VecDeque::new(),
             stashed_draft: None,
             prompt_queue: VecDeque::new(),
+            input_queue: None,
+            mid_run_pushed: 0,
             history: Vec::new(),
             history_nav: None,
             history_saved: None,
@@ -422,7 +434,9 @@ impl App {
             }
             // The loop captures the cancel handle; the reducer only tracks
             // that a run is active (sans-IO — no token stored here).
-            EngineMsg::RunStarted { .. } => {
+            EngineMsg::RunStarted { input_queue, .. } => {
+                self.input_queue = Some(input_queue);
+                self.mid_run_pushed = 0;
                 self.run = RunState::Running {
                     started: now,
                     cancelling: false,
@@ -638,6 +652,24 @@ impl App {
 
     /// Pop and submit the next queued prompt, if any (called at turn end).
     fn drain_queued_prompt(&mut self) -> Vec<Cmd> {
+        // Delivered mid-run: the engine took the batch, so the transcript
+        // already carries it and re-submitting would duplicate it. The engine
+        // takes all-or-nothing, so an empty queue means every handed-over item
+        // landed — but only the ones we actually handed over. Entries queued
+        // for a later turn stay put.
+        let delivered = self.mid_run_pushed > 0
+            && self
+                .input_queue
+                .as_ref()
+                .is_some_and(locode_core::InputQueue::is_empty);
+        self.input_queue = None;
+        if delivered {
+            self.prompt_queue
+                .drain(..self.mid_run_pushed.min(self.prompt_queue.len()));
+            self.mid_run_pushed = 0;
+            return vec![];
+        }
+        self.mid_run_pushed = 0;
         match self.prompt_queue.pop_front() {
             Some(queued) => {
                 self.outbox.push(Block::UserPrompt(queued.display));
@@ -885,6 +917,15 @@ impl App {
     /// active (codex's queue-and-drain). Either way the transcript echoes it once.
     fn send(&mut self, prompt: QueuedPrompt) -> Vec<Cmd> {
         if self.is_running() {
+            // Hand it to the engine so it lands at the next tool-result
+            // boundary rather than waiting out the whole run (ADR-0028). The
+            // local copy stays for rendering and for the no-carrier fallback:
+            // a turn that emits no tool calls leaves the item undrained, and
+            // `drain_queued_prompt` then submits it as an ordinary prompt.
+            if let Some(queue) = &self.input_queue {
+                queue.push(prompt.wire.clone());
+                self.mid_run_pushed += 1;
+            }
             self.prompt_queue.push_back(prompt);
             return vec![];
         }
@@ -1117,6 +1158,7 @@ mod tests {
     fn run_started() -> Msg {
         Msg::Engine(Box::new(EngineMsg::RunStarted {
             cancel: locode_core::CancellationToken::new(),
+            input_queue: locode_core::InputQueue::new(),
         }))
     }
     fn type_str(app: &mut App, s: &str, now: Instant) {
@@ -1763,6 +1805,88 @@ mod tests {
         assert_eq!(cmds, vec![Cmd::Submit("next prompt".into())]);
         assert_eq!(app.prompt_queue.len(), 1);
         assert!(matches!(app.outbox.last(), Some(Block::UserPrompt(p)) if p == "next prompt"));
+    }
+
+    /// A prompt typed mid-run is handed to the engine's queue so it lands at
+    /// the next tool-result boundary (ADR-0028), not held until turn end.
+    #[test]
+    fn a_mid_run_prompt_goes_to_the_engine_queue() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        let queue = locode_core::InputQueue::new();
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::RunStarted {
+                cancel: locode_core::CancellationToken::new(),
+                input_queue: queue.clone(),
+            })),
+            t0,
+        );
+        type_str(&mut app, "by the way, use tabs", t0);
+        assert_eq!(app.update(key(KeyCode::Enter), t0), vec![]);
+
+        assert_eq!(
+            queue.pending(),
+            vec!["by the way, use tabs".to_string()],
+            "handed to the running session, not merely parked locally"
+        );
+        assert_eq!(app.mid_run_pushed, 1);
+    }
+
+    /// When the engine drained it, turn end must NOT resubmit — the transcript
+    /// already carries it.
+    #[test]
+    fn a_delivered_mid_run_prompt_is_not_resubmitted() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        let queue = locode_core::InputQueue::new();
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::RunStarted {
+                cancel: locode_core::CancellationToken::new(),
+                input_queue: queue.clone(),
+            })),
+            t0,
+        );
+        type_str(&mut app, "mid-run note", t0);
+        let _ = app.update(key(KeyCode::Enter), t0);
+
+        // The engine takes the batch mid-run.
+        let _ = queue.take_all();
+
+        let cmds = app.update(
+            Msg::Engine(Box::new(EngineMsg::RunFinished(Box::new(report(
+                Status::Completed,
+            ))))),
+            t0,
+        );
+        assert_eq!(cmds, vec![], "already delivered — no second submit");
+        assert!(app.prompt_queue.is_empty());
+    }
+
+    /// A prompt the engine never took (a turn with no tool calls, so no batch
+    /// to ride) still reaches the model as an ordinary next-turn prompt.
+    #[test]
+    fn an_undelivered_mid_run_prompt_falls_back_to_a_normal_submit() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        let queue = locode_core::InputQueue::new();
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::RunStarted {
+                cancel: locode_core::CancellationToken::new(),
+                input_queue: queue,
+            })),
+            t0,
+        );
+        type_str(&mut app, "no carrier", t0);
+        let _ = app.update(key(KeyCode::Enter), t0);
+
+        // Queue left untouched — the run emitted no tool calls.
+        let cmds = app.update(
+            Msg::Engine(Box::new(EngineMsg::RunFinished(Box::new(report(
+                Status::Completed,
+            ))))),
+            t0,
+        );
+        assert_eq!(cmds, vec![Cmd::Submit("no carrier".into())]);
     }
 
     #[test]

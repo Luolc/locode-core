@@ -88,6 +88,8 @@ pub enum EngineMsg {
     /// per-run token, cloned before the run, retired at run end so a late
     /// fire is a harmless no-op).
     RunStarted {
+        /// The queue a mid-run prompt is pushed into (ADR-0028).
+        input_queue: locode_core::InputQueue,
         /// Fire to interrupt this run (Esc/Ctrl+C).
         cancel: CancellationToken,
     },
@@ -165,8 +167,15 @@ pub fn spawn(
                 UiCommand::Submit(text) => {
                     // Clone the handle BEFORE run() (ADR-0018 mandate — run
                     // takes &mut self, so nothing is callable mid-run).
+                    // Both handles are cloned BEFORE run() for the same reason
+                    // (ADR-0018, ADR-0028): run takes &mut self, so nothing on
+                    // the session is reachable while the turn is in flight.
                     let cancel = built.session.cancel_handle();
-                    let _ = msg_tx.send(EngineMsg::RunStarted { cancel });
+                    let input_queue = built.session.input_queue();
+                    let _ = msg_tx.send(EngineMsg::RunStarted {
+                        cancel,
+                        input_queue,
+                    });
                     // Pack-faithful prompt shaping, as locode-exec does.
                     let report = built.session.run_text(pack.shape_user_prompt(&text)).await;
                     let _ = msg_tx.send(EngineMsg::RunFinished(Box::new(report)));
