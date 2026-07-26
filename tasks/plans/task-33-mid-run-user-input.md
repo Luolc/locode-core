@@ -110,3 +110,29 @@ reuse all of this):**
 - Every echo site must correspond to a real wire position, and there are three.
 - The trace is the ground truth for ordering questions — read
   `~/.locode/sessions/**/rollout-*.jsonl` before trusting a rendering.
+
+## #247 — the same invariant, failed a third way
+
+The echo landed *before* its own batch's tool cells, so the wire order
+(results, then text) rendered reversed.
+
+Cause: `reconcile_delivered_input` polled at the **top of `update()`**, while
+tool cells are finalized from the tool-result message *inside* that same
+update. When the carrier message arrived, the poll fired first and pushed the
+prompt; the tool cells followed. Polling raced the very message it was polling
+about.
+
+Fix: stop polling. The engine appends the text **to** the tool-result message,
+so the echo is driven by that message — finalize the batch's tool cells, then,
+still handling the same message, echo the text it carries. Order is now correct
+*by construction* rather than by timing, which is the only version of this that
+stays fixed.
+
+*Lesson:* when the data already carries the ordering, read it from the data.
+Polling for "has it happened yet" reintroduces exactly the ordering question the
+message had already answered. Three fixes in, the pattern is clear — every
+failure here came from deriving position from something other than the wire
+message itself.
+
+A test now pins the ordering directly (`the_echo_lands_after_the_tool_cells_of_
+its_own_batch`), rather than only asserting that the echo exists.
