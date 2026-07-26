@@ -219,3 +219,26 @@ default off (`claudemd.ts:938-975`); we do not, because instruction and skill
 discovery is loop-adjacent engine machinery rather than pack fidelity
 (ADR-0023 §fidelity boundary), and the motivating case — pointing at one
 subtree of a monorepo too large to open at its root — is worthless without them.
+
+## Amendment (2026-07-26): the jail widens on a running session (`/add-dir`)
+
+`Host::add_root` adds a jail root at runtime, so `/add-dir <path>` widens a
+**live** session. The root lists moved behind an `Arc<RwLock<…>>` shared across
+clones: tools already hold `Arc<Host>`, so the alternative — rebuilding the host
+— means rebuilding the session and discarding the conversation. Claude Code
+keeps its `additionalWorkingDirectories` mutable for the same reason.
+
+The guard is taken and released inside the two membership checks, never held
+across `resolve_in_jail`'s `await`. Adding an existing root is a no-op, so
+repeating the command is harmless; a bad path errors and leaves the jail
+untouched.
+
+Nothing about the checks relaxes — this only changes *when* the allowed set can
+grow. The command also registers the directory as a discovery root
+(`Session::add_root`), which the per-turn instruction and skill rescans
+(ADR-0023, ADR-0025) pick up on the next turn without any re-injection.
+
+**Not persisted**, unlike `/model` and `/effort`. Those are preferences; a
+working directory belongs to the task at hand, and carrying it into every future
+session would keep widening the jail of unrelated runs. `--add-dir` is how a
+root becomes part of a session's startup.

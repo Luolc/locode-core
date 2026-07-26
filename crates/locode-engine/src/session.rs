@@ -114,6 +114,23 @@ impl Session {
         }
     }
 
+    /// Register another discovery root, so the next turn's instruction and skill
+    /// rescans see that directory's `AGENTS.md` and `.agents/skills`.
+    ///
+    /// Only the *config* changes here — widening the tool jail is the host's
+    /// job (`Host::add_root`), and the caller does both. Both discoveries
+    /// already re-run per turn (ADR-0023 whole-body diff, ADR-0025 post-run
+    /// rescan), so nothing needs re-injecting by hand: the added root simply
+    /// appears in the next scan.
+    pub fn add_root(&mut self, root: std::path::PathBuf) {
+        if !self.config.instructions.extra_roots.contains(&root) {
+            self.config.instructions.extra_roots.push(root.clone());
+        }
+        if !self.config.skills.extra_roots.contains(&root) {
+            self.config.skills.extra_roots.push(root);
+        }
+    }
+
     /// Set the reasoning effort subsequent turns sample with.
     ///
     /// Unlike [`Session::set_model`] this announces nothing: effort changes how

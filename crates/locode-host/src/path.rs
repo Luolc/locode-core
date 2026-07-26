@@ -91,8 +91,16 @@ impl Host {
     /// checks applied to the primary root, and a path outside every root is still
     /// an escape.
     fn is_under_a_root(&self, path: &Path) -> bool {
-        path.starts_with(&self.workspace_root)
-            || self.extra_roots.iter().any(|root| path.starts_with(root))
+        if path.starts_with(&self.workspace_root) {
+            return true;
+        }
+        // The guard is taken and dropped inside this call — never held across
+        // the `await` in `resolve_in_jail`.
+        let roots = self
+            .extra_roots
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        roots.iter().any(|root| path.starts_with(root))
     }
 
     /// The lexical pre-check's second form: roots as the caller wrote them.
@@ -101,9 +109,11 @@ impl Host {
     /// canonicalizes and re-checks against the canonical roots, so a symlink
     /// that actually leaves every root is still rejected.
     fn is_under_a_root_as_given(&self, path: &Path) -> bool {
-        self.roots_as_given
-            .iter()
-            .any(|root| path.starts_with(root))
+        let roots = self
+            .roots_as_given
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        roots.iter().any(|root| path.starts_with(root))
     }
 }
 
@@ -226,6 +236,61 @@ mod tests {
             .await
             .expect_err("absolute escapes are unaffected by extra roots");
         assert!(matches!(err, PathError::Escape(_)), "{err:?}");
+    }
+
+    /// `/add-dir` widens a **running** host: a path rejected a moment ago
+    /// resolves once its root is added, without rebuilding anything.
+    #[tokio::test]
+    async fn add_root_widens_a_live_host() {
+        let main = tempdir().expect("main root");
+        let later = tempdir().expect("root added later");
+        let host = test_host(main.path(), PathPolicy::Jailed, false);
+        let cwd = host.workspace_root().to_path_buf();
+        let target = later.path().join("file.txt");
+
+        let err = host
+            .resolve_in_jail(&cwd, &target)
+            .await
+            .expect_err("out of bounds before the root is added");
+        assert!(matches!(err, PathError::Escape(_)), "{err:?}");
+
+        host.add_root(later.path()).expect("root added");
+        host.resolve_in_jail(&cwd, &target)
+            .await
+            .expect("reachable once added");
+
+        // Idempotent: repeating the command must not error or duplicate.
+        host.add_root(later.path())
+            .expect("adding twice is a no-op");
+        host.resolve_in_jail(&cwd, &target)
+            .await
+            .expect("still fine");
+
+        // A clone shares the list — tools already hold their own `Arc<Host>`.
+        let clone = host.clone();
+        clone
+            .resolve_in_jail(&cwd, &target)
+            .await
+            .expect("clones see the widened jail");
+
+        // Widening one root does not open others.
+        let elsewhere = tempdir().expect("unrelated");
+        let err = host
+            .resolve_in_jail(&cwd, &elsewhere.path().join("x"))
+            .await
+            .expect_err("unrelated dirs stay out");
+        assert!(matches!(err, PathError::Escape(_)), "{err:?}");
+    }
+
+    /// A bad path leaves the jail untouched.
+    #[tokio::test]
+    async fn add_root_rejects_a_missing_directory() {
+        let main = tempdir().expect("main root");
+        let host = test_host(main.path(), PathPolicy::Jailed, false);
+        let err = host
+            .add_root(&main.path().join("nope"))
+            .expect_err("missing directory");
+        assert!(matches!(err, PathError::InvalidRoot(msg) if msg.contains("nope")));
     }
 
     /// A non-existent `--add-dir` fails at construction, naming the directory —

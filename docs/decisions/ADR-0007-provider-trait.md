@@ -201,10 +201,16 @@ source.** The Claude Code snapshot predates Fable 5 and lists only
 `xhigh`, `max` are all accepted; `ultra`, `ultrathink`, `extreme` are 400s.
 **`max` is the top rung**, with `xhigh` between `high` and it.
 
-**"ultrathink" is deliberately not a rung.** In Claude Code it is a keyword
-matched in the *prompt* (`utils/thinking.ts:45`) that bumps effort for that turn
-(`utils/effort.ts:321`) — a per-message nudge layered over the setting, not a
-level of it. Modelling it as a rung would conflate two different mechanisms.
+**"ultracode" is deliberately not a rung.** Claude Code's own `/effort` UI
+settles this (user screenshot, 2026-07-26): the slider runs
+`low · medium · high · xhigh · max`, and `ultracode` sits **past a divider**,
+annotated *"xhigh + workflows"*. It is a composite mode — an effort rung plus
+behavior — not a sixth level, which is why the API accepts `xhigh` and `max`
+but 400s `ultracode`. The related "ultrathink" is likewise a keyword matched in
+the *prompt* (`utils/thinking.ts:45`) that bumps effort for that turn
+(`utils/effort.ts:321`). Both are layers over the setting; modelling either as
+a rung would conflate two mechanisms and put a value on the wire that the API
+rejects.
 
 **`auto` clears rather than sets.** `/effort auto` (and an absent flag/setting)
 sends no `output_config`, leaving the API its own default — mirroring Claude

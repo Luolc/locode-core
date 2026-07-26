@@ -11,6 +11,7 @@ use super::registry::{CommandRegistry, CommandSource};
 /// Register every builtin. Called before skills so a skill cannot shadow one
 /// (ADR-0026 §4).
 pub fn register_builtins(registry: &mut CommandRegistry) {
+    registry.register(Arc::new(AddDir), CommandSource::Builtin);
     registry.register(Arc::new(EffortCmd), CommandSource::Builtin);
     registry.register(Arc::new(Help), CommandSource::Builtin);
     registry.register(Arc::new(Model), CommandSource::Builtin);
@@ -159,6 +160,55 @@ impl SlashCommand for Model {
             return CommandResult::Message(format!("already using {wanted}"));
         }
         CommandResult::Action(UiAction::SetModel(wanted.to_string()))
+    }
+}
+
+/// `/add-dir <path>` — the interactive half of `--add-dir`.
+///
+/// Widens the tool jail immediately and registers the directory as a discovery
+/// root, so its `AGENTS.md` and `.agents/skills` land on the next turn (both
+/// rescans already run per turn — ADR-0023, ADR-0025).
+///
+/// Not persisted, unlike `/model` and `/effort`: those are preferences, whereas
+/// a working directory belongs to the task at hand. Carrying it into every
+/// future session would keep widening the jail of unrelated runs — `--add-dir`
+/// is how a root becomes part of a session's startup.
+struct AddDir;
+
+#[async_trait::async_trait]
+impl SlashCommand for AddDir {
+    fn name(&self) -> &'static str {
+        "add-dir"
+    }
+
+    fn description(&self) -> &'static str {
+        "let the agent work in another directory, for this session"
+    }
+
+    fn usage(&self) -> &'static str {
+        "/add-dir <path>"
+    }
+
+    fn takes_args(&self) -> bool {
+        true
+    }
+
+    async fn execute(&self, _ctx: &CommandCtx<'_>, args: &str) -> CommandResult {
+        let raw = args.trim();
+        if raw.is_empty() {
+            return CommandResult::Error("give a directory: /add-dir <path>".into());
+        }
+        // `~` is expanded by the host on resolve, but a jail root is canonicalized
+        // at add time, so expand here too — otherwise `~/src` looks like a
+        // relative directory named `~`.
+        let expanded = match raw.strip_prefix("~/") {
+            Some(rest) => std::env::var_os("HOME").map_or_else(
+                || std::path::PathBuf::from(raw),
+                |home| std::path::PathBuf::from(home).join(rest),
+            ),
+            None => std::path::PathBuf::from(raw),
+        };
+        CommandResult::Action(UiAction::AddDir(expanded))
     }
 }
 

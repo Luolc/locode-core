@@ -56,6 +56,8 @@ pub enum Cmd {
     SetModel(String),
     /// Set the running session's effort rung, and persist it (`/effort <rung>`).
     SetEffort(Option<locode_core::Effort>),
+    /// Add a working directory to the running session (`/add-dir <path>`).
+    AddDir(std::path::PathBuf),
     /// Resolve and run this `/name args` line, then feed the result back through
     /// [`App::apply_command_result`].
     ///
@@ -397,6 +399,10 @@ impl App {
             // `/model` finished. The status bar takes the model the engine actually
             // resolved, so a refused or redirected switch cannot leave it claiming one
             // the session is not on.
+            EngineMsg::Notice(message) => {
+                self.outbox.push(Block::Notice(message));
+                vec![]
+            }
             EngineMsg::EffortChanged { effort, message } => {
                 self.effort = effort;
                 self.outbox.push(Block::Notice(message));
@@ -972,6 +978,7 @@ impl App {
             // not in use.
             CommandResult::Action(UiAction::SetModel(model)) => vec![Cmd::SetModel(model)],
             CommandResult::Action(UiAction::SetEffort(effort)) => vec![Cmd::SetEffort(effort)],
+            CommandResult::Action(UiAction::AddDir(dir)) => vec![Cmd::AddDir(dir)],
         }
     }
 
@@ -2205,7 +2212,7 @@ mod tests {
         assert!(app.slash.open, "a bare slash offers everything");
         assert_eq!(
             menu(&app),
-            vec!["/effort", "/help", "/model", "/new", "/quit"]
+            vec!["/add-dir", "/effort", "/help", "/model", "/new", "/quit"]
         );
 
         type_str(&mut app, "q", t0);
