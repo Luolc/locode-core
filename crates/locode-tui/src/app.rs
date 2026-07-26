@@ -345,7 +345,6 @@ impl App {
     /// the loop injects `now` so tests control time.
     pub fn update(&mut self, msg: Msg, now: Instant) -> Vec<Cmd> {
         self.dirty = true;
-        self.reconcile_delivered_input();
         match msg {
             Msg::SignalQuit => {
                 self.should_quit = true;
@@ -538,15 +537,30 @@ impl App {
                 Role::User => {
                     // Tool results pair with pending calls; plain user text
                     // was already echoed by the UI at submit time.
+                    // Finalize the batch's tool cells first, then echo any
+                    // mid-run input the engine appended to the SAME message.
+                    // Reading it off the message rather than polling is what
+                    // makes the order correct by construction: the text sits
+                    // after the results on the wire, so it renders after their
+                    // cells (ADR-0028 — transcript position = wire position).
+                    let mut delivered_mid_run = false;
                     for block in message.content {
-                        if let ContentBlock::ToolResult {
-                            tool_use_id,
-                            content,
-                            is_error,
-                        } = block
-                        {
-                            self.finalize_tool(&tool_use_id, &content, is_error);
+                        match block {
+                            ContentBlock::ToolResult {
+                                tool_use_id,
+                                content,
+                                is_error,
+                            } => self.finalize_tool(&tool_use_id, &content, is_error),
+                            ContentBlock::Text { text }
+                                if text.starts_with(locode_core::MID_RUN_PREAMBLE) =>
+                            {
+                                delivered_mid_run = true;
+                            }
+                            _ => {}
                         }
+                    }
+                    if delivered_mid_run {
+                        self.echo_delivered_mid_run();
                     }
                 }
                 _ => {}
@@ -651,33 +665,19 @@ impl App {
         self.drain_queued_prompt()
     }
 
-    /// Retire local copies of prompts the engine has already taken (ADR-0028).
+    /// Echo the mid-run prompts the engine just delivered, and retire them from
+    /// the pending list (ADR-0028).
     ///
-    /// The engine drains mid-run, asynchronously — nothing tells the reducer
-    /// when. Without this the entry lingers in `prompt_queue`, which `ui.rs`
-    /// renders as the pending list, so a prompt that is already on the wire
-    /// keeps showing as "queued". Checked on every update, which the run's
-    /// ticks make frequent enough to feel immediate.
-    ///
-    /// Gated on `mid_run_pushed` because an empty engine queue is equally true
-    /// when nothing was ever handed over.
-    fn reconcile_delivered_input(&mut self) {
+    /// Driven by the tool-result message that *carries* the text, not by
+    /// polling: the engine appends it after the results, so echoing while
+    /// handling that message puts it after the batch's tool cells — the same
+    /// order the wire has. Polling on every update raced the message handler
+    /// and rendered it one batch early.
+    fn echo_delivered_mid_run(&mut self) {
         if self.mid_run_pushed == 0 {
             return;
         }
-        let taken = self
-            .input_queue
-            .as_ref()
-            .is_some_and(locode_core::InputQueue::is_empty);
-        if taken {
-            // The engine put these on the wire *now*, riding the tool-result
-            // batch of the iteration that just finished. Echo at this point and
-            // not when they were typed: a prompt typed during round 1 but
-            // drained after round 2 belongs after round 2 in the transcript.
-            // Echoing at queue time renders it a full tool round too early, so
-            // the reply appears to arrive later than the question that caused
-            // it — verified against a session trace where the text landed in
-            // batch 2 while the UI had drawn it before batch 1's reply.
+        {
             let n = self.mid_run_pushed.min(self.prompt_queue.len());
             for queued in self.prompt_queue.drain(..n) {
                 self.outbox.push(Block::UserPrompt(queued.display));
@@ -1196,6 +1196,26 @@ mod tests {
             KeyModifiers::ALT,
         ))))
     }
+    /// The message the engine emits when it drains queued input: the batch's
+    /// tool results, then the marked text appended after them.
+    fn mid_run_carrier(tool_id: &str, text: &str) -> Msg {
+        Msg::Engine(Box::new(EngineMsg::Event(Box::new(Event::Message {
+            message: Message {
+                role: Role::User,
+                content: vec![
+                    ContentBlock::ToolResult {
+                        tool_use_id: tool_id.into(),
+                        content: vec![ResultChunk::Text { text: "ok".into() }],
+                        is_error: false,
+                    },
+                    ContentBlock::Text {
+                        text: format!("{}:\n\n{text}", locode_core::MID_RUN_PREAMBLE),
+                    },
+                ],
+            },
+        }))))
+    }
+
     fn run_started() -> Msg {
         Msg::Engine(Box::new(EngineMsg::RunStarted {
             cancel: locode_core::CancellationToken::new(),
@@ -1880,9 +1900,10 @@ mod tests {
         );
         assert_eq!(app.prompt_queue.len(), 1);
 
-        // The engine takes it, riding a later tool-result batch.
+        // The engine takes it and appends it to a tool-result batch — the
+        // message that carries it is what drives the echo.
         let _ = queue.take_all();
-        let _ = app.update(Msg::Tick, t0);
+        let _ = app.update(mid_run_carrier("c1", "what is the date?"), t0);
         assert!(
             matches!(app.outbox.last(), Some(Block::UserPrompt(p)) if p == "what is the date?"),
             "echoed at the point it actually entered the conversation"
@@ -1899,6 +1920,58 @@ mod tests {
             .filter(|b| matches!(b, Block::UserPrompt(p) if p == "what is the date?"))
             .count();
         assert_eq!(echoes, 1, "exactly once — not zero, not duplicated");
+    }
+
+    /// Regression: the echo must land **after** the batch's tool cells, matching
+    /// the wire, where the text sits after the tool results. Polling for
+    /// delivery raced the message handler and rendered it a batch early.
+    #[test]
+    fn the_echo_lands_after_the_tool_cells_of_its_own_batch() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        let queue = locode_core::InputQueue::new();
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::RunStarted {
+                cancel: locode_core::CancellationToken::new(),
+                input_queue: queue.clone(),
+            })),
+            t0,
+        );
+        // A tool is in flight when the user types.
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::Event(Box::new(Event::Message {
+                message: Message {
+                    role: Role::Assistant,
+                    content: vec![ContentBlock::ToolUse {
+                        id: "c1".into(),
+                        name: "run_terminal_cmd".into(),
+                        input: serde_json::json!({}),
+                    }],
+                },
+            })))),
+            t0,
+        );
+        type_str(&mut app, "and the date?", t0);
+        let _ = app.update(key(KeyCode::Enter), t0);
+
+        let _ = queue.take_all();
+        let _ = app.update(mid_run_carrier("c1", "and the date?"), t0);
+
+        let order: Vec<&str> = app
+            .outbox
+            .iter()
+            .filter_map(|b| match b {
+                Block::ToolCall { .. } => Some("tool"),
+                Block::UserPrompt(p) if p == "and the date?" => Some("prompt"),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            order.last(),
+            Some(&"prompt"),
+            "the prompt follows its batch's tool cell, as it does on the wire: {order:?}"
+        );
+        assert!(order.contains(&"tool"), "the tool cell rendered: {order:?}");
     }
 
     /// Regression: the pending list must stop showing a prompt the engine has
@@ -1925,7 +1998,7 @@ mod tests {
 
         // The engine drains mid-run — still the same run, no RunFinished yet.
         let _ = queue.take_all();
-        let _ = app.update(Msg::Tick, t0);
+        let _ = app.update(mid_run_carrier("c1", "mid-run"), t0);
         assert!(
             app.prompt_queue.is_empty(),
             "on the wire now, so no longer pending"

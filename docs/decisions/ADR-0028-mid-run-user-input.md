@@ -287,5 +287,12 @@ Two consequences worth stating, because both were violated in turn:
   and sent while idle. An echo attached to one path silently disappears when
   another path is what runs.
 
+**Derive position from the carrier message, never from polling.** The engine
+appends the text to the tool-result message, so that message *is* the ordering
+information — a frontend should render the echo while handling it, after the
+batch's tool cells. Polling a queue for "has it been taken yet" races the very
+message that answers the question, and renders the echo before the tool cells it
+should follow. Correct by construction beats correct by timing.
+
 This binds the P0.5 task notifications that reuse the queue: a notification
 renders where it was drained, not where it arrived.

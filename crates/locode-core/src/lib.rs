@@ -33,7 +33,7 @@ pub use locode_protocol::{
 // ---- engine: the driving API ----
 pub use locode_engine::{
     AllowAll, ApprovalRequest, Approver, CancellationToken, Decision, EngineConfig, EventSink,
-    FnSink, InputQueue, NullSink, Session,
+    FnSink, InputQueue, MID_RUN_PREAMBLE, NullSink, Session,
 };
 
 // ---- providers: the wire schemas ----
