@@ -22,6 +22,7 @@ what we are building and in what order:
 - [`SPEC.md`](SPEC.md) — objective, crate layout, tool contract, testing, boundaries, success criteria.
 - [`docs/decisions/`](docs/decisions/) — ADRs: the load-bearing decisions and the alternatives rejected. **The ADRs are the source of truth and must stay trustworthy — reconcile them *before* the code (see "ADR-first" in the Working agreement).**
 - [`tasks/tracker.md`](tasks/tracker.md) — the **single source of truth for task status**: an "Active / Next" section, a shipped "Archive", and reserved "Deferred" seams. Design detail per task is an immutable record under [`tasks/plans/`](tasks/plans/) (indexed by [`tasks/plans/README.md`](tasks/plans/README.md)); rationale is in the ADRs.
+- [`META-AGENTS.md`](META-AGENTS.md) — the document about the documents: which file answers which question, how a new learning gets routed into one of them, what belongs in `SPEC.md` vs an ADR (and which parts of those formats we inherited vs evolved), and the dated findings about our own workflow. **Read it before editing this file, a skill, `SPEC.md`, or a `docs/*-dev-process.md`** — and when a rule here needs to change, it is where the reasoning goes.
 
 Design rationale and the source study behind every decision live in the separate
 `coding-cli-survey` repo (referenced from the ADRs).
