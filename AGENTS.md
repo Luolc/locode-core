@@ -106,7 +106,7 @@ Design rationale and the source study behind every decision live in the separate
     for every pack (an honest A/B varies the pack, not the loop). For example, the claude pack
     ports `Read`/`Edit` but not Claude Code's `<system-reminder>` re-injection. When a ported
     tool is inseparable from loop machinery, port the tool's surface and leave the machinery to
-    the engine — note the seam. (This was "STATUS #9" before `tasks/STATUS.md` was retired.)
+    the engine — note the seam.
   - **Fidelity vs. truth — truth wins.** Prompt/description *reproducibility* is a goal, but
     it is **subordinate to factual accuracy**. When faithfully reproducing a harness would
     inject something **untrue for our actual run** — most often because the harness computes
@@ -137,14 +137,11 @@ Design rationale and the source study behind every decision live in the separate
   `tracker.md` (the *only* live status — Active/Next · Archive · Deferred), `plans/`
   (immutable, source-grounded per-task design records — no live checkboxes), and `audits/`.
   A task's checkbox exists in exactly one file — the tracker. Do **not** recreate
-  `plan.md`/`todo.md`/`STATUS.md`: they were consolidated into `tracker.md` (2026-07-22)
-  because three status copies drifted (a task marked done in one, open in another). When a
-  task ships, flip its box in the tracker and add a plan "Result" addendum — never a second
-  status list. (Note: the vendored `spec-driven-development` / `planning-and-task-breakdown`
-  skills still instruct you to save `tasks/plan.md` + `tasks/todo.md` — **ignore that
-  output convention here**; this repo develops via the tracker and the autonomous loop in
-  `docs/tui-dev-process.md`. The `.claude/commands/` that wrote those files were deleted
-  2026-07-27; see [`META-AGENTS.md`](META-AGENTS.md) §4 F3.)
+  `plan.md`/`todo.md`/`STATUS.md`, and ignore any vendored skill that tells you to: three
+  status copies drifted once, and the least-edited one rotted. When a task ships, flip its
+  box in the tracker and add a plan "Result" addendum — never a second status list. (The
+  history, and the skills that still prescribe those paths: [`META-AGENTS.md`](META-AGENTS.md)
+  §4 F3.)
 - **Route side effects through the seams the architecture defines** (see the ADRs):
   tools never touch the filesystem/shell directly, every side effect goes through
   the one dispatch door, and every `tool_use` is paired with exactly one
@@ -163,21 +160,17 @@ Design rationale and the source study behind every decision live in the separate
   citations) belongs in ordinary `//`/`//!` source comments and the ADRs — those stay
   internal and are never shown to a user, so reference ADRs freely there.
 
-## TUI workstream: the autonomous slice loop
+## Autonomous workstreams
 
-The TUI (Task 27: `locode-tui` + `locode-app`) is developed **near-fully
-autonomously** under the binding process in
-[`docs/tui-dev-process.md`](docs/tui-dev-process.md) (user decision,
-2026-07-21). In one line per phase: (0) written status analysis — minimal
-next unit, why, prereqs, what it unblocks; (1) mandatory re-read of how the
-four harnesses did *this unit's area* (fresh citations; decide
-implement-now / deferred / rejected; flag-don't-block user questions);
-(2) plan doc `tasks/plans/task-27-slice-N-*.md` with test matrix + binary
-preset targets; (3) implement + test until every target passes, full quality
-gates + self-review; (4) PR → auto-merge → same-PR bookkeeping (checkboxes,
-plan Result addendum, spec reconciliation); (5) loop without waiting. The
-hard-stop list (new deps, core public surface, crate boundaries, releases,
-scope past SPEC-TUI non-goals) is in the process doc and overrides autonomy.
+Some workstreams run **near-fully autonomously** (user decision, 2026-07-21): the agent
+drives every phase, the user reviews merged PRs asynchronously and answers batched
+questions. The loop, the four-part gate, the autonomy contract, and the hard-stop list
+live in [`docs/autonomous-workflow.md`](docs/autonomous-workflow.md) — **that document is
+what "the autonomous workflow" refers to**; read it before starting or resuming one.
+
+Each workstream adds a thin companion (`docs/<name>-dev-process.md`) carrying only what is
+local to it — grounding docs, the pinned source commit, resolved decisions, gap log, slice
+plan: TUI (Task 27), claude pack (Task 20), codex pack (Task 19).
 
 ## Git & GitHub workflow (agents drive this — no manual clicking)
 
@@ -219,9 +212,17 @@ A release is **all three of** version-bump, GitHub tag/binaries, and crates.io p
 never tag-only. Skipping the crates.io half, or bumping the workspace version without the
 internal dep pins, ships a broken/incomplete release. The version is a **single 0.1.x line**
 that every crate shares (`[workspace.package] version`, inherited via `version.workspace =
-true`); bump the patch by one. A release is also the last-chance checkpoint for the
-user-facing-text rule above — confirm `--help` and `README.md` name no removed/renamed flag,
-env var, or default before tagging. Steps, in order:
+true`); bump the patch by one. A release is also the standing checkpoint for the two documents
+nothing else forces anyone to re-read:
+
+- **User-facing text** — confirm `--help` and `README.md` name no removed/renamed flag, env
+  var, or default before tagging.
+- **`SPEC.md`'s Success Criteria and Open Questions** — strike through what shipped this
+  cycle, and record how each answered question was answered. Every other document has a
+  trigger that keeps it honest (ADRs: ADR-first; tracker: every PR; plans: the Result
+  addendum; this file: read every session). The spec had none, and by 2026-07-27 it listed a
+  shipped pack as unimplemented and carried two questions answered months earlier. The
+  release is the natural "where are we now" moment, so it owns this. Steps, in order:
 
 1. **Bump every version, in one PR.** In root `Cargo.toml`: `[workspace.package] version`
    **and** every internal pin under `[workspace.dependencies]` (`locode-* = { path = …,

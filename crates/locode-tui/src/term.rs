@@ -5,6 +5,11 @@
 //! exit, the error path, the panic hook, and the signal path — grok's rule
 //! (`xai-grok-pager/src/app/mod.rs:1185-1245`); the panic hook chains the
 //! previous hook after restoring — codex's rule (`tui/src/tui.rs:504-510`).
+//!
+//! Three of those four paths are pinned by tests below (clean exit and the
+//! error path via the guard, plus the panic hook). **The signal path is
+//! manual-smoke only** — see `the_signal_and_init_failure_paths_are_manual_smoke_only`
+//! for why and for the pty recipe that verifies it by hand.
 
 use std::io::{Stdout, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -220,16 +225,56 @@ pub fn spawn_input_reader() -> tokio::sync::mpsc::UnboundedReceiver<CrosstermEve
 mod tests {
     use super::*;
 
+    /// `RESTORED` is process-global, so the tests that reset it must not run
+    /// concurrently — without this they race and flake.
+    static TEARDOWN_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn teardown_test<T>(body: impl FnOnce() -> T) -> T {
+        let guard = TEARDOWN_TESTS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        RESTORED.store(false, Ordering::SeqCst);
+        let out = body();
+        drop(guard);
+        out
+    }
+
     /// `restore()` is idempotent: the second call is a no-op (the guard flag
     /// flips exactly once) — required because exit, panic hook, and the
     /// signal path may all invoke it.
     #[test]
     fn restore_is_idempotent() {
-        RESTORED.store(false, Ordering::SeqCst);
-        restore();
-        assert!(RESTORED.load(Ordering::SeqCst));
-        restore(); // second call must not panic or double-run
-        assert!(RESTORED.load(Ordering::SeqCst));
+        teardown_test(|| {
+            restore();
+            assert!(RESTORED.load(Ordering::SeqCst));
+            restore(); // second call must not panic or double-run
+            assert!(RESTORED.load(Ordering::SeqCst));
+        });
+    }
+
+    /// The panic path runs the teardown — the third of the four exit paths the
+    /// module doc claims share it (clean exit and the error path are covered by
+    /// `dropping_the_guard_restores`; the signal path is the one this file
+    /// cannot reach, see the note there).
+    ///
+    /// The hook is process-global and chains the previous one, so this test
+    /// installs it, swallows one panic, and restores the prior hook rather than
+    /// leaving every later panic in the binary routed through ours.
+    #[test]
+    fn the_panic_hook_restores() {
+        teardown_test(|| {
+            let previous = std::panic::take_hook();
+            std::panic::set_hook(Box::new(|_| {})); // silence the chained print
+            install_panic_hook();
+            let panicked = std::panic::catch_unwind(|| panic!("provoked")).is_err();
+            let _ = std::panic::take_hook();
+            std::panic::set_hook(previous);
+            assert!(panicked, "the test's own panic must have fired");
+            assert!(
+                RESTORED.load(Ordering::SeqCst),
+                "panicking must run the teardown before the process dies"
+            );
+        });
     }
 
     /// The teardown pops the stack entry we pushed **and then** clears the
@@ -306,8 +351,35 @@ mod tests {
     /// teardown; dropping it runs `restore` exactly like the clean exit does.
     #[test]
     fn dropping_the_guard_restores() {
-        RESTORED.store(false, Ordering::SeqCst);
-        drop(RestoreGuard);
-        assert!(RESTORED.load(Ordering::SeqCst));
+        teardown_test(|| {
+            drop(RestoreGuard);
+            assert!(RESTORED.load(Ordering::SeqCst));
+        });
+    }
+
+    /// **Not covered by any test in this file, on purpose — and this is the
+    /// note the audit owes the reader.**
+    ///
+    /// Two of the teardown's claims cannot be reached from a unit test:
+    ///
+    /// - **the signal path** (SIGHUP/SIGINT/SIGTERM/SIGQUIT → graceful quit →
+    ///   this teardown) needs a real process holding a real terminal, and
+    ///   `init` refuses without a tty;
+    /// - **`init`'s own failure paths** ("the teardown is emitted so the
+    ///   terminal is never left raw") need a tty that fails on demand.
+    ///
+    /// Both were verified by hand on 2026-07-27 with a pty harness: run the
+    /// binary under `script`, answer the capability query as a kitty-capable
+    /// terminal would, then `kill -HUP` it and assert the captured byte stream
+    /// carries `ESC[<1u ESC[=0;1u` before bracketed-paste-off. That recipe is
+    /// the backlog item `META-AGENTS.md` §6.2 (a replayable smoke harness);
+    /// when it lands, these two claims become real tests and this note goes
+    /// away. Until then they are **manual-smoke only** — do not read the module
+    /// doc's "shared by … the signal path" as test-backed.
+    #[test]
+    fn the_signal_and_init_failure_paths_are_manual_smoke_only() {
+        // Intentionally empty: the assertion is the documentation above. Kept as
+        // a test so the gap is listed in `cargo test` output rather than buried
+        // in a comment nobody greps for.
     }
 }

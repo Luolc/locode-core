@@ -148,7 +148,7 @@ those is the user, and because every PR auto-merges on green CI, that detection 
 **after** merge — so each finding becomes another PR. The fix stream is a *measurement of
 the gap*, not of carelessness.
 
-**Corroborating detail:** `docs/tui-dev-process.md` Phase 3 already admits it — terminal
+**Corroborating detail:** the autonomous loop's implement phase already admits it — terminal
 lifecycle "mostly doesn't [allow test-first]; those get their manual-smoke entries". The
 manual smoke is the user.
 
@@ -233,11 +233,13 @@ Deliberately not started (user, 2026-07-27). Each has its trigger.
    reading a diff of the screen. Rough estimate from F1's list: it would have caught on the
    order of **15 of the 37 fixes** before merge. *Trigger:* the next time a rendering bug
    ships, or the first `locode`-pack UI work.
-2. **A replayable smoke harness (`/smoke`).** The kitty investigation used a real pty via
+2. **A replayable smoke harness.** The kitty investigation used a real pty via
    `script`, a faked terminal reply to the capability query, `kill -HUP` for the signal path,
    and a byte-level assertion on the exit stream. That is a repeatable recipe: launch the
    binary, feed scripted keys, capture frames and the exit stream, diff. It converts "the
-   user opens locode and looks" into "CI runs it; the user reads a diff". *Trigger:* the
+   user opens locode and looks" into "CI runs it; the user reads a diff". It is also what
+   would retire the two claims the 2026-07-27 invariant sweep had to leave unpinned — the
+   signal path through the teardown, and `init`'s own failure paths. *Trigger:* the
    background-task workstream (P0.5), which will need to observe long-running behavior anyway.
 3. **A repo-specific review checklist.** The generic five-axis review does not know this
    repo's invariants: ADR-vs-code drift, `tool_use` ↔ `tool_result` pairing, no stdout in
