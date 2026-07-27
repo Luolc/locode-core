@@ -3,11 +3,10 @@
 **This is the entry point for the Codex pack workstream (Task 19).** It is written
 to be **self-contained**: a fresh agent context should be able to start here, read
 the linked grounding docs, and execute the whole workstream without re-deriving the
-decisions below. Mode: **near-fully autonomous** (same contract as the TUI and
-claude-pack workstreams — [`docs/tui-dev-process.md`](tui-dev-process.md),
-[`docs/claude-pack-dev-process.md`](claude-pack-dev-process.md)) — the agent drives
-every phase; the human reviews merged PRs asynchronously and answers batched
-questions.
+decisions below. Mode: **near-fully autonomous** — the loop, gates, and hard stops
+are the shared ones in [`autonomous-workflow.md`](autonomous-workflow.md); read that
+first, then this. "Self-contained" means the *decisions* below are complete, not that
+the loop is restated here.
 
 **What this builds:** `--harness codex`, a **faithful port of Codex CLI's stock
 headless tool surface + the gpt-5.6-sol base prompt + static preamble** — the third
@@ -162,21 +161,13 @@ byte-pin tests, `strip_identity`, `Pack::shape_user_prompt`, the `is_git_repo`/`
 
 ---
 
-## The loop (per slice — same five phases as the claude/TUI process)
-- **Phase 0 — Status analysis** (written, top of the slice plan): re-read this doc's
-  Resolved decisions + the reconciled task-19 plan + the previous slice's Result;
-  inspect merged code. State the minimal next unit, why, prereqs, risks.
-- **Phase 1 — Source revisit (mandatory, per slice)** against the codex source at
-  `f201c30c` (the `codex_tools` crate + `core/src/tools/` + `apply-patch/` + the prompt
-  in `models.json`) — fresh `file:line`, decide implement/defer/gap, cross-check claude.
-- **Phase 2 — Plan doc** `tasks/plans/task-19-slice-N-<name>.md`: Phase 0/1 records,
-  design, edge cases, test matrix, binary preset targets.
-- **Phase 3 — Implement + test** on `feat/task-19-slice-N-<name>`; four-part gate
-  (`fmt · clippy · test · doc`) + self-review + bounded-resource audit.
-- **Phase 4 — Ship**: PR (what/why, test evidence, deviations, batched questions);
-  `gh pr merge --auto --squash --delete-branch`; same-PR bookkeeping (Task 19 checkbox,
-  plan Result, ADR/SPEC reconciliation).
-- **Phase 5 — Continue** without waiting unless a hard-stop is pending.
+## The loop
+
+Per [`autonomous-workflow.md`](autonomous-workflow.md) — five phases, the four-part
+gate, same-PR bookkeeping. Local bindings: plan docs at
+`tasks/plans/task-19-slice-N-<name>.md`, branches `feat/task-19-slice-N-<name>`,
+Phase 1 revisits the pinned source commit named above, and Phase 4 flips the Task 19
+checkbox.
 
 ## Slice plan (proposed — agent's call, revise per Phase 0)
 1. **S1 — pack scaffold + `shell_command` + minimal prompt.** `CodexPack` + `Pack` impl
@@ -194,22 +185,22 @@ byte-pin tests, `strip_identity`, `Pack::shape_user_prompt`, the `is_git_repo`/`
    `[System, User(<environment_context>)]` with the rebuilt env renderer (D7); any
    `PackContext` growth (timezone) + exec/tui plumbing. Byte-pin snapshots.
 
-## Autonomy contract (this workstream)
-**Decide alone (record in plan/PR):** everything in `locode-packs` (the codex modules,
-the parser, descriptions, prompt constants, snapshots); **pack-framework + `Pack`
-additions** (the supported-schema declaration for D5, any `PackContext` growth) + exec/
-tui plumbing; module/test/naming design; slice subdivision; reversible in-scope
-trade-offs; **all mechanical fidelity details (D9) per the source.**
-**Hard stops (batched):** core public surface (`locode-protocol` types, `Provider`/`Tool`
-signatures, report envelope, facade exports); crate-boundary changes; publishing/releases/
-tags; heavy/niche deps; reopening a Resolved decision (D1–D10) or expanding scope past
-the duo / responses-only / gpt-5.6-sol prompt.
+## Autonomy — local additions
+
+The shared contract in [`autonomous-workflow.md`](autonomous-workflow.md) applies. What
+is specific here: **everything inside `locode-packs`** (this pack's modules, parsers,
+descriptions, prompt constants, snapshots), **pack-framework/`Pack`/`PackContext`
+additions** plus the exec/tui plumbing that carries them, and all mechanical fidelity
+details taken from the pinned source — the agent decides those alone and records them.
+
+Beyond the six shared hard stops: **reopening a resolved decision below**, or expanding
+scope past this pack's stated tool set and prompt.
 
 ## Standing constraints
-- Core crates stay headless (ADR-0001); the pack reaches the OS only through `locode-host`.
-- Faithful mimicry wins on conflict with a repo default, **subject to truth** (AGENTS.md).
-- Every `tool_use` → exactly one `tool_result`; failures are soft `tool_result{is_error}`.
-- All repo writing in English; user-facing chat follows the user's language.
+
+Shared — see [`autonomous-workflow.md`](autonomous-workflow.md). The one worth repeating
+for a *ported* pack: faithful mimicry wins over a repo default, subject to truth, and
+every such call is noted explicitly in the module docs and the gap log below.
 
 ## First action after a context reset
 Read this doc top-to-bottom, then the reconciled task-19 plan, then open the codex source

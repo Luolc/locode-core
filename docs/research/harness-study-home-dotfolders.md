@@ -1,5 +1,16 @@
 # Harness study — home dotfolders (`~/.claude` · `~/.codex` · `~/.grok` · opencode) → `~/.locode`
 
+> **Source freshness.** Last verified against the `coding-cli-survey` submodules:
+> **2026-07-24** (the newest dated note below — this stamp was inferred from the
+> document's own history, not from a re-read on 2026-07-27).
+> Submodule commits as of 2026-07-27: `claude-code` 6a25909 · `codex` f201c30c · `grok-build` b189869 · `opencode` 1754480.
+>
+> `AGENTS.md` requires a fresh source re-read when planning each task
+> ([`autonomous-workflow.md`](../autonomous-workflow.md) Phase 1). **Update this line
+> — date and commits — in the same PR as that re-read.** Without it a reader cannot tell
+> whether the `file:line` citations below still point at what they claim — which is how a
+> wrong injection point survived months in the subagent study (corrected 2026-07-26, #240).
+
 Source study of the **home dotfolder / user-data directory** across the four surveyed
 harnesses, conducted 2026-07-24 against the `coding-cli-survey` submodules (source) and
 the live `~/.claude` / `~/.codex` / `~/.grok` on disk (read-only, secrets redacted).

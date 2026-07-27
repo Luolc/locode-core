@@ -3,10 +3,10 @@
 **This is the entry point for the Claude Code pack workstream (Task 20).** It is
 written to be **self-contained**: a fresh agent context should be able to start
 here, read the linked grounding docs, and execute the whole workstream without
-re-deriving the decisions below. Mode: **near-fully autonomous** (same contract as
-the TUI workstream — [`docs/tui-dev-process.md`](tui-dev-process.md)) — the agent
-drives every phase; the human reviews merged PRs asynchronously and answers batched
-questions.
+re-deriving the decisions below. Mode: **near-fully autonomous** — the loop, gates, and hard
+stops are the shared ones in [`autonomous-workflow.md`](autonomous-workflow.md); read
+that first, then this. "Self-contained" means the *decisions* below are complete, not
+that the loop is restated here.
 
 **What this builds:** `--harness claude`, a **faithful port of Claude Code's
 headless-relevant toolset + static system prompt + static preamble** — the second
@@ -194,39 +194,13 @@ that PR.
 
 ---
 
-## The loop (per slice — same five phases as the TUI process)
+## The loop
 
-A "unit" is one of the slices in the plan below; subdivide if a PR would exceed
-reviewability (agent's call, recorded in the plan).
-
-- **Phase 0 — Status analysis (written, top of the slice plan doc):** re-read this
-  doc's Resolved decisions + the task-20 plan + the previous slice's Result addendum;
-  inspect the merged code (git log, crate tree, tests). State: minimal next unit; why
-  now / what it unblocks; prerequisites (+ a check they hold); 2–4 risks.
-- **Phase 1 — Source revisit (mandatory, per slice):** go back to the **Claude Code
-  source** (`submodules/claude-code`, commit `6a25909`) for *this slice's* tool/section
-  — fresh `file:line` citations, not memory. Record what CC does, the faithful
-  target, and any gap discovered (add to the Gap log). Cross-check the grok pack's
-  handling of the analogous piece.
-- **Phase 2 — Plan doc:** `tasks/plans/task-20-slice-N-<name>.md` — Phase 0 + Phase 1
-  records; design (module touch points, arg struct, caps, guardrails, output shape);
-  edge cases; **test matrix** (schema golden, description provenance pin, behavior via
-  `build_registry`+`dispatch` over a tempdir host, prompt snapshot where relevant);
-  preset targets (binary, testable).
-- **Phase 3 — Implement + test:** branch `feat/task-20-slice-N-<name>`; test-first
-  where shape allows; iterate until every preset target passes; then the **four-part
-  gate** (fmt · clippy · **test** — confirm no `FAILED`/`panicked` lines directly ·
-  doc) + a self-review pass over the diff (correctness, dead code, naming, comment
-  discipline, simplification). Bounded-resource audit for any new buffer/cap.
-- **Phase 4 — Ship:** PR (what/why, test evidence, **deviations from the plan**,
-  batched open questions); `gh pr merge --auto --squash --delete-branch`; prune local
-  branches. **Same-PR bookkeeping:** Task 20 checkbox, plan **Result** addendum,
-  ADR/SPEC reconciliation if a decision drifted (ADR-first). If CI reddens on
-  something local gates passed, fix forward on the branch.
-- **Phase 5 — Continue:** loop to Phase 0 for the next slice without waiting, unless a
-  hard-stop is pending. A later-found defect is a new small slice through the loop.
-
----
+Per [`autonomous-workflow.md`](autonomous-workflow.md) — five phases, the four-part
+gate, same-PR bookkeeping. Local bindings: plan docs at
+`tasks/plans/task-20-slice-N-<name>.md`, branches `feat/task-20-slice-N-<name>`,
+Phase 1 revisits the pinned source commit named above, and Phase 4 flips the Task 20
+checkbox.
 
 ## Slice plan (proposed order — agent's call, revise per Phase 0)
 
@@ -255,46 +229,22 @@ end-to-end; the full byte-pinned prompt lands last).
 
 ---
 
-## Autonomy contract (this workstream)
+## Autonomy — local additions
 
-**Decide alone (record in plan/PR):** everything inside `locode-packs` (the claude
-pack modules, `ClaudeSessionState`, descriptions, prompt constants, snapshots);
-**pack-framework + `PackContext` + `Pack` additions + exec/tui plumbing** needed to
-carry pack context (e.g. the `is_git_repo`/`model` fields, D9); module/test/naming
-design; slice subdivision; reversible in-scope trade-offs; choosing the reversible
-default for a flagged open question.
+The shared contract in [`autonomous-workflow.md`](autonomous-workflow.md) applies. What
+is specific here: **everything inside `locode-packs`** (this pack's modules, parsers,
+descriptions, prompt constants, snapshots), **pack-framework/`Pack`/`PackContext`
+additions** plus the exec/tui plumbing that carries them, and all mechanical fidelity
+details taken from the pinned source — the agent decides those alone and records them.
 
-**Hard stops (batched where possible):**
-1. **Core public surface** — `locode-protocol` types, the `Provider`/`Tool` trait
-   signatures, the report envelope / `schema_version`, `locode-core` facade exports.
-2. **Crate boundary changes** (new crate, moved crate).
-3. **Publishing / releases / version bumps / tags** (always the user's call).
-4. **Heavy / niche / security-sensitive dependencies.** Reasonable, well-justified
-   deps may be added *with the justification in the plan/PR* — e.g. `globset` **only**
-   if `rg --glob` genuinely diverges from CC's globber on some pattern class
-   (document the divergence). Nothing heavy without asking.
-5. **Reopening a Resolved decision (D1–D13)** or expanding scope past the six tools /
-   the §4.7 prompt split.
-6. Anything destructive or outward-facing beyond branch → PR → merge.
-
-Questions never block the next slice unless they're a hard-stop on its critical path;
-they accumulate for batched review, with the reversible default taken meanwhile.
-
----
+Beyond the six shared hard stops: **reopening a resolved decision below**, or expanding
+scope past this pack's stated tool set and prompt.
 
 ## Standing constraints
-- **Core crates stay headless** (ADR-0001). The pack reaches the OS only through
-  `locode-host` (exec, fs, rg resolution, jail) — never `std::fs`/`Command` directly.
-- **Faithful mimicry wins on conflict** with a repo default, *for a ported pack*
-  (AGENTS.md) — note it explicitly (e.g. `deny_unknown_fields` even though grok is
-  permissive; `cat -n` numbering even though grok differs).
-- **Every `tool_use` → exactly one `tool_result`**; tool failures are soft
-  `tool_result{is_error}`, not fatals, unless CC itself hard-fails the turn.
-- All repo writing in **English**; user-facing chat follows the user's language.
-- The study/plan docs are living: a Phase-1 revisit that finds the plan wrong amends
-  the plan in the same PR with a dated note.
 
----
+Shared — see [`autonomous-workflow.md`](autonomous-workflow.md). The one worth repeating
+for a *ported* pack: faithful mimicry wins over a repo default, subject to truth, and
+every such call is noted explicitly in the module docs and the gap log below.
 
 ## First action after a context reset
 Read this doc top-to-bottom, then the task-20 plan, then open the Claude Code source
