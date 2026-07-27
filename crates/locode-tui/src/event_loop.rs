@@ -487,15 +487,31 @@ async fn sleep_until(deadline: Option<Instant>) {
     }
 }
 
-/// SIGINT/SIGTERM → graceful quit through the same teardown as /quit.
+/// Every signal that means "this session is over" → graceful quit through the
+/// same teardown as `/quit`.
+///
+/// **SIGHUP is the one that matters for the terminal's own state**: closing the
+/// window, or an ssh session dropping, hangs up the controlling terminal, and
+/// its default disposition kills us outright — no teardown, so the keyboard
+/// enhancement stays on. Over ssh that outlives us: the pty dies on the server,
+/// the *local* terminal emulator keeps the mode it was left in, and the shell
+/// the user lands back in is the one that pays. Best-effort — if the connection
+/// is already gone the teardown writes go nowhere, but when it is a window close
+/// or a plain `kill -HUP` they land.
+///
+/// SIGQUIT joins them for completeness (raw mode turns ISIG off, so it can only
+/// arrive as an explicit `kill -QUIT`); we trade the core dump for a terminal
+/// the user can keep typing in.
 fn spawn_signal_task() -> tokio::sync::mpsc::UnboundedReceiver<()> {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     #[cfg(unix)]
     tokio::spawn(async move {
         use tokio::signal::unix::{SignalKind, signal};
-        let (Ok(mut int), Ok(mut term)) = (
+        let (Ok(mut int), Ok(mut term), Ok(mut hup), Ok(mut quit)) = (
             signal(SignalKind::interrupt()),
             signal(SignalKind::terminate()),
+            signal(SignalKind::hangup()),
+            signal(SignalKind::quit()),
         ) else {
             return;
         };
@@ -503,6 +519,8 @@ fn spawn_signal_task() -> tokio::sync::mpsc::UnboundedReceiver<()> {
             tokio::select! {
                 _ = int.recv() => {}
                 _ = term.recv() => {}
+                _ = hup.recv() => {}
+                _ = quit.recv() => {}
             }
             if tx.send(()).is_err() {
                 return;

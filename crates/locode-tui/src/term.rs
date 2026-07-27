@@ -10,9 +10,7 @@ use std::io::{Stdout, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use crossterm::event::{
-    Event as CrosstermEvent, KeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
-};
+use crossterm::event::Event as CrosstermEvent;
 use ratatui::backend::CrosstermBackend;
 
 use crate::frame_terminal::FrameTerminal;
@@ -58,6 +56,22 @@ static RESTORED: AtomicBool = AtomicBool::new(false);
 /// `src/ink/termio/csi.ts:303-307`).
 const KEYBOARD_ENHANCEMENT_OFF: &str = "\x1b[<1u\x1b[=0;1u";
 
+/// Turn the kitty keyboard enhancement on, in wire order:
+///
+/// - `CSI < 1 u` pops **first**. The stack we inherit may already carry an
+///   entry left by a program that died before its own teardown — most often an
+///   earlier locode killed with SIGKILL or whose ssh session dropped. Stacking
+///   on top of it makes the leak permanent: our exit pops one entry and the
+///   inherited one keeps the shell in CSI-u mode, so the *next* session
+///   inherits it too. Popping first consumes it instead. A pop on an empty
+///   stack is a no-op per the protocol, so the ordinary case is unaffected.
+/// - `CSI > 1 u` then pushes our own entry (`DISAMBIGUATE_ESCAPE_CODES`).
+///
+/// Claude Code's ink pops before every re-assert for the same reason — without
+/// it "each gap adds a stack entry, and the single pop on exit … can't drain
+/// them" (`src/ink/ink.tsx:883-887,905-909`).
+const KEYBOARD_ENHANCEMENT_ON: &str = "\x1b[<1u\x1b[>1u";
+
 /// The one place diagnostics go (stderr; stdout belongs to the TUI frames).
 #[allow(clippy::print_stderr)]
 pub fn error_line(message: &str) {
@@ -88,12 +102,11 @@ pub fn init() -> std::io::Result<(Term, RestoreGuard)> {
     // events and double every keypress, forcing Press-filtering everywhere.
     // Best-effort + capability-gated: unsupported terminals simply keep the old
     // behavior (Shift+Enter == Enter), never an error. The *teardown* is not
-    // gated the same way — see [`KEYBOARD_ENHANCEMENT_OFF`].
+    // gated the same way — see [`KEYBOARD_ENHANCEMENT_OFF`]; the pop that leads
+    // the setup is in [`KEYBOARD_ENHANCEMENT_ON`].
     if crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) {
-        let _ = crossterm::execute!(
-            stdout,
-            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
-        );
+        let _ = write!(stdout, "{KEYBOARD_ENHANCEMENT_ON}");
+        let _ = stdout.flush();
     }
     // Clear the visible screen AND purge scrollback, then home the cursor
     // (Claude Code / Grok Build's start; grok's `resize_purge_rerender`
@@ -236,6 +249,40 @@ mod tests {
         assert!(
             pop < clear,
             "clearing before popping zeroes the wrong entry"
+        );
+    }
+
+    /// Setup pops **before** it pushes: the stack may already carry an entry a
+    /// hard-killed program left behind, and pushing on top of it makes the leak
+    /// permanent — our exit pops one, the inherited one keeps the shell in
+    /// CSI-u mode, and the next session inherits it again.
+    #[test]
+    fn setup_pops_before_pushing() {
+        let pop = KEYBOARD_ENHANCEMENT_ON
+            .find("\x1b[<1u")
+            .expect("setup pops an inherited entry first");
+        let push = KEYBOARD_ENHANCEMENT_ON
+            .find("\x1b[>1u")
+            .expect("setup pushes our own entry");
+        assert!(pop < push, "pushing before popping stacks on the leak");
+    }
+
+    /// The hand-written push stays byte-identical to crossterm's command —
+    /// same flags (`DISAMBIGUATE_ESCAPE_CODES` only, never `REPORT_EVENT_TYPES`,
+    /// which would double every keypress).
+    #[test]
+    fn the_push_matches_crossterms_command() {
+        let mut expected = String::new();
+        crossterm::Command::write_ansi(
+            &crossterm::event::PushKeyboardEnhancementFlags(
+                crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES,
+            ),
+            &mut expected,
+        )
+        .expect("render the push");
+        assert!(
+            KEYBOARD_ENHANCEMENT_ON.ends_with(&expected),
+            "setup must end with crossterm's push ({expected:?})"
         );
     }
 

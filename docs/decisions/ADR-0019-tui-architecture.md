@@ -239,3 +239,43 @@ focus reporting, synchronized output): *enabling* is capability-gated and
 best-effort, *disabling* is unconditional and runs on every exit path. The
 asymmetry is deliberate — a mode we fail to turn on costs a feature, a mode we
 fail to turn off costs the user their shell.
+
+### Follow-up (2026-07-27): the two remaining exit paths, and a startup that heals
+
+The user keeps Shift+Enter (so the enhancement stays) and asked for the cleanup
+to hold on *every* exit. Two gaps were left:
+
+- **SIGHUP** — closing the terminal window or losing an ssh connection hangs up
+  the controlling terminal, and its default disposition kills us with no
+  teardown at all. Over ssh the damage outlives the process: the pty dies on the
+  server, but the *local* emulator keeps the mode it was left in. It now joins
+  SIGINT/SIGTERM on the graceful-quit path (as does SIGQUIT, reachable only as
+  an explicit `kill -QUIT` since raw mode turns ISIG off — we trade its core
+  dump for a usable terminal). Best-effort: if the connection is already gone
+  the teardown writes go nowhere.
+- **The inherited stack.** SIGKILL/OOM can never run a teardown, so a leak from
+  a previous session is a permanent state the *next* session must handle. Setup
+  therefore pops before it pushes (`CSI < 1 u` then `CSI > 1 u`): stacking on top
+  of an inherited entry is what made the breakage self-perpetuating — each clean
+  exit pops one entry, the inherited one keeps the shell in CSI-u mode, and the
+  next session inherits it again. Popping first consumes it. This is Claude
+  Code's pop-before-push rule (`src/ink/ink.tsx:905-909`), applied at startup
+  rather than on re-assert.
+
+Codex reaches the same "exit needs more than a balanced pop" conclusion from the
+same failure: `reset_keyboard_reporting_after_exit` pops *and* sends a second
+`CSI < u`, because "process exit gets a stronger reset so the parent shell does
+not inherit enhanced key reporting if a terminal misses the normal stack pop"
+(`codex-rs/tui/src/tui/keyboard_modes.rs:1-5,221-232`). We zero the flags instead
+of popping twice — that heals a leak at any stack depth, not just depth two.
+
+Verified end-to-end in a pty against a simulated kitty-capable terminal: startup
+emits pop-then-push, exit emits pop-then-clear, and a SIGHUP mid-session still
+emits the full teardown.
+
+**Not adopted**: re-asserting the modes after idle gaps or tmux/ssh reconnects
+(Claude Code's `reassertTerminalModes`). It keeps Shift+Enter working across a
+reconnect, but it is also what generated their unbalanced-stack bug, and our
+push happens once. Revisit only with the pop-before-push rule attached.
+Codex's `CODEX_TUI_DISABLE_KEYBOARD_ENHANCEMENT`-style opt-out is likewise
+deferred until someone wants the feature off.
