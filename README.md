@@ -37,7 +37,7 @@ curl -fsSL https://raw.githubusercontent.com/luolc/locode-core/main/install.sh |
 
 The script installs to `~/.locode/bin` (override with `LOCODE_BIN_DIR`),
 verifies the sha256 checksum, and puts the binary on your PATH. Pass a version
-for a specific release: `… | bash -s 0.1.15`. Then run `locode` for the
+for a specific release: `… | bash -s 0.1.16`. Then run `locode` for the
 interactive agent or `locode -p "task"` for a headless one-shot. The search
 tools shell out to [ripgrep](https://github.com/BurntSushi/ripgrep) — have `rg`
 on PATH or point `LOCODE_RG_PATH` at a binary.
@@ -120,8 +120,10 @@ also ships an **experimental** interactive terminal UI, built in this repo as
 separate crates (`locode-tui` = components/library, `locode-app` = the `locode`
 binary) layered on the core (ADR-0019). It drives one session interactively:
 type a prompt, watch tool calls and the reply stream in, approve or deny tool
-calls, cancel a turn with Esc, and continue the conversation. Treat it as a
-convenience for exploring the engine, not a supported product.
+calls, cancel a turn with Esc, and continue the conversation. You can also type
+a follow-up while a turn is still running — it is delivered as soon as the
+running tool call finishes, rather than waiting for the whole turn. Treat it as
+a convenience for exploring the engine, not a supported product.
 
 ```sh
 # Keyless demo (scripted mock wire — no API key):
