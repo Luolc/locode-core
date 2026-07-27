@@ -1,7 +1,8 @@
 //! LIVE smoke test for the Anthropic wire (Task 12, plan §9.4) — manual only.
 //!
 //! Ignored by default so CI never touches the network; run by hand with the
-//! direnv env loaded (`LOCODE_API_KEY` / `LOCODE_BASE_URL` / `LOCODE_MODEL`):
+//! direnv env loaded (`LOCODE_API_KEY` / `LOCODE_BASE_URL` — the model is fixed
+//! in this file, not read from the environment):
 //!
 //! ```sh
 //! cargo test -p locode-provider --test anthropic_live_smoke -- --ignored --nocapture

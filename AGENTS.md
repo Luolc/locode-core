@@ -140,9 +140,11 @@ Design rationale and the source study behind every decision live in the separate
   `plan.md`/`todo.md`/`STATUS.md`: they were consolidated into `tracker.md` (2026-07-22)
   because three status copies drifted (a task marked done in one, open in another). When a
   task ships, flip its box in the tracker and add a plan "Result" addendum — never a second
-  status list. (Note: the generic `/plan` and `/build` skills still write `tasks/plan.md` +
-  `tasks/todo.md`; this repo does not use that path — it develops via the tracker and the
-  autonomous TUI loop in `docs/tui-dev-process.md`.)
+  status list. (Note: the vendored `spec-driven-development` / `planning-and-task-breakdown`
+  skills still instruct you to save `tasks/plan.md` + `tasks/todo.md` — **ignore that
+  output convention here**; this repo develops via the tracker and the autonomous loop in
+  `docs/tui-dev-process.md`. The `.claude/commands/` that wrote those files were deleted
+  2026-07-27; see [`META-AGENTS.md`](META-AGENTS.md) §4 F3.)
 - **Route side effects through the seams the architecture defines** (see the ADRs):
   tools never touch the filesystem/shell directly, every side effect goes through
   the one dispatch door, and every `tool_use` is paired with exactly one
