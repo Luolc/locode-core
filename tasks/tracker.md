@@ -62,9 +62,31 @@ The immediate queue, ahead of the remaining packs:
   visibility — independent axes. Engine: a `QueuedInput` enum, `InputQueued`/`InputDelivered`
   events, one drain step between dispatch and re-sample, a no-tool-calls fallback, cancel
   clears. UI: queued vs delivered must be visibly distinct.
-- **P0.5 — Background Bash + Subagents.** Background/async bash commands, and subagents /
-  agent-groups (their distinctions + implementations are hard to read off the UIs — needs a
-  source dig). After the two P0s. Also unblocks codex `shell_command` → unified exec.
+- **P0.5 (the next big task) — stand up the `locode` best-of pack, and build background
+  tasks + subagents *inside* it** (user decision, 2026-07-27). Two entries that were tracked
+  apart — "P0.5 background Bash + subagents" and Task 15's `locode` half (was P1) — become
+  **one workstream**, because the first question background raised ("which harness gets
+  it?") already had its answer: our own pack. Nothing new lands in a *ported* pack;
+  `claude`/`codex`/`grok` reproduce their harnesses and stop there (ADR-0023).
+  - **Order of work**: the `locode` pack itself first (best-of toolset + our own prompt),
+    then a **batch tool with background support**, then the task/subagent surface on top of
+    it. The batch framing is the user's call (2026-07-27) and differs from the study's
+    recommendation of a per-tool `is_background` flag ported per pack — reconcile the two
+    explicitly when the ADR is written, don't let the delta pass silently.
+  - **Already in place**: P0.5a mid-run input ([ADR-0028](../docs/decisions/ADR-0028-mid-run-user-input.md))
+    shipped the queue, the drain step between dispatch and re-sample, and the queued vs
+    delivered UI split. **Task notifications are a second payload kind on that queue**, not
+    a second mechanism — the study's `mode:'task-notification'` alongside `mode:'prompt'`,
+    with addressing (main thread vs a subagent's own `agentId`) as the new part.
+  - **The fidelity boundary is unchanged** by putting the surface in `locode`: the
+    *mechanism* — host task registry, the drain step, the nested engine loop — stays on the
+    shared engine and is identical for every pack; what the `locode` pack owns is the
+    **tool surface** over it. A ported pack that later wants background gets a skin, not
+    its own machinery.
+  - **Two ADRs are proposed and still unwritten** (study §Proposed ADRs): background tasks +
+    the host task registry, and subagents as a nested engine loop. The pack-home decision
+    above belongs in whichever lands first — ADR-first, before the code.
+  - Also unblocks codex `shell_command` → unified exec (see the deferred seam below).
 - **~~P1 — opencode pack~~ — CANCELLED** (user decision, 2026-07-24). The ported-harness
   reproduction workstream **ends with skills**: `claude` / `codex` / `grok` are the three
   packs we ship, and no fourth port is built. The drafted plan
@@ -78,9 +100,9 @@ The immediate queue, ahead of the remaining packs:
   files, the commonest multi-tool turn. `ToolKind::Shell`/`Other` stay exclusive (Claude
   Code's rule; a shell call declares no path). Model-emitted order stays an invariant so
   eval A/Bs don't acquire scheduling noise. Serial dispatch remains shipped until accepted.
-- **P1 — our own `locode` best-of pack** (the other half of Task 15) — now the **only**
-  remaining pack work, and the home for every capability after skills (background tasks,
-  todo, subagents, …): those are built once, on `locode`, not ported per harness.
+- ~~**P1 — our own `locode` best-of pack**~~ — **merged into P0.5 above** (2026-07-27). It
+  was always "the home for every capability after skills"; background tasks are the first
+  such capability, so the pack and its first tools ship together rather than in sequence.
 - **P1–P2 — tool-error text belongs behind a debug view.** Tool `is_error` results
   (`invalid arguments: …`, the truncation notice) currently render inline in the TUI
   above each tool. That is deliberate for now — it is the fastest way to see a
@@ -228,12 +250,13 @@ and resolve the plan's open-questions section first.
   also ships a standalone **`write`** tool the pack lacks. Not fixed: the ported-pack
   workstream is closed, so whether to chase the shipped binary or stay pinned to the
   snapshot is a user call.
-- [ ] **Task 15 — our own `locode` best-of pack** (P1). The `opencode` half is
-  **cancelled** (user decision, 2026-07-24 — see Priorities); its plan
+- [ ] **Task 15 — our own `locode` best-of pack** — **now P0.5, jointly with background
+  tasks + subagents** (user decision, 2026-07-27 — see Priorities). The `opencode` half is
+  **cancelled** (user decision, 2026-07-24); its plan
   ([`plans/task-15-opencode-pack.md`](plans/task-15-opencode-pack.md)) is kept as a record.
   `locode` is our best-of pack (grok-build-style naming; ADR-0011's rg-glob is scoped here)
-  and becomes the single home for post-skills capability. Deferred behind the P0s above.
-  Scope L.
+  and the single home for post-skills capability — starting with the batch/background tool
+  surface, which is why the two are built together rather than in sequence. Scope L.
 - [ ] **Task 17 — OpenAI Chat Completions wire** (`openai-chat`) — **DEFERRED** (Responses
   covers GPT + Grok natively). The reasoning-blind LCD/control wire; revisit when a target
   model only speaks chat-completions. Plan: [`plans/task-17-openai-chat-wire.md`](plans/task-17-openai-chat-wire.md). Scope L.
@@ -392,8 +415,9 @@ reserved, ADR-0024 §2.3) · OS sandbox · MCP · `--json-schema` answers · mul
 bundle matrix + macOS notarization (packaging, ADR-0011) · codex unified exec (PTY) /
 `view_image` / hosted `web_search` · Claude Code TodoWrite/Task/WebFetch/WebSearch/NotebookEdit ·
 per-model codex prompt variants · grok pack multimodal `read_file` (binary/image/PDF/PPTX) ·
-grok pack background commands (`is_background` + `get_task_output`/`kill_task` + host task
-registry) · `history.jsonl` input recall + trace GC (`cleanup_period_days`) + a rebuildable
+grok pack background commands (`is_background` + `get_task_output`/`kill_task` — the *grok
+skin* only; the **host task registry under it is no longer deferred**, it is P0.5 shared
+machinery as of 2026-07-27) · `history.jsonl` input recall + trace GC (`cleanup_period_days`) + a rebuildable
 sessions listing index (all reserved by ADR-0024; land on demand).
 
 *(Removed 2026-07-24 as no longer deferred: "shared engine session-start context / AGENTS.md
