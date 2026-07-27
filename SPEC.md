@@ -122,7 +122,7 @@ Conventions: `kind()` is a classification tag for cross-pack A/B alignment — n
 - **Highest-leverage surface:** a **mock `Provider`** that emits scripted `tool_calls`, so the loop is unit-tested with zero API spend. The loop — transcript pairing, soft/fatal handling, max-turns, abort repair — is where the subtle bugs live.
 - **Golden test** on the report-envelope JSON shape (freeze `schema_version: 1`).
 - **Per-crate unit tests**, especially the grok-faithful `edit` guards (as built: exact + unique match, reject no-op — grok has **no** runtime read-before-edit or mtime-freshness check, so we don't either) and the path jail.
-- **One end-to-end integration test** driving `locode-engine` through a real or recorded Anthropic wire on a trivial task.
+- **Live wire smokes, manual and `#[ignore]`d by default** so CI never touches the network: `locode-provider/tests/anthropic_live_smoke.rs` and `responses_live_smoke.rs` prove thinking-replay, cache survival, and error classification against a real backend. They cover the **provider**, not the whole engine — an end-to-end `locode-engine` run over a *recorded* wire is still an open gap, not a shipped test. Do not read this line as coverage we have.
 - Tests live inline (`#[cfg(test)]`) for unit scope; cross-crate integration under each crate's `tests/`.
 
 ## Boundaries
@@ -141,16 +141,16 @@ Conventions: `kind()` is a classification tag for cross-pack A/B alignment — n
 4. Every tool failure is a soft `tool_result{is_error}`; a pre-send pass guarantees transcript validity (no dangling/duplicate tool results); an explicit `max_turns` ceiling terminates cleanly.
 5. The headless path (`locode -p`, formerly the standalone `locode-exec` binary) emits **exactly one** JSON report on stdout (stamping `harness` + `api_schema`), all diagnostics on stderr, exit 0 on clean terminal state / non-zero on fatal.
 6. The mandatory four-part CI gate (`fmt · clippy · test · doc`) is green; the loop is covered by mock-provider unit tests.
-7. Extension seams exist — some now filled: **shipped since v0** — a second `Provider` wire (OpenAI Responses) and streaming (ADR-0021), and the **`claude` harness pack** (Task 20); **still unimplemented** — the remaining harness packs (`codex`/`opencode`/`locode`), `apply_patch`, parallel tools, compaction, sandbox, MCP.
+7. Extension seams exist — some now filled. **Shipped since v0** (as of 2026-07-27): a second `Provider` wire (OpenAI Responses) and streaming (ADR-0021); the **`claude`** (Task 20) and **`codex`** (Task 19) harness packs, the latter carrying `apply_patch`; the interactive app (ADR-0019/0022); the `~/.locode` home with settings + resumable traces (ADR-0024); agent skills (ADR-0025); slash commands (ADR-0026); mid-run user input (ADR-0028). **Still unimplemented**: our own **`locode` best-of pack** (the last pack — the `opencode` port was cancelled 2026-07-24), background tasks + subagents, parallel tools (ADR-0027, draft), compaction, sandbox, MCP.
 
 ## Open Questions
 
 Carried from the design doc §12, minus what we've now decided (wire = Anthropic; v0 harness = the `grok` pack per ADR-0012; workspace layout; in-repo minimal binary; search = ripgrep per ADR-0011). Still genuinely undecided:
 
 1. ~~**Edit strictness**~~ — **Resolved (faithful mimicry):** the grok pack reproduces grok's real `search_replace` — exact + unique match + reject-no-op at runtime, read-before-edit via contract, **no** runtime mtime-freshness store (grok has none). Tolerant replacers are an OpenCode-pack concern; exact-string is grok's model.
-2. **When to add `apply_patch`** — with the `codex` pack (next milestone), delivered as a JSON-string patch arg on the Anthropic wire (freeform-grammar delivery deferred to a Responses wire).
+2. ~~**When to add `apply_patch`**~~ — **Resolved (shipped 2026-07-24, Task 19 slice 2):** it landed with the `codex` pack as a JSON-string patch arg on the Anthropic wire; freeform-grammar delivery over the Responses wire remains deferred.
 3. **Schema-constrained task answers** (`--json-schema`) — native `response_format` first with a `StructuredOutput`-tool fallback; **envelope-only for v0 (deferred, confirmed).** Also open: verifying whether Anthropic and OpenAI accept the *same* derived JSON Schema (we assume yes → a single shared normalization helper, not per-wire); needs a verification pass before the wire relies on it.
-4. **Session durability** — when do ephemeral runs need JSONL transcript persistence?
+4. ~~**Session durability**~~ — **Resolved (shipped 2026-07-24, Task 31, [ADR-0024](docs/decisions/ADR-0024-locode-home-settings-and-traces.md)):** every run appends a JSONL trace under `~/.locode/sessions/`, with `--continue`/`--resume` reading them and `--no-session-persistence` opting out.
 5. ~~**facade surface**~~ — **Resolved:** `locode-core` re-exports the driving API — including custom-provider
    injection via `ProviderRegistry` (ADR-0015; `locode-exec` is a **library** — downstream
    binaries call `main_with(registry)` to register their own wires) — (`Session`, `EngineConfig`, report/event types, provider + pack selection) **and the full tool surface** (`Tool`, `Registry`, `dispatch`, `ToolCtx`, `ToolOutput`, `ToolSpec`, and the pack's concrete tools). A **first-class goal**: downstream consumers can use our tools inside *their own* harness loop without our engine (see Users #4). Widen further as `locode-app` needs.

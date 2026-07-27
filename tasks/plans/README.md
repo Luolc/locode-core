@@ -85,3 +85,9 @@ tracker.
 |---|---|
 | [task-31-locode-home-settings-and-trace.md](task-31-locode-home-settings-and-trace.md) | Task 31 — settings loading + resumable session trace (`--continue`/`--resume`) |
 | [task-32-skills.md](task-32-skills.md) | Task 32 — agent skills: discovery, the `<system-reminder>` listing, `extends` dotfolders (ADR-0025) |
+
+### Interaction inside a run
+| Plan | Task |
+|---|---|
+| [task-33-mid-run-user-input.md](task-33-mid-run-user-input.md) | Task 33 — mid-run user input: one queue, iteration-granular drain (ADR-0028) |
+| [task-34-slash-commands.md](task-34-slash-commands.md) | Task 34 — slash commands in the core (ADR-0026) |
