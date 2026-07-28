@@ -23,6 +23,15 @@ pub fn response_to_completion(resp: wire::MessagesResponse) -> Result<Completion
     let mut content: Vec<ContentBlock> = Vec::with_capacity(resp.content.len());
     for block in resp.content {
         match block {
+            // A blank text block never reaches the transcript, so it can never
+            // reach the rollout either. Streaming pads gaps in the block indices
+            // with empty text blocks to keep deltas addressable
+            // (`client.rs`'s `content_block_start` arm); once the stream is over
+            // those holes are pure invention — nothing was ever sent for them —
+            // and a hole that survives into the history poisons every later
+            // request (see `build::is_blank`). Anthropic can also emit a genuinely
+            // empty text block; that one carries no content either.
+            wire::ContentBlock::Text { text, .. } if text.trim().is_empty() => {}
             wire::ContentBlock::Text { text, .. } => {
                 content.push(ContentBlock::Text { text });
             }

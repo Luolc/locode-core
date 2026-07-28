@@ -193,11 +193,29 @@ fn concat_text(blocks: &[ContentBlock]) -> String {
     out
 }
 
+/// Does this text carry nothing the API will accept?
+///
+/// Anthropic **emits** empty text blocks but **rejects them on input**
+/// (`invalid_request_error: messages: text content blocks must be non-empty`),
+/// and whitespace-only text is rejected by the same rule. Because the whole
+/// history is replayed on every turn, one such block anywhere in a session makes
+/// **every** later request fail identically — a transient upstream hiccup turns
+/// into permanent local state, and the session can never be continued again
+/// (observed 2026-07-27 through a retrying reverse proxy that dropped a short
+/// message's SSE frames). Dropping the block loses nothing: there is no content.
+fn is_blank(text: &str) -> bool {
+    text.trim().is_empty()
+}
+
 /// Map a protocol `User` message's blocks (text / image / `tool_result`).
 fn map_user_blocks(blocks: &[ContentBlock]) -> Vec<wire::ContentBlock> {
     let mut out = Vec::with_capacity(blocks.len());
     for block in blocks {
         match block {
+            // Blank text is dropped, never sent — see `is_blank`. A message left
+            // with no blocks is skipped whole by `map_messages`, so this can't
+            // produce the `content: []` the API also rejects.
+            ContentBlock::Text { text } if is_blank(text) => {}
             ContentBlock::Text { text } => out.push(wire::ContentBlock::Text {
                 text: text.clone(),
                 cache_control: None,
@@ -228,6 +246,11 @@ fn map_assistant_blocks(blocks: &[ContentBlock]) -> Vec<wire::ContentBlock> {
     let mut out = Vec::with_capacity(blocks.len());
     for block in blocks {
         match block {
+            // Blank text is dropped (see `is_blank`), the same guard the
+            // reasoning arm below has always had. An assistant message carrying a
+            // `tool_use` keeps that block, so it can never be emptied out and
+            // dropped — no `tool_use` can be orphaned this way (ADR-0004).
+            ContentBlock::Text { text } if is_blank(text) => {}
             ContentBlock::Text { text } => out.push(wire::ContentBlock::Text {
                 text: text.clone(),
                 cache_control: None,
@@ -292,8 +315,12 @@ fn map_tool_result_content(chunks: &[ResultChunk]) -> wire::ToolResultContent {
     if let [ResultChunk::Text { text }] = chunks {
         return wire::ToolResultContent::Text(text.clone());
     }
+    // Same non-empty rule applies to text blocks *inside* a tool_result. The
+    // single-chunk fast path above sends a bare string, which the API accepts
+    // even when empty; the block form does not, so blank chunks are dropped.
     let blocks = chunks
         .iter()
+        .filter(|chunk| !matches!(chunk, ResultChunk::Text { text } if is_blank(text)))
         .map(|chunk| match chunk {
             ResultChunk::Text { text } => wire::ContentBlock::Text {
                 text: text.clone(),
@@ -421,6 +448,56 @@ mod tests {
     use super::*;
     use locode_protocol::ContentBlock;
     use serde_json::json;
+
+    /// The poisoning bug (2026-07-27): one empty text block in the history made
+    /// **every** later request fail, because Anthropic emits empty text blocks
+    /// but rejects them on input and the whole history is replayed each turn.
+    /// Filtering on the way out heals a session that already recorded one — no
+    /// file surgery, it just stops being sent.
+    #[test]
+    fn blank_text_blocks_are_never_sent() {
+        let blocks = map_assistant_blocks(&[
+            ContentBlock::Text {
+                text: String::new(),
+            },
+            ContentBlock::Text {
+                text: "   \n ".to_string(),
+            },
+            ContentBlock::Text {
+                text: "real".to_string(),
+            },
+        ]);
+        assert_eq!(blocks.len(), 1, "only the block with content survives");
+        assert!(matches!(&blocks[0], wire::ContentBlock::Text { text, .. } if text == "real"));
+
+        let user = map_user_blocks(&[ContentBlock::Text {
+            text: "\t".to_string(),
+        }]);
+        assert!(user.is_empty(), "whitespace-only user text is dropped too");
+    }
+
+    /// The filter above can never orphan a `tool_use` (ADR-0004): an assistant
+    /// message that carries one keeps that block, so it stays non-empty and
+    /// `map_messages` never skips it. This is the invariant that makes dropping
+    /// blank text safe rather than transcript-corrupting.
+    #[test]
+    fn dropping_blank_text_cannot_orphan_a_tool_use() {
+        let blocks = map_assistant_blocks(&[
+            ContentBlock::Text {
+                text: String::new(),
+            },
+            ContentBlock::ToolUse {
+                id: "toolu_1".to_string(),
+                name: "read".to_string(),
+                input: json!({}),
+            },
+        ]);
+        assert_eq!(blocks.len(), 1);
+        assert!(
+            matches!(&blocks[0], wire::ContentBlock::ToolUse { id, .. } if id == "toolu_1"),
+            "the tool_use must survive so its tool_result still has a partner"
+        );
+    }
 
     /// A recovered malformed-args tool call preserves the model's raw as a JSON
     /// string (streaming assembler); Anthropic requires `tool_use.input` to be an
