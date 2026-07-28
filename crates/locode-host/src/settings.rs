@@ -35,7 +35,7 @@ const EXTENDS_KEY: &str = "extends";
 /// are tolerated at every layer; absent keys are `None`/empty.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Settings {
-    /// Default model (threaded to the provider factory; no flag yet).
+    /// Default model (`--model` wins).
     pub model: Option<String>,
     /// Default wire (`--api-schema`/`LOCODE_API_SCHEMA` win). Project-denylisted.
     pub api_schema: Option<String>,
