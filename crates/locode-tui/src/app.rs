@@ -486,6 +486,18 @@ impl App {
             Event::MessageDelta { text } => {
                 self.streaming.get_or_insert_default().push_str(&text);
             }
+            // The stream was abandoned and the turn is being re-sampled: the same
+            // reply is about to arrive again from the start, so drop the buffered
+            // partial instead of letting the retry append to it. Rows already
+            // committed to scrollback stay — they cannot be withdrawn — so a long
+            // partial can still be visible above the re-streamed reply; the notice
+            // the engine emits alongside is what explains it. `_committed_any`
+            // resets too, so the re-stream renders with its speaker prefix again.
+            Event::MessageDeltaReset { .. } => {
+                self.streaming = None;
+                self.streaming_committed_any = false;
+                self.streaming_finalize = false;
+            }
             // Injected framing (project instructions, the skills listing) is a `User`
             // message the UI drops, because live submits echo their own text. Under the
             // debug flag it is exactly what the user asked to see.
@@ -1293,6 +1305,51 @@ mod tests {
     ///
     /// Reading `report.usage` would show the run's sum, which counts the same
     /// conversation once per turn and only ever grows — a number with no relationship
+    /// A resample after a mid-stream failure re-runs the same request, so the
+    /// same reply streams again from the start. Without dropping the partial the
+    /// second stream appends to the first and the user reads the reply twice.
+    #[test]
+    fn a_delta_reset_drops_the_partial_so_the_resample_does_not_double_it() {
+        let mut app = App::new();
+        let t0 = Instant::now();
+        let _ = app.update(run_started(), t0);
+        for frag in ["Hel", "lo wor"] {
+            let _ = app.update(
+                Msg::Engine(Box::new(EngineMsg::Event(Box::new(Event::MessageDelta {
+                    text: frag.into(),
+                })))),
+                t0,
+            );
+        }
+        assert_eq!(app.streaming.as_deref(), Some("Hello wor"));
+
+        // The stream failed; the engine is about to resample the same request.
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::Event(Box::new(
+                Event::MessageDeltaReset {
+                    reason: "lossy stream".into(),
+                },
+            )))),
+            t0,
+        );
+        assert!(app.streaming.is_none(), "the void partial is dropped");
+        assert!(!app.streaming_committed_any);
+        assert!(!app.streaming_finalize);
+
+        // The retry streams the whole reply — and it stands alone.
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::Event(Box::new(Event::MessageDelta {
+                text: "Hello world".into(),
+            })))),
+            t0,
+        );
+        assert_eq!(
+            app.streaming.as_deref(),
+            Some("Hello world"),
+            "the retry must not append to the abandoned partial"
+        );
+    }
+
     /// to the context window.
     #[test]
     fn the_token_counter_is_the_last_turn_not_the_run_total() {

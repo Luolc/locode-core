@@ -948,6 +948,91 @@ mod tests {
 
     // ---- cancellation (ADR-0018) ----
 
+    /// A provider that streams part of a reply and *then* fails retryably — the
+    /// shape a lossy stream has (ADR-0007 amendment 2026-07-27). The first
+    /// attempt half-streams, the second succeeds.
+    struct HalfStreamsThenFails {
+        attempts: std::sync::atomic::AtomicU32,
+    }
+    #[async_trait]
+    impl Provider for HalfStreamsThenFails {
+        #[allow(clippy::unnecessary_literal_bound)]
+        fn api_schema(&self) -> &str {
+            "mock"
+        }
+        async fn complete(
+            &self,
+            _request: &ConversationRequest,
+        ) -> Result<Completion, ProviderError> {
+            unreachable!("this test runs streaming")
+        }
+        async fn stream(
+            &self,
+            _request: &ConversationRequest,
+            on_delta: &mut (dyn FnMut(locode_provider::CompletionDelta) + Send),
+        ) -> Result<Completion, ProviderError> {
+            let n = self
+                .attempts
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if n == 0 {
+                on_delta(locode_provider::CompletionDelta::Text("Hel".into()));
+                on_delta(locode_provider::CompletionDelta::Text("lo wor".into()));
+                return Err(ProviderError::Transport("lossy stream".into()));
+            }
+            on_delta(locode_provider::CompletionDelta::Text("Hello world".into()));
+            Ok(Completion {
+                content: vec![ContentBlock::Text {
+                    text: "Hello world".into(),
+                }],
+                usage: Usage::default(),
+                stop: locode_provider::StopReason::EndTurn,
+            })
+        }
+    }
+
+    /// A stream that dies part-way is resampled from the start, so the deltas it
+    /// already emitted are void. The engine must say so — otherwise a consumer
+    /// buffering them renders the reply twice. Emitted only when something was
+    /// actually streamed: a failure before the first delta has nothing to annul.
+    #[tokio::test]
+    async fn a_partial_stream_that_resamples_annuls_its_deltas() {
+        let mut cfg = config();
+        cfg.streaming = true;
+        let provider = std::sync::Arc::new(HalfStreamsThenFails {
+            attempts: std::sync::atomic::AtomicU32::new(0),
+        });
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sink_events = Arc::clone(&events);
+        let sink = Box::new(FnSink(move |event| {
+            sink_events.lock().unwrap().push(event);
+        }));
+        let mut session = Session::new(provider, Registry::new(), vec![], cfg, sink);
+        let report = session.run_text("go").await;
+        assert_eq!(report.status, Status::Completed, "the retry succeeded");
+
+        let evs = dump(&events);
+        let resets = evs
+            .iter()
+            .filter(|e| matches!(e, Event::MessageDeltaReset { .. }))
+            .count();
+        assert_eq!(resets, 1, "exactly one annulment, for the failed attempt");
+
+        // Order matters: the annulment must precede the retry's deltas, or a
+        // consumer clears the buffer *after* refilling it.
+        let reset_at = evs
+            .iter()
+            .position(|e| matches!(e, Event::MessageDeltaReset { .. }))
+            .expect("reset emitted");
+        let last_delta = evs
+            .iter()
+            .rposition(|e| matches!(e, Event::MessageDelta { .. }))
+            .expect("the retry streamed");
+        assert!(
+            reset_at < last_delta,
+            "reset must come before the re-stream"
+        );
+    }
+
     /// A provider whose sample never returns on its own — cancellation is the
     /// only way out (models a long in-flight request).
     struct HangingProvider;

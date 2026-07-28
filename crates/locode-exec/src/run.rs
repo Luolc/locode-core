@@ -472,8 +472,15 @@ fn new_session_id() -> String {
 /// Whether an event belongs in the whole-message `stream-json` trace (ADR-0021
 /// Q1): everything except live token deltas, which are a TUI-only concern so the
 /// trace stays replayable/whole-message even under `--stream`.
+///
+/// `MessageDeltaReset` goes out with them: it only annuls deltas, so a consumer
+/// that never saw one has nothing to annul. The retry that caused it is still
+/// visible in the trace as the `Error` note the engine emits alongside.
 fn in_whole_message_trace(event: &locode_core::Event) -> bool {
-    !matches!(event, locode_core::Event::MessageDelta { .. })
+    !matches!(
+        event,
+        locode_core::Event::MessageDelta { .. } | locode_core::Event::MessageDeltaReset { .. }
+    )
 }
 
 /// Canonicalize `--add-dir` roots, failing with the path the user typed.
