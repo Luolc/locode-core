@@ -478,15 +478,23 @@ impl Session {
         let provider = std::sync::Arc::clone(&self.provider);
         let mut attempt: u32 = 0;
         loop {
+            // Did this attempt stream any text before failing? A resample re-runs
+            // the same request, so those fragments are about to be superseded by
+            // the same reply from the start — a consumer buffering them needs to
+            // be told to drop them (`Event::MessageDeltaReset`), or it renders the
+            // reply twice. `AtomicBool` because `on_delta` must stay `Send`.
+            let streamed = std::sync::atomic::AtomicBool::new(false);
             // Scope the `&mut self.sink` borrow (via `on_delta`) to just the
             // sample await, so the retry arm below can emit on `self.sink` again.
             let result = {
                 let sink = &mut self.sink;
+                let streamed = &streamed;
                 let mut on_delta = |delta: CompletionDelta| {
                     // Slice 1: forward only assistant-text fragments (the UI shows
                     // no thinking, and tool blocks are assembled from the returned
                     // whole `Completion`). `Event::MessageDelta` is display-only.
                     if let CompletionDelta::Text(text) = delta {
+                        streamed.store(true, std::sync::atomic::Ordering::Relaxed);
                         sink.emit(Event::MessageDelta { text });
                     }
                 };
@@ -506,6 +514,11 @@ impl Session {
                 Ok(completion) => return Ok(completion),
                 Err(err) if err.retryable() && attempt < self.config.resample_retries => {
                     attempt += 1;
+                    if streamed.load(std::sync::atomic::Ordering::Relaxed) {
+                        self.sink.emit(Event::MessageDeltaReset {
+                            reason: err.to_string(),
+                        });
+                    }
                     self.sink.emit(Event::Error {
                         message: format!(
                             "provider error (resample {attempt}/{}): {err}",

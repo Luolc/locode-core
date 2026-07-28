@@ -442,6 +442,25 @@ pub enum Event {
         /// One assistant-text fragment — append to the live buffer.
         text: String,
     },
+    /// The in-flight streamed message was **abandoned**, and every
+    /// [`Event::MessageDelta`] emitted since the last [`Event::Message`] is void.
+    ///
+    /// The engine resamples a turn after a retryable provider error, re-running
+    /// the *same* request — so a stream that failed part-way is followed by a
+    /// second stream of the same reply from the start. Without this marker a
+    /// consumer that buffers deltas shows the reply twice. Discard the buffer and
+    /// start it over; the turn itself is not lost.
+    ///
+    /// Consumers that ignore [`Event::MessageDelta`] (the whole-message trace)
+    /// can ignore this too — the eventual [`Event::Message`] is unaffected.
+    ///
+    /// A caveat this event cannot fix: text a UI has already committed to the
+    /// terminal's scrollback cannot be withdrawn, so a long partial reply may
+    /// still be visible above the re-streamed one.
+    MessageDeltaReset {
+        /// Why the stream was abandoned — the provider error, for the trace.
+        reason: String,
+    },
     /// The terminal event: the final report (identical to `--output-format json`).
     Result {
         /// The run's report envelope.
@@ -482,7 +501,11 @@ pub fn reconstruct_conversation(events: &[Event]) -> Conversation {
             Event::Message { message } => messages.push(message.clone()),
             // Deltas are display-only — the whole `Message` is appended at turn
             // end, so skipping them here keeps reconstruction whole-message (Q1).
+            // `MessageDeltaReset` annuls deltas only, so a reconstruction that
+            // ignores them has nothing to undo: the resampled turn still arrives
+            // as one `Message`.
             Event::MessageDelta { .. }
+            | Event::MessageDeltaReset { .. }
             | Event::Result { .. }
             | Event::Error { .. }
             | Event::Approval { .. } => {}
