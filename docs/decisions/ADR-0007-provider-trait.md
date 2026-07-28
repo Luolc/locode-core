@@ -217,3 +217,62 @@ sends no `output_config`, leaving the API its own default — mirroring Claude
 Code's `/effort [low|medium|high|max|auto]`. Precedence is flag > setting >
 auto; an unparseable settings value warns and degrades to auto rather than
 failing a run (ADR-0024 §1.5 tolerance).
+
+## Amendment (2026-07-27): a wire owes two guarantees — valid output, and loud loss
+
+A retrying reverse proxy dropped the SSE frames of one short message. The turn
+still ended in `message_stop`, so the wire reported success, and an **empty text
+block** — invented by the stream assembler to keep block indices addressable —
+was recorded into the session. Anthropic *emits* empty text blocks but **rejects
+them on input**, and the whole history is replayed every turn, so from that
+record on, every request failed identically with
+`invalid_request_error: messages: text content blocks must be non-empty`. The
+session could never be continued again; retries never left the client.
+
+The upstream defect is the proxy's. What this amendment fixes is ours: **a
+transient upstream glitch became permanent local state, and a lossy stream was
+reported as a finished turn.** A `Provider` implementation therefore owes two
+guarantees, independent of how well-behaved the service is:
+
+**1. Never construct a request the target API will reject.** History arrives from
+the engine as protocol types; the wire is the layer that knows its API's shape
+rules, so normalizing to them is its job — not the engine's, and not the
+transcript's. Concretely for Anthropic: blank (empty or whitespace-only) text
+blocks are dropped in `build.rs`, which is also what *heals* an already-poisoned
+session — the block simply stops being sent, with no file surgery. The
+message-level `if !blocks.is_empty()` guard already in `map_messages` completes
+it: a message emptied by the filter is skipped whole, so this can never produce
+the `content: []` the API also rejects. Dropping blank text can never orphan a
+`tool_use` — a message carrying one keeps that block and stays non-empty
+(ADR-0004), pinned by `dropping_blank_text_cannot_orphan_a_tool_use`.
+
+Blank blocks are also dropped at parse time so they never reach the transcript or
+the rollout. A response left with no content at all is not special-cased here: the
+engine already resamples empty completions, which is the right answer.
+
+**2. A lossy stream is a failure, not a short answer.** "Stream truncated" was
+already detected (no `message_stop` → retryable transport error). "Stream complete
+but lossy" was not — it was reported as success. Three signals now raise the same
+retryable transport failure, so the engine's existing resample handles them:
+
+- a frame whose `type` we recognize but whose payload will not deserialize. This
+  used to take the *forward-compatibility* path, which is the actual defect: an
+  unknown event type and a corrupted known one are opposite situations and must
+  not share a branch (`KNOWN_EVENTS` splits them);
+- `stop_reason: tool_use` with no `tool_use` block assembled — impossible on an
+  intact stream, and previously accepted as a bare text turn, letting the run
+  continue past a tool call that never happened;
+- a delta addressing a block index that never started, or a block of the wrong
+  kind — previously a silent no-op.
+
+The principle behind both: **a provider hiccup should cost one turn, not the
+session.** Recoverability is the property being designed for, not perfection —
+we make no attempt to reconstruct what was lost, only to refuse to build on it.
+
+**Known consequence, not yet addressed.** Making more streams retryable makes an
+existing display bug more visible: `sample_with_retry` resamples the same request
+after deltas have already been emitted, so a UI that appended the partial text
+shows it twice, and rows already committed to scrollback cannot be withdrawn.
+Fixing it properly needs a "discard the in-flight partial" signal in the event
+protocol (ADR-0014) — a core public-surface change, so it is **flagged for the
+user rather than taken here**.

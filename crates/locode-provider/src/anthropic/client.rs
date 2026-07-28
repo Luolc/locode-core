@@ -156,6 +156,36 @@ pub(crate) async fn send_once_streaming(
     ))
 }
 
+/// The error a delta addressing a missing or mismatched block raises. `missing`
+/// separates "no block at that index" (frames lost) from "wrong kind of block"
+/// (frames reordered or mis-indexed) — both are transport damage, but the
+/// distinction is the first thing you want when reading a trace.
+fn lossy_block(event: &str, index: u32, missing: bool) -> HttpFailure {
+    let what = if missing {
+        "no block ever started at that index"
+    } else {
+        "the block at that index is a different kind"
+    };
+    HttpFailure::transport(format!("lossy stream: {event} for index {index} — {what}"))
+}
+
+/// The SSE event types this wire knows. A frame whose `type` is in this list but
+/// whose payload will not deserialize is **corruption**; a frame whose `type` is
+/// absent from it is a newer event we do not model yet, and is skipped. Before
+/// this split, both took the same silent-skip path — so a mangled delta from a
+/// flaky proxy was indistinguishable from forward compatibility, and a whole
+/// short message could vanish while the stream still ended in `message_stop`.
+const KNOWN_EVENTS: &[&str] = &[
+    "message_start",
+    "message_delta",
+    "message_stop",
+    "content_block_start",
+    "content_block_delta",
+    "content_block_stop",
+    "ping",
+    "error",
+];
+
 /// Drain every complete SSE frame (delimited by a blank line) currently in `buf`,
 /// feeding each to the assembler. Returns `Ok(true)` once `message_stop` is seen.
 /// Incomplete trailing bytes stay in `buf` for the next chunk.
@@ -172,11 +202,32 @@ fn drain_frames(
         if data == "[DONE]" {
             continue;
         }
-        // Unknown/newer event types deserialize-fail → skip (forward-compat).
-        if let Ok(event) = serde_json::from_str::<wire::MessageStreamEvent>(&data)
-            && asm.handle(event, on_delta)?
-        {
-            return Ok(true);
+        // Parse to a `Value` first so a *recognized* event with a broken payload
+        // is distinguishable from a genuinely newer one (see `KNOWN_EVENTS`).
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&data) else {
+            return Err(HttpFailure::transport(
+                "lossy stream: an SSE data frame was not JSON".to_string(),
+            ));
+        };
+        let kind = value
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        match serde_json::from_value::<wire::MessageStreamEvent>(value) {
+            Ok(event) => {
+                if asm.handle(event, on_delta)? {
+                    return Ok(true);
+                }
+            }
+            // Known type, unusable payload → the frame was damaged in transit.
+            Err(e) if KNOWN_EVENTS.contains(&kind.as_str()) => {
+                return Err(HttpFailure::transport(format!(
+                    "lossy stream: malformed `{kind}` frame ({e})"
+                )));
+            }
+            // Unknown type → a newer event we do not model; ignore it.
+            Err(_) => {}
         }
     }
     Ok(false)
@@ -224,13 +275,71 @@ impl StreamAssembler {
     }
 
     /// Handle one event; `Ok(true)` means `message_stop` (stream complete).
+    /// Apply one `content_block_delta` to the block it names.
+    ///
+    /// A delta addresses a block by index. If the block it names is missing or is
+    /// the wrong kind, frames were lost or reordered upstream — that is a **lossy
+    /// stream**, and silently dropping the delta (what this used to do) turns
+    /// transport damage into a plausible-looking short answer. It raises the same
+    /// retryable transport failure a truncated stream does, so the engine
+    /// resamples the turn.
+    fn apply_delta(
+        &mut self,
+        index: u32,
+        delta: wire::StreamDelta,
+        on_delta: &mut (dyn FnMut(CompletionDelta) + Send),
+    ) -> Result<(), HttpFailure> {
+        use wire::StreamDelta as D;
+        let idx = index as usize;
+        match delta {
+            D::TextDelta { text } => {
+                match self.resp_mut()?.content.get_mut(idx) {
+                    Some(wire::ContentBlock::Text { text: t, .. }) => t.push_str(&text),
+                    other => return Err(lossy_block("text_delta", index, other.is_none())),
+                }
+                on_delta(CompletionDelta::Text(text));
+            }
+            D::InputJsonDelta { partial_json } => {
+                // `content_block_start` for a tool_use seeds `tool_json`;
+                // no entry means that start never arrived.
+                let Some(buffered) = self.tool_json.get_mut(&index) else {
+                    return Err(lossy_block("input_json_delta", index, true));
+                };
+                buffered.push_str(&partial_json);
+                on_delta(CompletionDelta::ToolArgs(partial_json));
+            }
+            D::ThinkingDelta { thinking } => {
+                match self.resp_mut()?.content.get_mut(idx) {
+                    Some(wire::ContentBlock::Thinking { thinking: t, .. }) => {
+                        t.push_str(&thinking);
+                    }
+                    other => {
+                        return Err(lossy_block("thinking_delta", index, other.is_none()));
+                    }
+                }
+                on_delta(CompletionDelta::Thinking(thinking));
+            }
+            D::SignatureDelta { signature } => {
+                // Replay-only — attach to the block, no display delta.
+                match self.resp_mut()?.content.get_mut(idx) {
+                    Some(wire::ContentBlock::Thinking { signature: s, .. }) => {
+                        s.push_str(&signature);
+                    }
+                    other => {
+                        return Err(lossy_block("signature_delta", index, other.is_none()));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn handle(
         &mut self,
         event: wire::MessageStreamEvent,
         on_delta: &mut (dyn FnMut(CompletionDelta) + Send),
     ) -> Result<bool, HttpFailure> {
         use wire::MessageStreamEvent as E;
-        use wire::StreamDelta as D;
         match event {
             E::MessageStart { message } => self.resp = Some(message),
             E::ContentBlockStart {
@@ -254,42 +363,7 @@ impl StreamAssembler {
                 }
                 resp.content[idx] = content_block;
             }
-            E::ContentBlockDelta { index, delta } => {
-                let idx = index as usize;
-                match delta {
-                    D::TextDelta { text } => {
-                        if let Some(wire::ContentBlock::Text { text: t, .. }) =
-                            self.resp_mut()?.content.get_mut(idx)
-                        {
-                            t.push_str(&text);
-                        }
-                        on_delta(CompletionDelta::Text(text));
-                    }
-                    D::InputJsonDelta { partial_json } => {
-                        self.tool_json
-                            .entry(index)
-                            .or_default()
-                            .push_str(&partial_json);
-                        on_delta(CompletionDelta::ToolArgs(partial_json));
-                    }
-                    D::ThinkingDelta { thinking } => {
-                        if let Some(wire::ContentBlock::Thinking { thinking: t, .. }) =
-                            self.resp_mut()?.content.get_mut(idx)
-                        {
-                            t.push_str(&thinking);
-                        }
-                        on_delta(CompletionDelta::Thinking(thinking));
-                    }
-                    D::SignatureDelta { signature } => {
-                        // Replay-only — attach to the block, no display delta.
-                        if let Some(wire::ContentBlock::Thinking { signature: s, .. }) =
-                            self.resp_mut()?.content.get_mut(idx)
-                        {
-                            s.push_str(&signature);
-                        }
-                    }
-                }
-            }
+            E::ContentBlockDelta { index, delta } => self.apply_delta(index, delta, on_delta)?,
             E::ContentBlockStop { index } => {
                 if let Some(raw) = self.tool_json.remove(&index) {
                     // Parse the accumulated arguments ONCE, at the finalize boundary.
@@ -336,7 +410,26 @@ impl StreamAssembler {
                     resp.usage.cache_creation_input_tokens = usage.cache_creation_input_tokens;
                 }
             }
-            E::MessageStop => return Ok(true),
+            E::MessageStop => {
+                // A stop reason of `tool_use` with no tool_use block assembled is
+                // impossible from an intact stream: the model stopped *because* it
+                // called a tool, so the call was dropped in transit. Without this
+                // check the turn looks like a bare text answer and the run
+                // continues past a tool call that never happened.
+                let resp = self.resp_mut()?;
+                if matches!(resp.stop_reason, Some(wire::StopReason::ToolUse))
+                    && !resp
+                        .content
+                        .iter()
+                        .any(|b| matches!(b, wire::ContentBlock::ToolUse { .. }))
+                {
+                    return Err(HttpFailure::transport(
+                        "lossy stream: stop_reason is tool_use but no tool_use block arrived"
+                            .to_string(),
+                    ));
+                }
+                return Ok(true);
+            }
             E::Ping => {}
             E::Error { error } => return Err(stream_error_to_failure(&error)),
         }
@@ -710,6 +803,77 @@ mod stream_tests {
             PBlock::ToolUse { input, .. } => assert_eq!(input, &json!({"a": true})),
             other => panic!("expected ToolUse, got {other:?}"),
         }
+    }
+
+    /// A stream that loses frames must fail **loudly and retryably**, not produce
+    /// a plausible short answer. Here the `content_block_start` for index 0 never
+    /// arrives (the shape a retrying proxy produced on 2026-07-27) and the text
+    /// delta lands on nothing.
+    #[test]
+    fn a_delta_for_a_block_that_never_started_is_a_lossy_stream() {
+        let mut asm = StreamAssembler::new();
+        let mut sink = |_d| {};
+        asm.handle(
+            E::MessageStart {
+                message: start_shell(),
+            },
+            &mut sink,
+        )
+        .unwrap();
+        let err = asm
+            .handle(
+                E::ContentBlockDelta {
+                    index: 0,
+                    delta: D::TextDelta { text: "hi".into() },
+                },
+                &mut sink,
+            )
+            .expect_err("a delta with no block must not be silently dropped");
+        assert!(
+            matches!(err.error, ProviderError::Transport(ref m) if m.contains("lossy stream")),
+            "must be the retryable transport failure, got {:?}",
+            err.error
+        );
+    }
+
+    /// `stop_reason: tool_use` with no `tool_use` block cannot happen on an intact
+    /// stream — the call was dropped in transit. Accepting it would let the run
+    /// continue past a tool call that never happened.
+    #[test]
+    fn stop_reason_tool_use_without_a_tool_use_block_is_a_lossy_stream() {
+        let mut asm = StreamAssembler::new();
+        let mut sink = |_d| {};
+        asm.handle(
+            E::MessageStart {
+                message: start_shell(),
+            },
+            &mut sink,
+        )
+        .unwrap();
+        asm.handle(
+            E::MessageDelta {
+                delta: wire::MessageDeltaBody {
+                    stop_reason: Some(wire::StopReason::ToolUse),
+                    stop_details: None,
+                },
+                usage: wire::MessageDeltaUsage {
+                    output_tokens: 1,
+                    input_tokens: None,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
+                },
+            },
+            &mut sink,
+        )
+        .unwrap();
+        let err = asm
+            .handle(E::MessageStop, &mut sink)
+            .expect_err("a dropped tool_use must not pass as a finished turn");
+        assert!(
+            matches!(err.error, ProviderError::Transport(ref m) if m.contains("tool_use")),
+            "got {:?}",
+            err.error
+        );
     }
 
     /// Malformed streamed tool args are a MODEL mistake, not a wire failure: the
