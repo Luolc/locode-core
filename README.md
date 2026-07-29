@@ -37,7 +37,7 @@ curl -fsSL https://raw.githubusercontent.com/luolc/locode-core/main/install.sh |
 
 The script installs to `~/.locode/bin` (override with `LOCODE_BIN_DIR`),
 verifies the sha256 checksum, and puts the binary on your PATH. Pass a version
-for a specific release: `… | bash -s 0.1.17`. Then run `locode` for the
+for a specific release: `… | bash -s 0.1.18`. Then run `locode` for the
 interactive agent or `locode -p "task"` for a headless one-shot. The search
 tools shell out to [ripgrep](https://github.com/BurntSushi/ripgrep) — have `rg`
 on PATH or point `LOCODE_RG_PATH` at a binary.
@@ -110,8 +110,10 @@ appears there too.
 
 Every run appends a JSONL trace under `~/.locode/sessions/`; `--continue`
 resumes the newest session for the current directory and `--resume <id>` resumes
-by id (both in headless and interactive modes). `--no-session-persistence`
-skips writing the trace for a run.
+by id (both in headless and interactive modes). In the interactive app, plain
+`--resume` with no id opens a picker — newest first, this directory by default,
+`a` to widen to all of them — and `/resume` opens the same picker mid-session.
+`--no-session-persistence` skips writing the trace for a run.
 
 ## Interactive app (`locode`)
 
