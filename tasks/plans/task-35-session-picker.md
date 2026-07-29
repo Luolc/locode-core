@@ -80,8 +80,8 @@ Two lines per row: title, then a dim metadata line. Keys: `↑↓` move, `↵` r
 pass so the first paint does not wait.
 
 **Targets**: reducer table tests for every key; a `TestBackend` snapshot of the row
-shape (the first in this repo — META-AGENTS §6.1); an empty-list state that says so
-rather than rendering a blank box.
+shape (reusing the composer/dropdown pattern); an empty-list state that says so rather
+than rendering a blank box.
 
 ### Slice 3 — `/resume`
 
@@ -97,3 +97,11 @@ copying `/new` (`builtin.rs:328-334`) — not a new rule, not a caller-side chec
       the run rehydrates with that rollout's harness.
 - [ ] `/resume` opens the same picker when idle and refuses with a notice mid-run.
 - [ ] The row-shape snapshot exists and is stable across a re-render.
+
+## Result — slice 1 (2026-07-29)
+
+`list_sessions` + `SessionSummary` + `SessionScope` shipped (#259), with
+`read_session_title` following in slice 2 for the lazy second pass. Deviation from the
+plan: none in shape. One correction to the plan's premise — the repo already uses
+`TestBackend` in five files, so slice 2's snapshot follows an existing pattern rather than
+introducing one (see META-AGENTS F1's dated correction).

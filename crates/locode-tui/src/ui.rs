@@ -19,6 +19,7 @@ pub mod composer;
 pub mod dropdown;
 pub mod highlight;
 pub mod markdown;
+pub mod picker;
 
 /// Braille spinner frames (the four-harness standard).
 const SPINNER: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];

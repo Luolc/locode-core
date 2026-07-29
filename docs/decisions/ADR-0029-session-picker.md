@@ -145,9 +145,8 @@ The invariants above are testable and must be tested with the code:
   `list_sessions` unit tests over a temp `sessions_root`;
 - `/resume` refusing mid-run → a command test mirroring `/new`'s;
 - picker key handling (move / select / cancel / filter) → reducer table tests;
-- the rendered row shape → a `TestBackend` snapshot. This is the first use of the
-  render-snapshot idea in META-AGENTS §6.1, and a picker is a good first case: it is
-  pure layout with no engine behind it.
+- the rendered row shape → a `TestBackend` snapshot, following the pattern the
+  composer and dropdown tests already use (`ui/dropdown.rs:387`).
 
 ## Resolved (user, 2026-07-29)
 

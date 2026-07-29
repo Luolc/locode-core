@@ -48,6 +48,17 @@ pub async fn run(cli: Cli, registry: ProviderRegistry) -> Result<ExitCode, RunEr
     let (mut terminal, _restore_guard) = term::init()?;
     let mut input_rx = term::spawn_input_reader();
     let mut signal_rx = spawn_signal_task();
+    // `-r` with no value: choose a session before the engine exists (ADR-0029).
+    // Running it here, ahead of `engine::spawn`, means the choice is just an id the
+    // ordinary resume path then loads — no session-switching machinery, and no
+    // half-built engine to unwind if the user backs out.
+    let mut cli = cli;
+    if matches!(cli.resume_mode(), crate::cli::ResumeMode::Pick) {
+        match run_session_picker(&mut terminal, &mut input_rx).await? {
+            Some(id) => cli.resume = Some(id),
+            None => return Ok(ExitCode::SUCCESS), // cancelled — nothing started yet
+        }
+    }
     // Pre-fill from a positional prompt before `cli` moves into the engine.
     let initial_draft = cli.prompt.clone();
     let restricted = cli.restricted;
@@ -484,6 +495,81 @@ async fn sleep_until(deadline: Option<Instant>) {
         // The `if timer.is_some()` guard keeps this arm disabled when idle —
         // zero wakeups; pending() documents the intent.
         None => std::future::pending().await,
+    }
+}
+
+/// Run the startup session picker to a decision (ADR-0029).
+///
+/// `Ok(Some(id))` — resume that session. `Ok(None)` — the user cancelled, and the
+/// caller exits without starting anything.
+///
+/// This owns the terminal for as long as it runs: no engine exists yet, so there is
+/// nothing else that could want the screen. Sessions are listed for the current
+/// directory first; `a` widens to every directory, which is the one key that has to
+/// re-list rather than re-filter.
+async fn run_session_picker(
+    terminal: &mut term::Term,
+    input_rx: &mut tokio::sync::mpsc::UnboundedReceiver<crossterm::event::Event>,
+) -> Result<Option<String>, RunError> {
+    use crate::ui::picker::{PickerOutcome, PickerState, render};
+
+    let home = locode_core::locode_home().map_err(RunError)?;
+    let root = home.join("sessions");
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let list = |all_dirs: bool| {
+        let scope = if all_dirs {
+            locode_core::SessionScope::All
+        } else {
+            locode_core::SessionScope::Cwd(&cwd)
+        };
+        locode_core::list_sessions(&root, scope)
+    };
+
+    let mut all_dirs = false;
+    let mut state = PickerState::new(list(all_dirs), all_dirs);
+    loop {
+        terminal.draw(|frame| {
+            let area = frame.area();
+            render(frame, area, &mut state);
+        })?;
+        let Some(event) = input_rx.recv().await else {
+            return Ok(None); // input thread gone; nothing to choose with
+        };
+        let crossterm::event::Event::Key(key) = event else {
+            continue; // resize repaints on the next iteration
+        };
+        if key.kind == crossterm::event::KeyEventKind::Release {
+            continue;
+        }
+        // Ctrl+C leaves, like everywhere else in this app.
+        if key.code == crossterm::event::KeyCode::Char('c')
+            && key
+                .modifiers
+                .contains(crossterm::event::KeyModifiers::CONTROL)
+        {
+            return Ok(None);
+        }
+        // `a` widens the scope — handled here rather than in `PickerState` because
+        // it re-lists from disk, which the sans-IO state cannot do.
+        if key.code == crossterm::event::KeyCode::Char('a') && !state.is_filtering() {
+            all_dirs = !all_dirs;
+            state.replace(list(all_dirs), all_dirs);
+            continue;
+        }
+        match state.on_key(key) {
+            PickerOutcome::Open => {}
+            PickerOutcome::Cancelled => return Ok(None),
+            PickerOutcome::Chosen(path) => {
+                // The id is the filename's tail, which is also what `-r` takes —
+                // so the rest of startup is the ordinary resume path.
+                let id = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .and_then(|s| s.rsplit('-').next())
+                    .map(str::to_string);
+                return Ok(id);
+            }
+        }
     }
 }
 

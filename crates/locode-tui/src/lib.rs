@@ -41,6 +41,13 @@ pub fn main_with(registry: ProviderRegistry) -> ExitCode {
     // setup (Claude Code detects `-p` in its entry the same way). Reuses
     // locode-exec's engine + `--output-format` emit + SIGTERM handler.
     if cli.print {
+        // The picker needs a screen to draw on, and `-p` has none — a headless run
+        // that silently resumed *something* would be worse than a refusal
+        // (ADR-0029 keeps the headless path id-or-nothing).
+        if matches!(cli.resume_mode(), cli::ResumeMode::Pick) {
+            term::error_line("--resume needs a session id in -p mode (the picker is interactive)");
+            return ExitCode::from(2);
+        }
         return locode_exec::run_headless(cli.to_headless(), registry);
     }
 
