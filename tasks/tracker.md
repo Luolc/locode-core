@@ -87,6 +87,16 @@ The immediate queue, ahead of the remaining packs:
     the host task registry, and subagents as a nested engine loop. The pack-home decision
     above belongs in whichever lands first — ADR-first, before the code.
   - Also unblocks codex `shell_command` → unified exec (see the deferred seam below).
+- **Small feature, ahead of P0.5 — session picker** ([ADR-0029](../docs/decisions/ADR-0029-session-picker.md),
+  **Draft**, 2026-07-28). `--resume` needs an id nobody remembers, and `-c` is the only escape
+  (newest only, no choice). All three studied harnesses ship a picker and agree on its shape —
+  title + one dim metadata line, newest first, current directory by default with a toggle —
+  differing only in entry point (claude: optional flag value; codex: a subcommand; grok: a slash
+  command). We take claude's entry (`-r [SESSION_ID]`) plus grok's (`/resume`), scan the sessions
+  directory rather than building ADR-0024's reserved index, and reuse `/new`'s existing mid-run
+  refusal rather than inventing a rule. Three slices: `list_sessions` in the host (pure, unit
+  tested) → the picker overlay + the `-r` entry (reducer tests + the first `TestBackend` render
+  snapshot) → `/resume`. v0 excludes preview panes, deep search, rename, tags, and fork-on-resume.
 - **~~P1 — opencode pack~~ — CANCELLED** (user decision, 2026-07-24). The ported-harness
   reproduction workstream **ends with skills**: `claude` / `codex` / `grok` are the three
   packs we ship, and no fourth port is built. The drafted plan
