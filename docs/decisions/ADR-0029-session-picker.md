@@ -2,9 +2,8 @@
 
 ## Status
 
-**Draft — awaiting the user's OK.** The feature and its shape were agreed in
-conversation (2026-07-28); this records the design so it can be read before the
-code exists. Flip to Accepted on approval.
+**Accepted** (user, 2026-07-29). The three open questions below were answered in
+the same review; they are kept with their answers rather than deleted.
 
 ## Date
 
@@ -150,16 +149,19 @@ The invariants above are testable and must be tested with the code:
   render-snapshot idea in META-AGENTS §6.1, and a picker is a good first case: it is
   pure layout with no engine behind it.
 
-## Open Questions
+## Resolved (user, 2026-07-29)
 
-1. **Does the picker show sessions from other harnesses?** A rollout records its
-   `harness`; resuming a `codex` session under `--harness claude` would rehydrate a
-   history whose tool calls no pack in the run can pair. Options: list everything and
-   switch the pack on resume (the header knows it), or list only the current
-   harness's sessions. *Leaning: list all, switch the pack from the header — the
-   metadata is already there, and hiding sessions is the more surprising behavior.*
-2. **What does the picker do about subagent/workflow rollouts** once those exist
-   (`SessionMeta.kind` is already an open string)? *Leaning: `kind == "main"` only,
-   as `find_latest_rollout` already filters (`trace.rs:371`).*
-3. **Should `-r` with an id that does not exist fall back to the picker** rather
-   than erroring? *Leaning: no — a typo'd id silently opening a menu hides the typo.*
+1. **The picker lists sessions from every harness, and resuming switches the pack
+   from the rollout's header.** A rollout records its `harness`; rehydrating a
+   `codex` history under `--harness claude` would leave tool calls no pack in the
+   run can pair. The metadata to avoid that is already on line 1, so use it —
+   hiding sessions the user can see on disk is the more surprising behavior.
+   *Consequence for `list_sessions`: no harness filter in the signature.*
+2. **`kind == "main"` only.** Subagent and workflow rollouts (`SessionMeta.kind` is
+   an open string) stay out of the picker, matching what `find_latest_rollout`
+   already filters (`trace.rs:371`). A subagent transcript is not a session a user
+   resumes into.
+3. **A `-r <id>` that matches nothing errors; the picker opens only when no
+   argument is given.** Falling back to the menu would hide a typo behind a
+   plausible-looking UI, and the two intents ("resume *this*" vs "let me choose")
+   deserve different outcomes.

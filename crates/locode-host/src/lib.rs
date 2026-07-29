@@ -33,8 +33,8 @@ pub use shell::{
     ShellSpec,
 };
 pub use trace::{
-    GitMeta, RolloutContents, SessionMeta, TRACE_SCHEMA_VERSION, TraceExtras, TraceWriter,
-    find_latest_rollout, find_rollout_by_id, read_rollout,
+    GitMeta, RolloutContents, SessionMeta, SessionScope, SessionSummary, TRACE_SCHEMA_VERSION,
+    TraceExtras, TraceWriter, find_latest_rollout, find_rollout_by_id, list_sessions, read_rollout,
 };
 pub use walk::{WalkEntry, WalkOptions};
 

@@ -393,6 +393,107 @@ pub fn find_rollout_by_id(sessions_root: &Path, cwd: &Path, id: &str) -> Option<
     None
 }
 
+/// One row of the session picker (ADR-0029): everything a chooser needs, read
+/// from the rollout's **line-1 header plus its mtime** — never the whole file.
+///
+/// The conversation title is deliberately absent: it lives in the first user
+/// message, which costs a second read of a few records, so the picker paints from
+/// these and fills titles in afterwards (codex's lazy-preview pattern,
+/// `tui/src/resume_picker.rs:772`, minus the preview pane).
+#[derive(Debug, Clone)]
+pub struct SessionSummary {
+    /// The session id, as it appears in the filename and the header.
+    pub id: String,
+    /// The rollout to resume.
+    pub path: PathBuf,
+    /// The session's start cwd (the directory key).
+    pub cwd: PathBuf,
+    /// The harness pack that wrote it. Rows are **not** filtered by it: resuming
+    /// switches the pack from here, so a session started under another harness is
+    /// still listed and still resumable (ADR-0029 resolution 1).
+    pub harness: String,
+    /// The model at session start.
+    pub model: String,
+    /// The git branch at session start, when the session began inside a repo.
+    pub branch: Option<String>,
+    /// File mtime — the session's last activity, and the sort key.
+    pub last_active: std::time::SystemTime,
+}
+
+/// Which sessions [`list_sessions`] returns.
+#[derive(Debug, Clone, Copy)]
+pub enum SessionScope<'a> {
+    /// Only sessions started in this directory (the picker's default).
+    Cwd(&'a Path),
+    /// Every session under the root, across directories.
+    All,
+}
+
+/// List resumable sessions, newest activity first (ADR-0029).
+///
+/// Reads **line 1 and the mtime** of each `rollout-*.jsonl`, so the cost is one
+/// open per session rather than one parse of every transcript. ADR-0024 reserved a
+/// listing index for this; it stays reserved, because a directory scan cannot
+/// disagree with the directory while an index can — revisit on a measurement, not
+/// a guess.
+///
+/// Skips, silently and by design:
+/// - rollouts whose header will not parse (ADR-0024 §2.4 tolerance — a torn file is
+///   invisible in the picker, not an error row the user must dismiss);
+/// - `kind != "main"`, so subagent and workflow transcripts never appear as
+///   something to resume into (ADR-0029 resolution 2). They stay reachable by id.
+#[must_use]
+pub fn list_sessions(sessions_root: &Path, scope: SessionScope<'_>) -> Vec<SessionSummary> {
+    let dirs: Vec<PathBuf> = match scope {
+        SessionScope::Cwd(cwd) => vec![sessions_root.join(encode_cwd_dirname(cwd))],
+        SessionScope::All => std::fs::read_dir(sessions_root)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .collect(),
+    };
+    let mut out: Vec<SessionSummary> = dirs
+        .iter()
+        .flat_map(|dir| {
+            rollout_names(dir)
+                .into_iter()
+                .filter_map(|name| summarize_rollout(&dir.join(name)))
+        })
+        .collect();
+    // Newest activity first. Ties keep a stable order so a redraw cannot reshuffle
+    // rows under the cursor.
+    out.sort_by(|a, b| b.last_active.cmp(&a.last_active).then(a.id.cmp(&b.id)));
+    out
+}
+
+/// Read one rollout's header + mtime into a summary, or `None` if it is not a
+/// listable session.
+fn summarize_rollout(path: &Path) -> Option<SessionSummary> {
+    let file = std::fs::File::open(path).ok()?;
+    let last_active = file.metadata().ok()?.modified().ok()?;
+    let mut first = String::new();
+    std::io::BufRead::read_line(&mut std::io::BufReader::new(file), &mut first).ok()?;
+    let value: serde_json::Value = serde_json::from_str(first.trim_end()).ok()?;
+    if value.get("type").and_then(serde_json::Value::as_str) != Some("session_meta") {
+        return None;
+    }
+    let meta: SessionMeta = serde_json::from_value(value.get("payload")?.clone()).ok()?;
+    if meta.kind != "main" {
+        return None;
+    }
+    Some(SessionSummary {
+        id: meta.session_id,
+        path: path.to_path_buf(),
+        cwd: meta.cwd,
+        harness: meta.harness,
+        model: meta.model,
+        branch: meta.git.and_then(|g| g.branch),
+        last_active,
+    })
+}
+
 /// The rollout filenames directly inside `dir`.
 fn rollout_names(dir: &Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -658,6 +759,110 @@ mod tests {
         assert!(writer.take_error().is_some());
         // Further events are no-ops.
         writer.on_event(&message_event(Role::User, "x"));
+    }
+
+    /// Write a rollout by hand so a test can control the header exactly (kinds and
+    /// torn files the writer would never produce).
+    fn write_rollout(dir: &Path, id: &str, kind: &str, extra_lines: &[&str]) -> PathBuf {
+        std::fs::create_dir_all(dir).unwrap();
+        let path = dir.join(format!("rollout-2026-07-29T00-00-00-{id}.jsonl"));
+        let meta = serde_json::json!({
+            "timestamp": "2026-07-29T00:00:00Z",
+            "type": "session_meta",
+            "payload": {
+                "schema_version": 1,
+                "session_id": id,
+                "kind": kind,
+                "cwd": dir.to_string_lossy(),
+                "git": { "branch": "main" },
+                "cli_version": "0.1.17",
+                "harness": "claude",
+                "api_schema": "anthropic",
+                "model": "test-model",
+            }
+        });
+        let mut body = meta.to_string();
+        for line in extra_lines {
+            body.push('\n');
+            body.push_str(line);
+        }
+        body.push('\n');
+        std::fs::write(&path, body).unwrap();
+        path
+    }
+
+    fn set_mtime(path: &Path, when: std::time::SystemTime) {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(when)
+            .unwrap();
+    }
+
+    /// The picker's listing (ADR-0029): newest activity first, scoped to one cwd by
+    /// default, and quietly skipping what is not a resumable main session.
+    #[test]
+    fn list_sessions_orders_scopes_and_skips() {
+        let root = tempfile::tempdir().unwrap();
+        let sessions = root.path().join("sessions");
+        let cwd_a = PathBuf::from("/tmp/project-a");
+        let cwd_b = PathBuf::from("/tmp/project-b");
+        let dir_a = sessions.join(encode_cwd_dirname(&cwd_a));
+        let dir_b = sessions.join(encode_cwd_dirname(&cwd_b));
+
+        let older = write_rollout(&dir_a, "sess-old", "main", &[]);
+        let newer = write_rollout(&dir_a, "sess-new", "main", &[]);
+        write_rollout(&dir_a, "sess-sub", "subagent", &[]); // not resumable-into
+        write_rollout(&dir_b, "sess-other-dir", "main", &[]);
+
+        // Distinct mtimes, oldest first, so ordering is not filename luck (and no
+        // sleeping: `File::set_modified` is std, no dependency).
+        let base = std::time::SystemTime::now() - std::time::Duration::from_mins(10);
+        set_mtime(&older, base);
+        set_mtime(&newer, base + std::time::Duration::from_mins(5));
+
+        // Unlistable rollouts: empty, non-JSON line 1, and a line 1 that is not a header.
+        std::fs::write(dir_a.join("rollout-2026-07-29T00-00-00-empty.jsonl"), "").unwrap();
+        std::fs::write(
+            dir_a.join("rollout-2026-07-29T00-00-00-garbage.jsonl"),
+            "not json\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir_a.join("rollout-2026-07-29T00-00-00-nohdr.jsonl"),
+            "{\"type\":\"message\",\"payload\":{}}\n",
+        )
+        .unwrap();
+
+        let scoped = list_sessions(&sessions, SessionScope::Cwd(&cwd_a));
+        let ids: Vec<&str> = scoped.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["sess-new", "sess-old"],
+            "newest first; subagent, torn, and headerless rollouts are invisible"
+        );
+        assert_eq!(scoped[0].harness, "claude", "header fields survive");
+        assert_eq!(scoped[0].branch.as_deref(), Some("main"));
+        assert_eq!(scoped[0].model, "test-model");
+
+        let all = list_sessions(&sessions, SessionScope::All);
+        assert!(
+            all.iter().any(|s| s.id == "sess-other-dir"),
+            "All crosses directories: {:?}",
+            all.iter().map(|s| &s.id).collect::<Vec<_>>()
+        );
+        assert_eq!(all.len(), 3, "still no subagent or torn rows: {all:?}");
+    }
+
+    /// A missing sessions root is an empty picker, not an error — a first run has
+    /// no directory at all.
+    #[test]
+    fn list_sessions_on_a_missing_root_is_empty() {
+        let root = tempfile::tempdir().unwrap();
+        let absent = root.path().join("nope");
+        assert!(list_sessions(&absent, SessionScope::All).is_empty());
+        assert!(list_sessions(&absent, SessionScope::Cwd(Path::new("/tmp/x"))).is_empty());
     }
 
     #[test]
