@@ -35,6 +35,7 @@ pub use shell::{
 pub use trace::{
     GitMeta, RolloutContents, SessionMeta, SessionScope, SessionSummary, TRACE_SCHEMA_VERSION,
     TraceExtras, TraceWriter, find_latest_rollout, find_rollout_by_id, list_sessions, read_rollout,
+    read_session_title,
 };
 pub use walk::{WalkEntry, WalkOptions};
 

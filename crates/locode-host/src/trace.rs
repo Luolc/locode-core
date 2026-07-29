@@ -468,6 +468,60 @@ pub fn list_sessions(sessions_root: &Path, scope: SessionScope<'_>) -> Vec<Sessi
     out
 }
 
+/// The one-line title for a picker row: the first **real** user message in the
+/// rollout, first line only.
+///
+/// Not in the header, so it costs a second read — which is why the picker fills
+/// titles in for the rows it is about to draw rather than for the whole list
+/// (ADR-0029; codex loads previews the same way,
+/// `tui/src/resume_picker.rs:772`). Reads at most `TITLE_SCAN_LINES` records, so
+/// a session that opens with a long injected preamble does not turn into a full
+/// parse.
+///
+/// Injected framing is skipped: an `AGENTS.md` reminder or a skills listing is a
+/// `User` message the user never typed, and titling a session with it would make
+/// every session in a project look identical.
+#[must_use]
+pub fn read_session_title(path: &Path) -> Option<String> {
+    use std::io::BufRead as _;
+    let file = std::fs::File::open(path).ok()?;
+    for line in std::io::BufReader::new(file).lines().take(TITLE_SCAN_LINES) {
+        let Ok(line) = line else { break };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        if value.get("type").and_then(serde_json::Value::as_str) != Some("message") {
+            continue;
+        }
+        let Ok(message) = serde_json::from_value::<Message>(value.get("payload")?.clone()) else {
+            continue;
+        };
+        if message.role != locode_protocol::Role::User {
+            continue;
+        }
+        let text: String = message
+            .content
+            .iter()
+            .filter_map(|block| match block {
+                locode_protocol::ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let first_line = text.lines().find(|l| !l.trim().is_empty())?.trim();
+        if first_line.starts_with("<system-reminder>") {
+            continue;
+        }
+        return Some(first_line.to_string());
+    }
+    None
+}
+
+/// How far into a rollout [`read_session_title`] looks for the first user
+/// message before giving up — a bound, so one pathological file cannot stall a
+/// paint.
+const TITLE_SCAN_LINES: usize = 64;
+
 /// Read one rollout's header + mtime into a summary, or `None` if it is not a
 /// listable session.
 fn summarize_rollout(path: &Path) -> Option<SessionSummary> {

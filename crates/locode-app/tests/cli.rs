@@ -715,6 +715,22 @@ mod locode_home {
         assert!(kept.contains("grok"), "user edits survive: {kept}");
     }
 
+    /// `-r` with no value means "let me choose", which needs a screen. Under `-p`
+    /// there is none, so it must refuse rather than resume something arbitrary
+    /// (ADR-0029: the headless path stays id-or-nothing).
+    #[test]
+    fn print_mode_refuses_the_resume_picker() {
+        let home = tempdir();
+        let cwd = tempdir();
+        locode()
+            .env("LOCODE_HOME", home.path())
+            .args(["-p", "hi", "--api-schema", "mock", "-r", "--cwd"])
+            .arg(cwd.path())
+            .assert()
+            .failure()
+            .stderr(predicates::str::contains("needs a session id"));
+    }
+
     #[test]
     fn resume_takes_the_model_from_flag_or_settings_never_the_header() {
         let home = tempdir();

@@ -58,9 +58,15 @@ pub struct Cli {
     #[arg(short = 'c', long = "continue", conflicts_with = "resume")]
     pub continue_session: bool,
 
-    /// Resume the session with this id (this directory's sessions first, then
-    /// anywhere).
-    #[arg(short = 'r', long = "resume", value_name = "SESSION_ID")]
+    /// Resume a session: with an id, that session (this directory's sessions
+    /// first, then anywhere); with no id, pick one from a list.
+    #[arg(
+        short = 'r',
+        long = "resume",
+        value_name = "SESSION_ID",
+        num_args = 0..=1,
+        default_missing_value = "",
+    )]
     pub resume: Option<String>,
 
     /// Working directory (defaults to the current directory).
@@ -127,7 +133,31 @@ pub struct Cli {
     pub effort: Option<EffortArg>,
 }
 
+/// How `-r`/`--resume` was invoked (ADR-0029).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResumeMode<'a> {
+    /// Not asked for.
+    Off,
+    /// `-r` with no value — choose from a list.
+    Pick,
+    /// `-r <id>` — that session, and **an id that matches nothing is an error**:
+    /// falling back to the picker would hide a typo behind a plausible menu
+    /// (ADR-0029 resolution 3).
+    Id(&'a str),
+}
+
 impl Cli {
+    /// What `-r` asked for. `Some("")` — the flag with no value — is clap's way of
+    /// saying "given, but empty"; naming it here keeps that encoding in one place.
+    #[must_use]
+    pub fn resume_mode(&self) -> ResumeMode<'_> {
+        match self.resume.as_deref() {
+            None => ResumeMode::Off,
+            Some(id) if id.trim().is_empty() => ResumeMode::Pick,
+            Some(id) => ResumeMode::Id(id),
+        }
+    }
+
     /// The headless [`locode_exec::Cli`] for `-p` mode — the shared fields map
     /// straight across (the two CLIs deliberately share `Harness` /
     /// `OutputFormat`).

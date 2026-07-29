@@ -152,10 +152,20 @@ the gap*, not of carelessness.
 lifecycle "mostly doesn't [allow test-first]; those get their manual-smoke entries". The
 manual smoke is the user.
 
-**Sharpest instance of the asymmetry:** the claude pack's *static* system prompt has golden
-snapshot files (`crates/locode-packs/src/claude/prompt.rs`, `src/claude/snapshots/`), while
-the TUI's rendered output has **zero** — no `TestBackend` anywhere in the workspace. The
-thing that almost never changes is snapshot-tested; the thing that breaks weekly is not.
+**Correction (2026-07-29).** This finding first claimed the TUI had "no `TestBackend`
+anywhere in the workspace". That was wrong — there are 36 uses across five files
+(`ui.rs`, `ui/composer.rs`, `ui/dropdown.rs`, `frame_terminal.rs`, `event_loop.rs`). The
+claim came from a grep truncated by `head`, which is a reminder that a number in this file
+is only as good as the command behind it: **re-run it, do not trust the first screenful.**
+
+The corrected finding is sharper, not weaker. Render tests *do* exist, and the defects
+shipped anyway, because most of them were not rendering bugs. "The token counter shows
+accumulated usage instead of context occupancy", "the echo renders where the user typed it
+rather than where it entered the conversation", "the streaming cell is a fixed 12 rows" —
+a widget snapshot pins *how a given input draws*; every one of those was a mistake about
+**which input to pass**. That is the class of defect no amount of widget-level testing
+reaches, and the reason the verification gap is about running the real thing, not about
+adding more render assertions.
 
 **Changed:** nothing yet — deliberately (user, 2026-07-27). Recorded in §6.
 
@@ -227,12 +237,12 @@ skill.
 
 Deliberately not started (user, 2026-07-27). Each has its trigger.
 
-1. **TUI render snapshots.** `ratatui 0.29` ships `TestBackend` (`backend.rs:127-128`, no
-   feature gate) — render a frame into a text buffer and diff it against a golden file, the
-   way the claude pack already does for its prompt. Reviewing a UI change would become
-   reading a diff of the screen. Rough estimate from F1's list: it would have caught on the
-   order of **15 of the 37 fixes** before merge. *Trigger:* the next time a rendering bug
-   ships, or the first `locode`-pack UI work.
+1. **TUI render snapshots where they are missing.** `TestBackend` is already used for the
+   composer, dropdown, and frame mechanics. The gap is `ui/blocks.rs` — the transcript
+   renderer, which is tested at the `Vec<Line>` level and is where the wrapping, border, and
+   spacing fixes clustered. Extend the existing pattern there rather than inventing one.
+   Note F1's correction: this catches *rendering* mistakes, not wrong-input mistakes, so
+   estimate its value modestly. *Trigger:* the next rendering bug that reaches a release.
 2. **A replayable smoke harness.** The kitty investigation used a real pty via
    `script`, a faked terminal reply to the capability query, `kill -HUP` for the signal path,
    and a byte-level assertion on the exit stream. That is a repeatable recipe: launch the
