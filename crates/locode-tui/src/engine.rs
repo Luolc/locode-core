@@ -27,6 +27,61 @@ pub enum UiCommand {
     SetEffort(Option<locode_core::Effort>),
     /// Widen the running session's jail and discovery roots (`/add-dir <path>`).
     AddDir(std::path::PathBuf),
+    /// Rebuild the session from an earlier rollout, chosen in the picker
+    /// (`/resume`, ADR-0029). Carries the session id, the same thing `-r` takes.
+    Resume(String),
+}
+
+/// Rebuild the session from an earlier rollout (`/resume`, ADR-0029).
+///
+/// The same swap `/new` performs, with one difference that matters: this one
+/// carries a resume intent, and **the rollout's header wins the identity**
+/// (ADR-0024 §2.5) — so a session recorded under another harness comes back under
+/// that harness (ADR-0029 resolution 1), which is why `pack` is re-resolved here.
+///
+/// A failed resume leaves the current session untouched and reports: stranding the
+/// user with nothing because a file went missing would be a worse trade than
+/// staying where they were.
+fn resume_session(
+    cli: &Cli,
+    registry: &ProviderRegistry,
+    msg_tx: &tokio::sync::mpsc::UnboundedSender<EngineMsg>,
+    shell: &str,
+    built: &mut BuiltSession,
+    pack: &mut &'static dyn locode_core::Pack,
+    id: &str,
+) {
+    let mut resumed_cli = cli.clone();
+    resumed_cli.resume = Some(id.to_string());
+    resumed_cli.continue_session = false;
+    match build_session(&resumed_cli, registry, msg_tx.clone(), true) {
+        Ok(fresh) => {
+            *built = fresh;
+            match locode_core::resolve(&built.harness) {
+                Ok(resolved) => *pack = resolved,
+                Err(e) => {
+                    let _ = msg_tx.send(EngineMsg::BuildFailed(e.to_string()));
+                    return;
+                }
+            }
+            let _ = msg_tx.send(EngineMsg::SessionReset);
+            let _ = msg_tx.send(EngineMsg::Ready {
+                model: built.model.clone(),
+                cwd: built.cwd_display.clone(),
+                shell: shell.to_string(),
+                context: built.context,
+                skills: built.skills.clone(),
+            });
+            // Same replay as startup: the recovered transcript has to reach the
+            // screen, or the user resumes into what looks like an empty session.
+            for message in built.replay.drain(..) {
+                replay_message(msg_tx, message);
+            }
+        }
+        Err(message) => {
+            let _ = msg_tx.send(EngineMsg::Notice(message));
+        }
+    }
 }
 
 /// The context occupancy recovered for a resumed session: **exact** when the
@@ -188,6 +243,9 @@ pub fn spawn(
                 }
                 UiCommand::AddDir(dir) => {
                     let _ = msg_tx.send(add_dir(&mut built, &dir));
+                }
+                UiCommand::Resume(id) => {
+                    resume_session(&cli, &registry, &msg_tx, &shell, &mut built, &mut pack, &id);
                 }
                 // `/new` always starts FRESH — the resume intent does not stick.
                 UiCommand::NewSession => {

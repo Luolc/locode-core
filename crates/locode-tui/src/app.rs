@@ -58,6 +58,10 @@ pub enum Cmd {
     SetEffort(Option<locode_core::Effort>),
     /// Add a working directory to the running session (`/add-dir <path>`).
     AddDir(std::path::PathBuf),
+    /// Open the session picker; on a choice, rebuild the session from that
+    /// rollout (`/resume`, ADR-0029). The loop owns it — the picker needs the
+    /// terminal and the filesystem, which the reducer must not touch.
+    ResumePicker,
     /// Resolve and run this `/name args` line, then feed the result back through
     /// [`App::apply_command_result`].
     ///
@@ -148,6 +152,11 @@ pub struct PendingTool {
 pub struct App {
     /// The multiline prompt editor.
     pub composer: Composer,
+    /// Set by `/resume`: the loop opens the picker at the top of its next
+    /// iteration and clears this. A flag rather than a `Cmd` the reducer runs,
+    /// because the picker needs the terminal and the filesystem — neither of which
+    /// the reducer may touch.
+    pub resume_picker_requested: bool,
     /// Every registered slash command (ADR-0026). Builtins register at startup;
     /// skill-backed commands join when the engine reports what it discovered.
     pub registry: CommandRegistry,
@@ -256,6 +265,7 @@ impl App {
             api_schema: None,
             registry,
             slash: SlashState::default(),
+            resume_picker_requested: false,
             matcher: FuzzyMatcher::new(),
             should_quit: false,
             dirty: true,
@@ -1073,6 +1083,9 @@ impl App {
             CommandResult::Action(UiAction::SetModel(model)) => vec![Cmd::SetModel(model)],
             CommandResult::Action(UiAction::SetEffort(effort)) => vec![Cmd::SetEffort(effort)],
             CommandResult::Action(UiAction::AddDir(dir)) => vec![Cmd::AddDir(dir)],
+            // The picker needs the terminal and the filesystem, so the loop runs
+            // it (the reducer stays sans-IO) and hands the engine the choice.
+            CommandResult::Action(UiAction::ResumePicker) => vec![Cmd::ResumePicker],
         }
     }
 
@@ -1377,6 +1390,16 @@ mod tests {
     }
 
     // ---- slice 1 interaction contract (unchanged semantics) ----
+
+    /// `/resume`'s action reaches the loop as a request, not as work the reducer
+    /// does itself — the picker needs the terminal and the filesystem.
+    #[test]
+    fn the_resume_action_defers_the_picker_to_the_loop() {
+        let mut app = App::new();
+        assert!(!app.resume_picker_requested);
+        let cmds = app.apply_command_result(CommandResult::Action(UiAction::ResumePicker));
+        assert_eq!(cmds, vec![Cmd::ResumePicker]);
+    }
 
     #[test]
     fn ctrl_c_clears_draft_then_arms_then_quits() {
@@ -2591,7 +2614,9 @@ mod tests {
         assert!(app.slash.open, "a bare slash offers everything");
         assert_eq!(
             menu(&app),
-            vec!["/add-dir", "/effort", "/help", "/model", "/new", "/quit"]
+            vec![
+                "/add-dir", "/effort", "/help", "/model", "/new", "/quit", "/resume"
+            ]
         );
 
         type_str(&mut app, "q", t0);

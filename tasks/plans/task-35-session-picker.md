@@ -98,6 +98,22 @@ copying `/new` (`builtin.rs:328-334`) — not a new rule, not a caller-side chec
 - [ ] `/resume` opens the same picker when idle and refuses with a notice mid-run.
 - [ ] The row-shape snapshot exists and is stable across a re-render.
 
+## Result — slices 1-3 (2026-07-29)
+
+**Slice 3.** `/resume` is a `SlashCommand` that refuses mid-run inside its own
+`execute` (`ctx.is_running`), copying `/new` — the rule stayed where `/new` put it,
+and ADR-0026 needed no amendment. Mid-session switching needed one new engine
+command, `UiCommand::Resume(id)`, which rebuilds through the same `build_session`
+path startup uses and then replays the recovered transcript; a failed resume reports
+and leaves the current session intact rather than stranding the user.
+
+Deviation worth recording: the picker is **not** an App overlay. `Cmd::ResumePicker`
+sets a flag the loop reads at the top of its next iteration, because the picker needs
+the terminal and the filesystem and the reducer may touch neither. That also means
+`/resume` and the startup `-r` run *exactly the same* picker code.
+
+**Slice 2.** Shipped as planned (#260).
+
 ## Result — slice 1 (2026-07-29)
 
 `list_sessions` + `SessionSummary` + `SessionScope` shipped (#259), with
