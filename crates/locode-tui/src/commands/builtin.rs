@@ -16,6 +16,7 @@ pub fn register_builtins(registry: &mut CommandRegistry) {
     registry.register(Arc::new(Help), CommandSource::Builtin);
     registry.register(Arc::new(Model), CommandSource::Builtin);
     registry.register(Arc::new(NewSession), CommandSource::Builtin);
+    registry.register(Arc::new(Resume), CommandSource::Builtin);
     registry.register(Arc::new(Quit), CommandSource::Builtin);
 }
 
@@ -335,6 +336,36 @@ impl SlashCommand for NewSession {
     }
 }
 
+/// `/resume` — pick an earlier session and continue it (ADR-0029).
+struct Resume;
+
+#[async_trait::async_trait]
+impl SlashCommand for Resume {
+    fn name(&self) -> &'static str {
+        "resume"
+    }
+
+    fn description(&self) -> &'static str {
+        "resume an earlier session, chosen from a list"
+    }
+
+    fn usage(&self) -> &'static str {
+        "/resume"
+    }
+
+    async fn execute(&self, ctx: &CommandCtx<'_>, _args: &str) -> CommandResult {
+        // Same refusal, same reason, as `/new` above: swapping the conversation
+        // under a live turn strands the run's events. The rule lives in the
+        // command, not the caller — that is the seam `/new` established, and
+        // `/resume` is the same class of action (ADR-0029).
+        if ctx.is_running {
+            CommandResult::Error("finish or cancel the run before /resume".into())
+        } else {
+            CommandResult::Action(UiAction::ResumePicker)
+        }
+    }
+}
+
 /// `/quit` (alias `/exit`) — leave.
 struct Quit;
 
@@ -389,6 +420,31 @@ mod tests {
         assert_eq!(
             cmd.execute(&CommandCtx::default(), args).await,
             CommandResult::Action(UiAction::Quit)
+        );
+    }
+
+    /// `/resume` opens the picker when idle and refuses mid-run — the rule `/new`
+    /// established, in the command's own `execute` rather than in the caller
+    /// (ADR-0029). Swapping the conversation under a live turn would strand that
+    /// run's events.
+    #[tokio::test]
+    async fn resume_opens_the_picker_but_refuses_mid_run() {
+        let r = registry();
+        let (cmd, args) = r.resolve("/resume").expect("resolves");
+        assert_eq!(
+            cmd.execute(&CommandCtx::default(), args).await,
+            CommandResult::Action(UiAction::ResumePicker),
+            "idle: the picker opens"
+        );
+
+        let running = CommandCtx {
+            is_running: true,
+            ..CommandCtx::default()
+        };
+        let refused = cmd.execute(&running, args).await;
+        assert!(
+            matches!(refused, CommandResult::Error(ref m) if m.contains("before /resume")),
+            "mid-run must refuse, not queue: {refused:?}"
         );
     }
 

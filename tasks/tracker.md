@@ -87,7 +87,7 @@ The immediate queue, ahead of the remaining packs:
     the host task registry, and subagents as a nested engine loop. The pack-home decision
     above belongs in whichever lands first — ADR-first, before the code.
   - Also unblocks codex `shell_command` → unified exec (see the deferred seam below).
-- [ ] **Task 35 — session picker** (small, ahead of P0.5;
+- [x] **Task 35 — session picker** — **SHIPPED 2026-07-29** (#259/#260/#261; small, ahead of P0.5;
   [ADR-0029](../docs/decisions/ADR-0029-session-picker.md), **Accepted** 2026-07-29; plan:
   [`plans/task-35-session-picker.md`](plans/task-35-session-picker.md)). `--resume` needs an id nobody remembers, and `-c` is the only escape
   (newest only, no choice). All three studied harnesses ship a picker and agree on its shape —

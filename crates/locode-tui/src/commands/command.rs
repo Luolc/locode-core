@@ -59,6 +59,9 @@ pub enum UiAction {
     /// Widen the jail with another directory and pick up its `AGENTS.md` and
     /// skills from the next turn (`/add-dir <path>`).
     AddDir(std::path::PathBuf),
+    /// Open the session picker and, on a choice, rebuild this session from that
+    /// rollout (`/resume`, ADR-0029).
+    ResumePicker,
 }
 
 /// Read-only context handed to `visible` and `suggest_args`.

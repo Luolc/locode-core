@@ -108,6 +108,19 @@ pub async fn run(cli: Cli, registry: ProviderRegistry) -> Result<ExitCode, RunEr
         if app.should_quit {
             break ExitCode::SUCCESS;
         }
+        // `/resume` asked for the picker. Taking the screen here — between
+        // iterations, with no turn in flight (the command refuses mid-run) — keeps
+        // it the same code path as the startup picker.
+        if app.resume_picker_requested {
+            app.resume_picker_requested = false;
+            if let Some(id) = run_session_picker(&mut terminal, &mut input_rx).await? {
+                let _ = engine_tx.send(UiCommand::Resume(id));
+            }
+            // The picker painted over the frame; drop the diff baseline so the next
+            // paint redraws everything rather than diffing against what it left.
+            terminal.clear()?;
+            app.dirty = true;
+        }
 
         // Fold finalized blocks into the transcript tail, then paint the whole
         // bottom-anchored frame (rate-capped; deferred paint instead of
@@ -457,6 +470,8 @@ async fn run_reducer(app: &mut App, msg: Msg, io: &mut LoopIo<'_>) {
             Cmd::NewSession => {
                 let _ = io.engine_tx.send(UiCommand::NewSession);
             }
+            // Deferred to the loop, which owns the terminal and the input stream.
+            Cmd::ResumePicker => app.resume_picker_requested = true,
             Cmd::SetModel(model) => {
                 let _ = io.engine_tx.send(UiCommand::SetModel(model));
             }
