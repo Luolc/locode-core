@@ -14,6 +14,7 @@
 //! - tracing failures never kill a run: the writer disables itself on the
 //!   first IO error and surfaces it via [`TraceWriter::take_error`].
 
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -112,6 +113,29 @@ pub struct TraceWriter {
     error: Option<String>,
     /// Resumed writers ignore `Init` (the header/history are already on disk).
     resumed: bool,
+    /// Lineage (ADR-0024 amendment 2026-08-01): the record this writer will hang
+    /// its next message off. `None` means "start a new root".
+    parent_uuid: Option<String>,
+    /// Per-writer uuid prefix — process-unique, so two processes appending to one
+    /// rollout can never mint the same record id.
+    uuid_prefix: String,
+    /// Monotonic within this writer.
+    uuid_seq: u64,
+}
+
+/// A prefix for record ids, unique per **writer**: `{millis}-{pid}` distinguishes
+/// processes (the shape session ids already use), and the counter distinguishes
+/// writers inside one — `/resume` builds a second writer in the same process, and
+/// without the counter two writers created in the same millisecond would mint
+/// colliding record ids and tangle the chain.
+fn mint_uuid_prefix() -> String {
+    static WRITERS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or_default();
+    let n = WRITERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{millis}-{}-{n}", std::process::id())
 }
 
 impl TraceWriter {
@@ -126,6 +150,9 @@ impl TraceWriter {
             path: None,
             error: None,
             resumed: false,
+            parent_uuid: None,
+            uuid_prefix: mint_uuid_prefix(),
+            uuid_seq: 0,
         }
     }
 
@@ -137,6 +164,11 @@ impl TraceWriter {
     /// # Errors
     /// When the file cannot be opened for appending.
     pub fn resume(path: PathBuf, sessions_root: PathBuf) -> Result<Self, String> {
+        // Hang new records off the same leaf the reader will have replayed, so the
+        // continued conversation is one chain rather than a second root.
+        let parent_uuid = read_records(&path)
+            .ok()
+            .and_then(|records| newest_leaf(&records).and_then(|i| records[i].uuid.clone()));
         let file = open_append_private(&path)?;
         Ok(Self {
             sessions_root,
@@ -145,6 +177,9 @@ impl TraceWriter {
             path: Some(path),
             error: None,
             resumed: true,
+            parent_uuid,
+            uuid_prefix: mint_uuid_prefix(),
+            uuid_seq: 0,
         })
     }
 
@@ -261,19 +296,39 @@ impl TraceWriter {
     }
 
     fn append_record(&mut self, record_type: &str, payload: &impl Serialize) -> Result<(), String> {
+        // History-bearing records carry lineage; metadata (`usage`, …) does not —
+        // it is read in file order and never replayed.
+        let lineage = matches!(record_type, "message" | "compacted");
+        let uuid = lineage.then(|| {
+            self.uuid_seq += 1;
+            format!("{}-{}", self.uuid_prefix, self.uuid_seq)
+        });
+        let parent = if lineage {
+            self.parent_uuid.clone()
+        } else {
+            None
+        };
         let Some(file) = self.file.as_mut() else {
             return Ok(());
         };
-        let line = serde_json::json!({
+        let mut line = serde_json::json!({
             "timestamp": now_rfc3339_millis(),
             "type": record_type,
             "payload": payload,
         });
+        if let Some(uuid) = &uuid {
+            line["uuid"] = serde_json::Value::String(uuid.clone());
+            line["parent_uuid"] = parent.map_or(serde_json::Value::Null, serde_json::Value::String);
+        }
         let mut buf = serde_json::to_string(&line).map_err(|e| format!("serialize: {e}"))?;
         buf.push('\n');
         file.write_all(buf.as_bytes())
             .and_then(|()| file.flush())
-            .map_err(|e| format!("append trace record: {e}"))
+            .map_err(|e| format!("append trace record: {e}"))?;
+        if let Some(uuid) = uuid {
+            self.parent_uuid = Some(uuid);
+        }
+        Ok(())
     }
 }
 
@@ -300,58 +355,155 @@ pub struct RolloutContents {
 /// Only when the file is unreadable or line 1 is not a valid `session_meta`
 /// (without a header the file identifies nothing).
 pub fn read_rollout(path: &Path) -> Result<RolloutContents, String> {
-    let text =
-        std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    let mut lines = text.lines();
-    let first = lines
-        .next()
-        .ok_or_else(|| format!("{}: empty rollout", path.display()))?;
-    let first: serde_json::Value = serde_json::from_str(first)
-        .map_err(|e| format!("{}: line 1 unparsable: {e}", path.display()))?;
-    if first.get("type").and_then(serde_json::Value::as_str) != Some("session_meta") {
-        return Err(format!("{}: line 1 is not session_meta", path.display()));
+    let records = read_records(path)?;
+    let meta = records
+        .first()
+        .and_then(|r| r.meta.clone())
+        .ok_or_else(|| format!("{}: line 1 is not session_meta", path.display()))?;
+
+    // Metadata is read in file order — it is never replayed, so lineage does not
+    // apply to it.
+    let last_usage = records.iter().rev().find_map(|r| r.usage);
+
+    // Replay follows the **chain**, not the file (ADR-0024 amendment 2026-08-01):
+    // pick the newest leaf and walk back to its root. Two processes appending to
+    // one rollout each write their own chain, so file order can interleave two
+    // conversations — following one leaf recovers a single coherent timeline
+    // instead of the merge. Records written before lineage existed carry no uuid;
+    // they are the prefix every chain hangs off, in file order.
+    let mut replay: Vec<usize> = records
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.uuid.is_none() && r.history_bearing())
+        .map(|(i, _)| i)
+        .collect();
+    if let Some(leaf) = newest_leaf(&records) {
+        let by_uuid: HashMap<&str, usize> = records
+            .iter()
+            .enumerate()
+            .filter_map(|(i, r)| r.uuid.as_deref().map(|u| (u, i)))
+            .collect();
+        let mut chain = Vec::new();
+        let mut seen: HashSet<usize> = HashSet::new();
+        let mut at = Some(leaf);
+        while let Some(index) = at {
+            // A cycle can only come from a corrupted file; stop rather than spin.
+            if !seen.insert(index) {
+                break;
+            }
+            chain.push(index);
+            at = records[index]
+                .parent_uuid
+                .as_deref()
+                .and_then(|p| by_uuid.get(p).copied());
+        }
+        chain.reverse();
+        replay.extend(chain);
     }
-    let meta: SessionMeta = serde_json::from_value(first["payload"].clone())
-        .map_err(|e| format!("{}: session_meta invalid: {e}", path.display()))?;
 
     let mut history: Vec<Message> = Vec::new();
-    let mut last_usage: Option<locode_protocol::Usage> = None;
-    for line in lines {
-        // Torn tail / foreign garbage: skip, never fail (§2.4).
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        match value.get("type").and_then(serde_json::Value::as_str) {
-            Some("message") => {
-                if let Ok(message) = serde_json::from_value::<Message>(value["payload"].clone()) {
-                    history.push(message);
-                }
-            }
-            Some("compacted") => {
-                // Fold: the replacement history stands in for everything prior.
-                if let Some(replacement) = value["payload"].get("replacement_history")
-                    && let Ok(messages) =
-                        serde_json::from_value::<Vec<Message>>(replacement.clone())
-                {
-                    history = messages;
-                }
-            }
-            Some("usage") => {
-                if let Ok(usage) =
-                    serde_json::from_value::<locode_protocol::Usage>(value["payload"].clone())
-                {
-                    last_usage = Some(usage);
-                }
-            }
-            // Unknown record types (future features) are invisible to this reader.
-            _ => {}
+    for index in replay {
+        let record = &records[index];
+        if let Some(replacement) = &record.replacement_history {
+            // Fold: the replacement stands in for everything earlier in the chain.
+            history.clone_from(replacement);
+        } else if let Some(message) = &record.message {
+            history.push(message.clone());
         }
     }
+
     Ok(RolloutContents {
         meta,
         history,
         last_usage,
     })
+}
+
+/// One parsed rollout line. Unknown record types survive as "not history-bearing"
+/// so a newer writer's records cannot break an older reader (ADR-0024 §2.4).
+struct RolloutRecord {
+    uuid: Option<String>,
+    parent_uuid: Option<String>,
+    meta: Option<SessionMeta>,
+    message: Option<Message>,
+    replacement_history: Option<Vec<Message>>,
+    usage: Option<locode_protocol::Usage>,
+}
+
+impl RolloutRecord {
+    /// Whether this record contributes to the replayed conversation.
+    fn history_bearing(&self) -> bool {
+        self.message.is_some() || self.replacement_history.is_some()
+    }
+}
+
+/// Parse every line of a rollout **tolerantly** (ADR-0024 §2.4 rules 1-2): a torn
+/// tail or a foreign line is skipped, never fatal.
+fn read_records(path: &Path) -> Result<Vec<RolloutRecord>, String> {
+    let text =
+        std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let mut out = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            if index == 0 {
+                return Err(format!("{}: line 1 unparsable", path.display()));
+            }
+            continue;
+        };
+        let kind = value.get("type").and_then(serde_json::Value::as_str);
+        if index == 0 && kind != Some("session_meta") {
+            return Err(format!("{}: line 1 is not session_meta", path.display()));
+        }
+        let payload = value.get("payload").cloned().unwrap_or_default();
+        let string_field = |name: &str| {
+            value
+                .get(name)
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        };
+        out.push(RolloutRecord {
+            uuid: string_field("uuid"),
+            parent_uuid: string_field("parent_uuid"),
+            meta: (kind == Some("session_meta"))
+                .then(|| serde_json::from_value::<SessionMeta>(payload.clone()).ok())
+                .flatten(),
+            message: (kind == Some("message"))
+                .then(|| serde_json::from_value::<Message>(payload.clone()).ok())
+                .flatten(),
+            replacement_history: (kind == Some("compacted"))
+                .then(|| {
+                    payload
+                        .get("replacement_history")
+                        .and_then(|v| serde_json::from_value::<Vec<Message>>(v.clone()).ok())
+                })
+                .flatten(),
+            usage: (kind == Some("usage"))
+                .then(|| serde_json::from_value::<locode_protocol::Usage>(payload.clone()).ok())
+                .flatten(),
+        });
+    }
+    Ok(out)
+}
+
+/// The index of the newest leaf: the last history-bearing record, in file order,
+/// that carries a uuid nothing else claims as a parent.
+///
+/// "Newest in file order" is the tiebreak between concurrent branches, and it is
+/// the same choice Claude Code makes (`sessionStorage.ts:2317` picks the latest of
+/// the pre-computed leaves). `None` means the rollout predates lineage entirely.
+fn newest_leaf(records: &[RolloutRecord]) -> Option<usize> {
+    let claimed: HashSet<&str> = records
+        .iter()
+        .filter_map(|r| r.parent_uuid.as_deref())
+        .collect();
+    records
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, r)| {
+            r.history_bearing() && r.uuid.as_deref().is_some_and(|u| !claimed.contains(u))
+        })
+        .map(|(i, _)| i)
 }
 
 /// The newest resumable rollout for `cwd` (`--continue`): list the one encoded
@@ -852,6 +1004,142 @@ mod tests {
             .unwrap()
             .set_modified(when)
             .unwrap();
+    }
+
+    /// **The 2026-08-01 corruption, replayed.** Two processes resumed one rollout
+    /// and appended into it concurrently, so the file interleaves two diverging
+    /// conversations. Replay follows the **chain** from the newest leaf, not the
+    /// file, so it recovers one coherent timeline instead of the merge — the
+    /// property Claude Code gets from `parentUuid` (`sessionStorage.ts:2069`), and
+    /// the reason it needs no lock on the transcript either.
+    #[test]
+    fn interleaved_writers_replay_as_one_timeline() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rollout-2026-08-01T00-00-00-sess-x.jsonl");
+        let meta = serde_json::json!({
+            "timestamp": "t", "type": "session_meta",
+            "payload": {"schema_version": 1, "session_id": "sess-x", "kind": "main",
+                        "cwd": "/tmp/p", "cli_version": "0.1.18", "harness": "claude",
+                        "api_schema": "anthropic", "model": "m"}});
+        let msg = |uuid: &str, parent: Option<&str>, role: &str, text: &str| {
+            let mut v = serde_json::json!({
+                "timestamp": "t", "type": "message",
+                "payload": {"role": role, "content": [{"type": "text", "text": text}]}});
+            v["uuid"] = serde_json::Value::String(uuid.into());
+            v["parent_uuid"] = parent.map_or(serde_json::Value::Null, |p| {
+                serde_json::Value::String(p.into())
+            });
+            v
+        };
+
+        // A shared past, then two processes writing interleaved children of it.
+        let lines = [
+            meta,
+            msg("a1", None, "user", "shared past"),
+            msg("a2", Some("a1"), "assistant", "shared reply"),
+            // Process A continues…
+            msg("a3", Some("a2"), "user", "A: keep going"),
+            // …while process B, resumed from the same leaf, says something else.
+            msg("b1", Some("a2"), "user", "B: different question"),
+            msg("a4", Some("a3"), "assistant", "A: answer"),
+            msg("b2", Some("b1"), "assistant", "B: answer"),
+        ];
+        let body = lines.iter().fold(String::new(), |mut acc, v| {
+            use std::fmt::Write as _;
+            let _ = writeln!(acc, "{v}");
+            acc
+        });
+        std::fs::write(&path, body).unwrap();
+
+        let contents = read_rollout(&path).expect("readable");
+        let texts: Vec<String> = contents
+            .history
+            .iter()
+            .map(|m| match &m.content[0] {
+                locode_protocol::ContentBlock::Text { text } => text.clone(),
+                other => format!("{other:?}"),
+            })
+            .collect();
+
+        // The newest leaf is B's last message, so B's branch is what replays —
+        // with the shared past, and *without* A's messages spliced into it.
+        assert_eq!(
+            texts,
+            vec![
+                "shared past".to_string(),
+                "shared reply".to_string(),
+                "B: different question".to_string(),
+                "B: answer".to_string(),
+            ],
+            "one timeline, not the file's merge of two"
+        );
+    }
+
+    /// A rollout written before lineage existed carries no uuid anywhere; it must
+    /// still replay exactly as it always did — in file order.
+    #[test]
+    fn a_rollout_without_lineage_replays_in_file_order() {
+        let root = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let cwd = std::fs::canonicalize(cwd.path()).unwrap();
+        let mut writer = TraceWriter::new(root.path().join("sessions"), TraceExtras::default());
+        writer.on_event(&init_event("sess-legacy", &cwd));
+        writer.on_event(&message_event(Role::User, "one"));
+        writer.on_event(&message_event(Role::Assistant, "two"));
+        let path = writer.path().unwrap().to_path_buf();
+
+        // Strip the lineage fields, leaving exactly what an older writer produced.
+        let stripped =
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .lines()
+                .fold(String::new(), |mut acc, line| {
+                    use std::fmt::Write as _;
+                    let mut v: serde_json::Value = serde_json::from_str(line).unwrap();
+                    if let Some(obj) = v.as_object_mut() {
+                        obj.remove("uuid");
+                        obj.remove("parent_uuid");
+                    }
+                    let _ = writeln!(acc, "{v}");
+                    acc
+                });
+        std::fs::write(&path, stripped).unwrap();
+
+        let contents = read_rollout(&path).expect("readable");
+        let roles: Vec<Role> = contents.history.iter().map(|m| m.role).collect();
+        assert_eq!(
+            roles,
+            vec![Role::System, Role::User, Role::Assistant],
+            "the preamble and both turns replay, in file order"
+        );
+    }
+
+    /// Resuming continues the existing chain rather than starting a second root —
+    /// otherwise the next reader would see the resumed turns as their own timeline
+    /// and drop everything before them.
+    #[test]
+    fn resuming_hangs_new_records_off_the_last_leaf() {
+        let root = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let cwd = std::fs::canonicalize(cwd.path()).unwrap();
+        let sessions = root.path().join("sessions");
+        let mut writer = TraceWriter::new(sessions.clone(), TraceExtras::default());
+        writer.on_event(&init_event("sess-r2", &cwd));
+        writer.on_event(&message_event(Role::User, "before"));
+        let path = writer.path().unwrap().to_path_buf();
+        drop(writer);
+
+        let mut resumed = TraceWriter::resume(path.clone(), sessions).expect("resume");
+        resumed.on_event(&message_event(Role::Assistant, "after"));
+
+        let contents = read_rollout(&path).expect("readable");
+        let roles: Vec<Role> = contents.history.iter().map(|m| m.role).collect();
+        assert_eq!(
+            roles,
+            vec![Role::System, Role::User, Role::Assistant],
+            "the resumed turn extends the chain rather than starting a second one: {:?}",
+            contents.history
+        );
     }
 
     /// The picker's listing (ADR-0029): newest activity first, scoped to one cwd by

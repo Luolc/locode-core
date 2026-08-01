@@ -13,31 +13,26 @@
 //! inside the following `User` message(s), so the port scans messages rather than a
 //! flat item list.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use locode_protocol::{ContentBlock, Message, ResultChunk, Role};
 
 /// What a [`repair_pairing`] pass changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RepairStats {
-    /// Results **invented** because the call never got one — a synthetic
+    /// Results **invented** for a call that never got one — a synthetic
     /// `is_error` block, so the model sees that the tool did not report.
     pub synthesized: usize,
-    /// Result blocks **dropped**: duplicates beyond the last, and orphans whose
-    /// `tool_use` is nowhere in the transcript.
+    /// Result blocks **dropped**: duplicates beyond the last, results that were
+    /// not where the API requires them, and orphans whose `tool_use` is nowhere.
     pub deduped: usize,
-    /// Results that existed but sat in the wrong message and were **moved** to the
-    /// turn right after their call, content intact. Counted apart from the other
-    /// two because it is the case a purely existential check cannot see — and the
-    /// one that poisoned a session on 2026-08-01.
-    pub relocated: usize,
 }
 
 impl RepairStats {
     /// Whether the pass left the transcript unchanged.
     #[must_use]
     pub fn is_noop(self) -> bool {
-        self.synthesized == 0 && self.deduped == 0 && self.relocated == 0
+        self.synthesized == 0 && self.deduped == 0
     }
 }
 
@@ -48,36 +43,32 @@ const DANGLING_RESULT_TEXT: &str =
 /// Make `messages` valid to send. Idempotent — a valid transcript passes through
 /// unchanged.
 ///
-/// **The rule is positional, not existential.** Anthropic requires every
-/// `tool_use` in a message to be answered by a `tool_result` **in the message
-/// immediately after**; a result that exists somewhere else in the transcript does
-/// not satisfy it (`messages.N: 'tool_use' … found without 'tool_result' blocks
-/// immediately after`). An earlier version of this pass checked only whether the id
-/// appeared *anywhere*, so a misplaced result looked answered, nothing was
-/// repaired, and — because the whole history replays every turn — the session was
-/// permanently unsendable. That is the failure this shape exists to prevent
-/// (2026-08-01; ADR-0004 amendment).
+/// **The rule is positional.** Anthropic requires every `tool_use` in a message to
+/// be answered by a `tool_result` in the message **immediately after**; a result
+/// living somewhere else does not satisfy it (`messages.N: 'tool_use' … found
+/// without 'tool_result' blocks immediately after`). An earlier version asked only
+/// whether the id appeared *anywhere*, so a stray result looked like an answer,
+/// nothing was repaired, and — because the whole history replays every turn — the
+/// session was permanently unsendable (ADR-0004 amendment 2026-08-01).
 ///
-/// So the pass rebuilds the pairing rather than patching it:
+/// So, for each assistant turn that called tools: take the results out of the
+/// following user turn, keep the ones its calls asked for (in **call order**),
+/// synthesize an `is_error` block for the rest, and **drop every other result
+/// block in the transcript**.
 ///
-/// 1. remember every result's content by id (the **last** occurrence wins, keeping
-///    the old dedup semantics);
-/// 2. strip every result block out of the transcript, dropping messages left empty;
-/// 3. for each assistant turn that called tools, write exactly those results — in
-///    the order the calls were made — at the front of the following user message,
-///    inserting one when there is none.
-///
-/// Results whose `tool_use` is nowhere in the transcript are **not** written back:
-/// an orphan `tool_result` is rejected just as loudly as a dangling `tool_use`.
+/// What this deliberately does *not* do is hunt down a misplaced result and move
+/// it back. A result in the wrong place means something reordered the transcript,
+/// and the only thing that ever did was two processes appending to one rollout —
+/// now prevented at the source (ADR-0024 amendment 2026-08-01). Quietly restitching
+/// such a file would make a scrambled conversation *sendable* rather than *right*,
+/// and hide the next cause of scrambling. Missing results are repaired because
+/// they have a mundane cause (a process killed between the call and its results);
+/// misplaced ones are not, because they do not.
 pub fn repair_pairing(messages: &mut Vec<Message>) -> RepairStats {
-    // Which calls are already answered in the right place — computed **before**
-    // anything moves, because stripping drops emptied messages and every index
-    // after them shifts. Without this, rewriting a correct transcript would report
-    // itself as a repair.
-    let already_paired = correctly_paired(messages);
-    let recovered = take_results(messages);
     let mut stats = RepairStats::default();
-    let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // The turns this pass wrote answers into. The sweep at the end must not undo
+    // its own work — every *other* result block in the transcript answers nothing.
+    let mut answer_turns: HashSet<usize> = HashSet::new();
 
     let mut i = 0;
     while i < messages.len() {
@@ -97,39 +88,45 @@ pub fn repair_pairing(messages: &mut Vec<Message>) -> RepairStats {
             i += 1;
             continue;
         }
-        let blocks: Vec<ContentBlock> = ids
-            .into_iter()
-            .map(|id| {
-                if let Some(found) = recovered.by_id.get(&id) {
-                    if !already_paired.contains(&id) {
-                        stats.relocated += 1;
-                    }
-                    used.insert(id.clone());
-                    return ContentBlock::ToolResult {
-                        tool_use_id: id,
-                        content: found.content.clone(),
-                        is_error: found.is_error,
-                    };
-                }
+
+        // Everything the following user turn holds, split into "answers these
+        // calls" and "the rest" (its text, images, …).
+        let (mut answers, other): (Vec<ContentBlock>, Vec<ContentBlock>) =
+            match messages.get_mut(i + 1) {
+                Some(next) if next.role == Role::User => std::mem::take(&mut next.content)
+                    .into_iter()
+                    .partition(|b| matches!(b, ContentBlock::ToolResult { .. })),
+                _ => (Vec::new(), Vec::new()),
+            };
+
+        let mut blocks = Vec::with_capacity(ids.len());
+        for id in &ids {
+            // Last match wins, matching the long-standing dedup rule.
+            let found = answers.iter().rposition(
+                |b| matches!(b, ContentBlock::ToolResult { tool_use_id, .. } if tool_use_id == id),
+            );
+            if let Some(at) = found {
+                blocks.push(answers.remove(at));
+            } else {
                 stats.synthesized += 1;
-                ContentBlock::ToolResult {
-                    tool_use_id: id,
+                blocks.push(ContentBlock::ToolResult {
+                    tool_use_id: id.clone(),
                     content: vec![ResultChunk::Text {
                         text: DANGLING_RESULT_TEXT.to_owned(),
                     }],
                     is_error: true,
-                }
-            })
-            .collect();
-
-        // Results lead the following user turn: the wire lowers a leading text run
+                });
+            }
+        }
+        // Whatever is left over answered nothing this turn asked for.
+        stats.deduped += answers.len();
+        // Results lead the user turn: the Responses wire flushes a leading text run
         // ahead of the result items, which would read as the user speaking before
-        // the tools reported (ADR-0028's ordering rule, from the other direction).
+        // the tools reported (ADR-0028's ordering rule).
+        blocks.extend(other);
+
         if messages.get(i + 1).is_some_and(|m| m.role == Role::User) {
-            let existing = std::mem::take(&mut messages[i + 1].content);
-            let mut merged = blocks;
-            merged.extend(existing);
-            messages[i + 1].content = merged;
+            messages[i + 1].content = blocks;
         } else {
             messages.insert(
                 i + 1,
@@ -139,87 +136,25 @@ pub fn repair_pairing(messages: &mut Vec<Message>) -> RepairStats {
                 },
             );
         }
-        i += 2; // skip the result turn we just wrote
+        answer_turns.insert(i + 1);
+        i += 2; // skip the result turn just written
     }
 
-    // Only now: a message the strip emptied and the rebuild did not refill held
-    // nothing but duplicates or orphans, and a content-less message is invalid on
-    // the wire. Dropping earlier would have merged a results turn into the next
-    // user prompt — valid, but a needless rewrite of the transcript's shape.
+    // Any result block still standing is in a turn that answers no call —
+    // an orphan or a leftover from a reordered file. The API rejects those as
+    // loudly as a dangling call, so they go.
+    for (index, message) in messages.iter_mut().enumerate() {
+        if answer_turns.contains(&index) {
+            continue;
+        }
+        let before = message.content.len();
+        message
+            .content
+            .retain(|b| !matches!(b, ContentBlock::ToolResult { .. }));
+        stats.deduped += before - message.content.len();
+    }
     messages.retain(|m| !m.content.is_empty());
-    // Everything pulled out and not written back was a duplicate or an orphan.
-    stats.deduped = recovered.total_blocks - used.len();
     stats
-}
-
-/// Every `tool_result` in the transcript, pulled out: content by id (last wins) and
-/// how many blocks were removed. Messages left with nothing are dropped, since a
-/// content-less message is invalid on the wire.
-struct Recovered {
-    by_id: HashMap<String, FoundResult>,
-    total_blocks: usize,
-}
-
-/// One recovered result.
-struct FoundResult {
-    content: Vec<ResultChunk>,
-    is_error: bool,
-}
-
-/// The `tool_use` ids whose result already sits in the message right after the
-/// call — i.e. the ones the API would have accepted as-is. Everything else this
-/// pass touches is a real change.
-fn correctly_paired(messages: &[Message]) -> HashSet<String> {
-    let mut ok = HashSet::new();
-    for (i, message) in messages.iter().enumerate() {
-        if message.role != Role::Assistant {
-            continue;
-        }
-        let Some(next) = messages.get(i + 1).filter(|m| m.role == Role::User) else {
-            continue;
-        };
-        for block in &message.content {
-            let ContentBlock::ToolUse { id, .. } = block else {
-                continue;
-            };
-            let answered_here = next.content.iter().any(
-                |b| matches!(b, ContentBlock::ToolResult { tool_use_id, .. } if tool_use_id == id),
-            );
-            if answered_here {
-                ok.insert(id.clone());
-            }
-        }
-    }
-    ok
-}
-
-fn take_results(messages: &mut [Message]) -> Recovered {
-    let mut by_id: HashMap<String, FoundResult> = HashMap::new();
-    let mut total_blocks = 0usize;
-    for message in messages.iter_mut() {
-        message.content.retain(|block| match block {
-            ContentBlock::ToolResult {
-                tool_use_id,
-                content,
-                is_error,
-            } => {
-                total_blocks += 1;
-                by_id.insert(
-                    tool_use_id.clone(),
-                    FoundResult {
-                        content: content.clone(),
-                        is_error: *is_error,
-                    },
-                );
-                false
-            }
-            _ => true,
-        });
-    }
-    Recovered {
-        by_id,
-        total_blocks,
-    }
 }
 
 #[cfg(test)]
@@ -258,13 +193,16 @@ mod tests {
         })
     }
 
-    /// **The 2026-08-01 poisoning.** A result that exists but sits one message too
-    /// late satisfies an existential check and still gets the request rejected —
-    /// `messages.N: 'tool_use' … found without 'tool_result' blocks immediately
-    /// after`. Because the whole history replays every turn, that session could
-    /// never be sent again. The repair must **move** it, keeping its content.
+    /// A result that is **not** where the API requires it is dropped, and the call
+    /// is answered by a synthetic block instead of being quietly restitched.
+    ///
+    /// Reordering only ever came from two processes appending to one rollout, which
+    /// the trace format now handles by recording lineage (ADR-0024 amendment
+    /// 2026-08-01) rather than by trusting file order. Silently moving results back
+    /// would make a scrambled conversation *sendable* instead of *right*, and hide
+    /// whatever scrambled it next time.
     #[test]
-    fn a_result_in_the_wrong_message_is_moved_next_to_its_call() {
+    fn a_result_in_the_wrong_place_is_dropped_not_restitched() {
         let mut messages = vec![
             tool_use("A"),
             Message {
@@ -280,24 +218,24 @@ mod tests {
         ];
 
         let stats = repair_pairing(&mut messages);
-        assert_eq!(stats.relocated, 1, "the misplaced result was moved");
         assert_eq!(
-            stats.synthesized, 0,
-            "its content was recovered, not invented"
+            stats.synthesized, 1,
+            "the call is answered where it must be"
         );
+        assert_eq!(stats.deduped, 1, "the stray result is dropped");
 
-        assert_eq!(messages[1].role, Role::User);
-        assert_eq!(
-            result_text(&messages[1], "A").as_deref(),
-            Some("the real output"),
-            "the result now leads the turn right after the call, content intact"
+        assert!(
+            result_text(&messages[1], "A")
+                .expect("answered in place")
+                .contains("tool result missing"),
+            "the answer says the tool did not report — it does not fake the output"
         );
         assert!(
-            messages[1]
+            messages.iter().skip(2).all(|m| !m
                 .content
                 .iter()
-                .any(|b| matches!(b, ContentBlock::Text { text } if text.contains("between"))),
-            "the user's own text is kept, after the result"
+                .any(|b| matches!(b, ContentBlock::ToolResult { .. }))),
+            "no result blocks left anywhere else"
         );
     }
 

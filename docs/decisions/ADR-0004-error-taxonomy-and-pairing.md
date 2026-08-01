@@ -61,25 +61,29 @@ and results are written in **call order**. An id appearing somewhere else in the
 conversation does not satisfy the invariant, and neither does a result whose call is
 absent.
 
-`repair_pairing` therefore **rebuilds** the pairing instead of patching it: remember
-each result's content by id (last occurrence wins, keeping the old dedup rule),
-strip every result block out (dropping messages left empty), then write exactly the
-results each assistant turn's calls need, in order, at the front of the following
-user turn. Three outcomes, counted separately in `RepairStats` because they mean
-different things:
+`repair_pairing` therefore **rebuilds** the pairing instead of patching it: for each
+assistant turn that called tools, take the results out of the following user turn,
+keep the ones its calls asked for (in **call order**), synthesize an `is_error` block
+for the rest, and drop every other result block in the transcript. Two outcomes are
+counted: **synthesized** (no result existed, so the model is told the tool did not
+report) and **deduped** (duplicates beyond the last, results that were not where the
+API requires them, and **orphans** whose `tool_use` is nowhere — the API rejects those
+as loudly as a dangling call, and this pass previously left them alone).
 
-- **relocated** — the content existed but in the wrong place, and was moved. This is
-  the case the old check could not see, and the one that poisoned the session.
-- **synthesized** — no result existed anywhere, so an `is_error` block says the tool
-  did not report (unchanged behavior).
-- **deduped** — duplicates beyond the last, and **orphans** whose `tool_use` is
-  nowhere. Orphans are now dropped; the API rejects them as loudly as a dangling
-  call, and this pass previously left them alone.
+What it deliberately does **not** do is hunt down a misplaced result and move it back.
+A first version of this amendment did, and that was wrong twice over: it makes a
+scrambled conversation *sendable* rather than *right*, and it guards a cause that has
+since been removed at the source — the only thing that ever reordered a transcript was
+two processes appending to one rollout, which the trace format now survives by
+recording lineage (ADR-0024 amendment 2026-08-01). Missing results are repaired
+because they have a mundane cause (a process killed between a call and its results);
+misplaced ones are not, because they no longer have one, and a repair that hides the
+next cause of scrambling is worse than the 400 it prevents.
 
-**Not answered here:** what produced the misplaced result. The transcript came from
-a session running through a proxy already known to drop and retry frames, so the
-cause may be upstream, a crash between appending the call and its results, or
-something in our own drain — the rollout is on the reporter's machine and has not
-been read. This amendment makes the *consequence* impossible either way: a
-transcript that can be repaired is repaired before it is ever sent, and one bad turn
-costs a turn instead of the session.
+**What produced it** *(answered 2026-08-01, after this amendment was first written)*:
+two locode processes appending to one rollout — not the proxy, which was the first
+guess. The transcript was the interleave of two conversations, and the unpaired call
+was one process's, answered two messages later after the other process had spoken. The
+fix for *that* is ADR-0024's lineage amendment; the positional rule here stands on its
+own, because a transcript that violates the API's rule must not be sent whatever wrote
+it.

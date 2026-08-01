@@ -469,3 +469,57 @@ P0 design (per ADR-0023 they are one shared-engine implementation, `User`-role
 - The trace makes every run replayable from disk; the stdout report (ADR-0009/0014)
   remains the machine artifact of a single run. Nothing here is pack-visible: no tool
   or prompt changes for any harness.
+
+
+## Amendment (2026-08-01): replay follows lineage, not file order
+
+**What broke.** Two locode processes appended to one rollout: a session was running
+in one terminal, and a `--resume` in another reopened the *same* file (§2.5's "the
+same rollout keeps appending"). Each process held a valid in-memory history and
+wrote its own turns; the file became their interleave. A later resume read that
+merge as one linear conversation, so a `tool_use` was followed by the other
+process's user message instead of its `tool_result` → a 400 on every subsequent
+send, and a session that could never be continued.
+
+**The assumption that was never written down, and never enforced:** *one process per
+rollout*. §2.2 says "one append-only JSONL rollout per session" and the durability
+rules promise `.lock` siblings "when concurrent writers appear" — a safeguard named,
+then gated on a trigger that had **already fired at design time**, because resuming a
+live session *is* a concurrent writer. A rule with no enforcement is a preference
+(META-AGENTS §5.3), and this one had no test either (§5.1).
+
+**What we do instead of a lock.** Claude Code has this exact shape — resume reuses the
+session id and appends to the same file (`sessionRestore.ts:435-437`), writes with a
+bare `appendFileSync` (`sessionStorage.ts:2579`), and holds no lock; its
+`concurrentSessions.ts` is a PID registry for counting sessions, not a transcript
+lock. It survives interleaving because **its transcript is a tree, not a list**: every
+entry carries `parentUuid`, and replay picks the newest leaf and walks back to the
+root (`buildConversationChain`, `sessionStorage.ts:2069`; leaf selection at `:2317`,
+with cycle detection). File order carries no meaning, so interleaving cannot corrupt
+anything.
+
+Our §2.2 rule — "replay = collect `message` lines in order" — is what made file order
+load-bearing. So it changes:
+
+- **Every history-bearing record (`message`, `compacted`) carries `uuid` and
+  `parent_uuid`.** Metadata records (`usage`) do not: they are read in file order and
+  never replayed.
+- **Replay is the chain from the newest leaf**, prefixed by any records that predate
+  lineage (they carry no uuid and stay in file order, which is exactly how an older
+  rollout replays today — the format stays readable in both directions, §2.4 rule 1).
+- **Resuming continues the leaf it replayed** rather than starting a second root, so a
+  resumed conversation is one chain.
+- Concurrent writers now produce **branches**, and a later resume follows one of them.
+  The other branch stays in the file, unreferenced — recoverable by hand, invisible by
+  default. That is Claude Code's trade and we take it whole.
+
+**A lock was considered and rejected.** It would have prevented the situation instead
+of surviving it, and it would have been redundant the moment lineage landed — two
+mechanisms for one problem, with the lock also refusing a workflow (a second terminal
+on the same session) that lineage simply handles. Rejecting it is the same judgment as
+dropping the relocation pass in ADR-0004's amendment: prefer the design that removes
+the failure over the guard that hides it.
+
+**Not fixed by this:** rollouts already interleaved carry no lineage, so they still
+replay as a merge. They need hand surgery or a fresh session; nothing in the format can
+untangle records that never recorded a parent.
