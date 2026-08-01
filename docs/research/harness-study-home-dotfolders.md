@@ -29,6 +29,19 @@ fidelity boundary that keeps this machinery on the **shared engine**, not per-pa
 
 ---
 
+
+> **Correction (2026-08-01) — how Claude Code survives two writers on one transcript.**
+> This study recorded that `--resume` reuses the session id and appends to the same
+> JSONL with no lock (`sessionRestore.ts:435-437`, `sessionStorage.ts:2579`;
+> `concurrentSessions.ts` is a PID registry for *counting* sessions, not a lock). True,
+> but it omitted the property that makes it safe: **every entry carries `parentUuid`,
+> and replay walks back from the newest leaf** (`buildConversationChain`, `:2069`; leaf
+> selection `:2317`). Their transcript is a tree, so file order carries no meaning and
+> interleaving is harmless. A reader who took only the recorded half — "they append
+> concurrently and it is fine" — would build a flat log and lose a session to it, which
+> is exactly what happened here (ADR-0024 amendment 2026-08-01). *Record the mechanism,
+> not just the behavior.*
+
 ## 0. Headline findings
 
 1. **All four converge on the same skills contract** — `SKILL.md` (YAML frontmatter
