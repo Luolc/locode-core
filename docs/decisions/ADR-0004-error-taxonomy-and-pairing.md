@@ -40,3 +40,46 @@ because it is retried.
 - The loop stays productive: schema-decode failures and unknown tool names return prose telling the model to fix its call, rather than crashing.
 - Transcript validity is centrally enforced, independent of how a turn ended (normal, max-turns, abort, mid-batch cancel).
 - `Fatal` is rare by design; most "errors" are just data the model reads.
+
+## Amendment (2026-08-01): pairing is **positional**, and the repair rebuilds it
+
+A session died with `messages.434: 'tool_use' … found without 'tool_result' blocks
+immediately after`, and every resample failed identically (0 turns, 0 tokens) — the
+request never left the client. The pre-send repair this ADR mandates had run and
+found nothing to do.
+
+**The mismatch:** the repair asked *"does a result for this id exist anywhere in the
+transcript?"* while the API asks *"is the result in the message immediately after
+the call?"*. A result that exists but sits one message too late satisfies the first
+and fails the second. Since the whole history replays every turn, that transcript
+was permanently unsendable — the same permanence the ADR-0007 amendment describes
+for blank text blocks, from a different direction.
+
+**The rule, stated so it cannot be read existentially:** every `tool_use` in a
+message must be answered by a `tool_result` in the **message immediately after**,
+and results are written in **call order**. An id appearing somewhere else in the
+conversation does not satisfy the invariant, and neither does a result whose call is
+absent.
+
+`repair_pairing` therefore **rebuilds** the pairing instead of patching it: remember
+each result's content by id (last occurrence wins, keeping the old dedup rule),
+strip every result block out (dropping messages left empty), then write exactly the
+results each assistant turn's calls need, in order, at the front of the following
+user turn. Three outcomes, counted separately in `RepairStats` because they mean
+different things:
+
+- **relocated** — the content existed but in the wrong place, and was moved. This is
+  the case the old check could not see, and the one that poisoned the session.
+- **synthesized** — no result existed anywhere, so an `is_error` block says the tool
+  did not report (unchanged behavior).
+- **deduped** — duplicates beyond the last, and **orphans** whose `tool_use` is
+  nowhere. Orphans are now dropped; the API rejects them as loudly as a dangling
+  call, and this pass previously left them alone.
+
+**Not answered here:** what produced the misplaced result. The transcript came from
+a session running through a proxy already known to drop and retry frames, so the
+cause may be upstream, a crash between appending the call and its results, or
+something in our own drain — the rollout is on the reporter's machine and has not
+been read. This amendment makes the *consequence* impossible either way: a
+transcript that can be repaired is repaired before it is ever sent, and one bad turn
+costs a turn instead of the session.
