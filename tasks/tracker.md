@@ -122,6 +122,32 @@ The immediate queue, ahead of the remaining packs:
   deleting it. Raised 2026-07-25 alongside the `max_tokens` truncation fix.
 
 ### Fixes
+- [x] **Transcript durability — three ways a session became permanently unsendable**
+  (2026-07-27 → 2026-08-01; #255, #256, #263, #264). One symptom class, three causes,
+  found in the wrong order:
+  - **A blank text block in the history** (#255). Anthropic emits empty text blocks and
+    rejects them on input; the history replays every turn, so one such block ended the
+    session. The wire now drops blank text on the way out, which also *heals* an
+    already-poisoned rollout on resume. Same PR: a lossy stream stopped passing as a
+    short answer — a recognized-but-unparsable frame, `stop_reason: tool_use` with no
+    tool call, or a delta for a block that never started all raise the retryable
+    transport error truncation already raised (ADR-0007 amendment).
+  - **A retried stream rendering its reply twice** (#256). Making streams retryable
+    exposed it, so `Event::MessageDeltaReset` annuls a partial stream the resample is
+    about to replace (ADR-0014 amendment).
+  - **A `tool_use` whose result was one message too late** (#263, #264). The pre-send
+    repair checked whether an id was answered *anywhere*; the API requires the result in
+    the **next** message. Repair is now positional (ADR-0004 amendment). The cause,
+    found only after the rollout was finally read, was **two locode processes appending
+    to one file** — a live session in one terminal, `--resume` in another. Fixed at the
+    source by recording lineage on every history record and replaying the chain from the
+    newest leaf instead of trusting file order (ADR-0024 amendment) — Claude Code's
+    `parentUuid` property, which our study had recorded as a behavior without its
+    mechanism. A file lock was considered and rejected: it guards the situation rather
+    than removing it, and lineage makes it redundant.
+  - What this taught about *how we work* is in [`META-AGENTS.md`](../META-AGENTS.md)
+    §4 F5–F7 (diagnosing without reading the artifact; guards that delete the signal;
+    documents that record behavior without mechanism) and the rules §5.5–§5.7.
 - [x] **`/effort` + `/add-dir` commands, and locode's own effort ladder** (2026-07-26,
   #235/#236). Effort was reachable but unwired — nothing ever set `reasoning_effort`, so
   every run took the API default. Now a `--effort` flag, an `effort` settings key, and an
