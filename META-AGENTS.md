@@ -202,6 +202,62 @@ have no equivalent in any skill:
 The skills' `/review` (five axes, pre-merge) is the slot where the second one *should*
 live, and it is unused.
 
+### F5 (2026-08-01) — I named a cause twice without reading the artifact that held it
+
+**Evidence.** Two transcript-corruption fixes shipped on diagnoses built from reading
+*our* code and finding a mechanism that could produce the symptom: a blank text block
+blamed on a proxy dropping SSE frames (#255), and a misplaced `tool_result` blamed on
+"something reordered the transcript" (#263). The rollout file that would have settled
+both sat unread on another machine the whole time. When it was finally read, the cause
+was neither: **two locode processes appending to one rollout**, visible in one pass as a
+table of line number / message index / timestamp, with two processes' turns alternating.
+
+**Why the method fails, specifically.** Reading code for a mechanism that *could* explain
+a symptom always succeeds — code is full of plausible mechanisms. It produces a fix that
+is locally correct and aimed at nothing. Reading the artifact produces *the* mechanism.
+The tell was there in the screenshot from the first report (a `Bash` call rendered with
+`(no result)`), and I read past it twice.
+
+**Changed:** rule §5.5. The fixes themselves stand — both invariants were genuinely
+wrong — but each PR's "what caused this" section was fiction until the file was read,
+and ADR-0004's amendment had to be corrected afterwards.
+
+### F6 (2026-08-01) — Every defensive layer I added removed the signal that led to the cause
+
+**Evidence.** Three in a row, each caught by the user rather than by me:
+
+1. #263 relocated a misplaced `tool_result` back into position. That converts a loud
+   400 into a **silent merged conversation** — the transcript becomes sendable rather
+   than right, and the next thing that scrambles a file produces no symptom at all.
+2. A file lock was proposed to stop two processes writing one rollout. It guards the
+   situation instead of removing it, and would have been dead weight the moment lineage
+   landed — *"if the real design is coming, why ship the workaround first?"*
+3. Earlier, in the same spirit: `--restricted`'s incompleteness was kept visible rather
+   than papered over (that one we got right, which is why it is worth naming the
+   pattern).
+
+Each guard was locally reasonable. What they shared was destroying the evidence: a
+system that repairs its way past corruption reports health while corrupt.
+
+**Changed:** rule §5.6. The relocation pass was removed in the same PR that fixed the
+cause (#264), and the lock was never written.
+
+### F7 (2026-08-01) — A document that records behavior without its mechanism is a trap
+
+**Evidence.** `harness-study-home-dotfolders.md` recorded, correctly, that Claude Code's
+`--resume` reuses the session id, appends to the same JSONL, and takes no lock. It did
+not record **why that is safe**: every entry carries `parentUuid`, and replay walks back
+from the newest leaf, so file order carries no meaning. We copied the recorded half —
+same file, same append, no lock — onto a **flat** log where file order *is* the
+conversation, and lost a session to the first concurrent resume.
+
+**The second half of the same failure:** ADR-0024 named the right safeguard (`.lock`
+siblings, advisory `flock`) and gated it on *"when concurrent writers appear"* — a
+trigger that had already fired at design time, because resuming a live session **is** a
+concurrent writer. Nobody was watching the trigger, so the deferral was permanent.
+
+**Changed:** rule §5.7, plus a dated correction on the study itself.
+
 ## 5. Rules that came out of the findings
 
 ### 5.1 An invariant sentence needs a test name
@@ -232,6 +288,37 @@ Stale guidance is more expensive than missing guidance, because it is followed (
 applies to vendored skills too: if a skill's procedure conflicts with `AGENTS.md`, either
 note the override in `AGENTS.md` (as it does today for `/plan`'s artifacts) or remove the
 skill.
+
+### 5.5 Read the artifact before naming a cause
+
+Logs, rollouts, captured bytes, the failing file. Reading code first produces a
+mechanism that *could* explain the symptom — there is always one — and a fix aimed at
+nothing. If the artifact is on someone else's machine, **ask for it** before writing the
+"root cause" section; "the rollout has not been read" belongs in the PR body, in those
+words, when it is true.
+
+### 5.6 Prefer deleting the failure over guarding it — and say what a guard suppresses
+
+A guard that lets the system continue past corruption also removes the signal that would
+have found its cause. Before adding one, answer two questions in the code or the PR:
+*what does this hide*, and *what would we have seen without it*. When the real fix is
+already in view, ship that instead — a workaround for a problem the design is about to
+delete is two mechanisms and one of them lies.
+
+Repair is still right where the cause is **mundane and known**: a process killed between
+a tool call and its result leaves a dangling `tool_use`, and synthesizing the missing
+result is honest. The line is whether the cause is understood, not whether the repair is
+possible.
+
+### 5.7 Record the mechanism, not just the behavior — and give a deferred safeguard a detector
+
+Copying a behavior without the property that makes it safe is how a study becomes a
+trap (F7). When a research note says "X does Y and it is fine", the note is incomplete
+until it says **why** it is fine.
+
+Likewise, a safeguard deferred on a condition ("when concurrent writers appear") needs
+something that *notices* the condition — a test, an assertion, an entry in the tracker's
+Deferred list with a named trigger. A condition nobody watches is a deferral with no end.
 
 ## 6. Backlog — tooling ideas, recorded not scheduled
 
