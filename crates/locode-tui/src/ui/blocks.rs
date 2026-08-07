@@ -51,6 +51,18 @@ pub enum Block {
     UserPrompt(String),
     /// A complete assistant text message.
     AssistantText(String),
+    /// A committed chunk of a **streaming** assistant message (ADR-0021):
+    /// completed markdown blocks fold into the transcript mid-stream, and the
+    /// finalizing `Message` commits the remainder the same way. Riding the
+    /// outbox (rather than being rendered straight into the tail) is what keeps
+    /// a chunk ordered against the other blocks queued in the same batch.
+    AssistantChunk {
+        /// The chunk's markdown text.
+        text: String,
+        /// Whether this is the message's first committed chunk (it carries the
+        /// `●` bullet; continuations hang-indent under it).
+        first: bool,
+    },
     /// A finalized tool call (result paired).
     ToolCall {
         /// Client-facing tool name.
@@ -101,6 +113,11 @@ impl Block {
         if let Block::UserPrompt(text) = self {
             return render_user_prompt(text, width);
         }
+        // A streaming chunk renders via the shared chunk path (which applies its
+        // own margins) so it stays pixel-identical to the mid-stream commits.
+        if let Block::AssistantChunk { text, first } = self {
+            return render_assistant_chunk(text, width, *first);
+        }
         let inner = width.saturating_sub(2 * MARGIN);
         self.render_inner(inner)
             .into_iter()
@@ -113,6 +130,8 @@ impl Block {
         match self {
             // Rendered by `render` as a full-width band (never reaches here).
             Block::UserPrompt(_) => unreachable!("UserPrompt renders as a band"),
+            // Rendered by `render` via `render_assistant_chunk` (never reaches here).
+            Block::AssistantChunk { .. } => unreachable!("AssistantChunk renders as a chunk"),
             Block::AssistantText(text) => {
                 // A leading ● bullet on the first line, the rest hanging-indented
                 // under it (Claude Code's message hierarchy). The 2-col gutter is

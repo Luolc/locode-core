@@ -229,16 +229,15 @@ pub struct App {
     /// The **in-progress (uncommitted)** assistant text of a streaming turn
     /// (ADR-0021): deltas accumulate here and render in a live cell. The loop
     /// (`fold_streaming`) commits *completed* markdown blocks out of this into the
-    /// transcript tail (→ native scrollback, so a long reply is scrollable
-    /// mid-stream), leaving only the current block. `None` when not streaming.
+    /// outbox (→ transcript tail → native scrollback, so a long reply is
+    /// scrollable mid-stream), leaving only the current block; the whole
+    /// assistant `Message` commits the remainder the same way when it arrives.
+    /// `None` when not streaming.
     pub streaming: Option<String>,
     /// Whether any block of the current streaming message has already committed
     /// to the tail — so the `●` bullet (placed on the message's first line) isn't
     /// repeated on continuation chunks or the live cell.
     pub streaming_committed_any: bool,
-    /// Set when the whole assistant `Message` has arrived: the loop commits the
-    /// remaining in-progress block and clears the streaming state.
-    pub streaming_finalize: bool,
     /// Ctrl+C quit arm: armed until this instant.
     quit_armed_until: Option<Instant>,
     /// Esc clear-draft arm: armed until this instant.
@@ -290,7 +289,6 @@ impl App {
             spinner_frame: 0,
             streaming: None,
             streaming_committed_any: false,
-            streaming_finalize: false,
             quit_armed_until: None,
             esc_armed_until: None,
             hint: None,
@@ -506,7 +504,6 @@ impl App {
             Event::MessageDeltaReset { .. } => {
                 self.streaming = None;
                 self.streaming_committed_any = false;
-                self.streaming_finalize = false;
             }
             // Injected framing (project instructions, the skills listing) is a `User`
             // message the UI drops, because live submits echo their own text. Under the
@@ -524,10 +521,23 @@ impl App {
             Event::Message { message } => match message.role {
                 Role::Assistant if self.streaming.is_some() => {
                     // Streaming turn: the assistant text already streamed and its
-                    // completed blocks are committed; signal the loop to commit the
-                    // last in-progress block (`fold_streaming`) rather than pushing a
-                    // duplicate whole-text block. Tool calls still register here.
-                    self.streaming_finalize = true;
+                    // completed blocks are committed; commit the remaining
+                    // in-progress block NOW, through the outbox — the same queue
+                    // the batch's tool cells and a delivered mid-run echo ride —
+                    // rather than pushing a duplicate whole-text block. Committing
+                    // here (not via a loop-top finalize flag) is what keeps
+                    // transcript order = wire order when one drain batch spans
+                    // this message, the tool-result carrier, and the next turn's
+                    // first deltas: a deferred finalize let those deltas glue onto
+                    // this buffer and commit ahead of the queued blocks.
+                    let text = self.streaming.take().unwrap_or_default();
+                    if !text.trim().is_empty() {
+                        self.outbox.push(Block::AssistantChunk {
+                            text,
+                            first: !self.streaming_committed_any,
+                        });
+                    }
+                    self.streaming_committed_any = false;
                     for block in message.content {
                         if let ContentBlock::ToolUse { id, name, input } = block {
                             self.pending_tools.push(PendingTool {
@@ -665,16 +675,13 @@ impl App {
         // window is. A real report replaces any estimate.
         self.context_tokens = report.context_usage.context_tokens();
         self.context_estimated = false;
-        // A cancelled/errored streaming turn never emits the whole `Message`, so
-        // no finalize is pending: drop the in-progress (uncommitted) block (Q2 —
-        // the partial is discarded). Any *completed* blocks already committed to
-        // scrollback stay (they can't be un-committed, and are real output). When
-        // a finalize IS pending (normal completion), leave the state for
-        // `fold_streaming` to commit the last block.
-        if !self.streaming_finalize {
-            self.streaming = None;
-            self.streaming_committed_any = false;
-        }
+        // A cancelled/errored streaming turn never emits the whole `Message`
+        // (which is what commits the remainder to the outbox), so anything still
+        // buffered here is an uncommitted partial: drop it (Q2). Any *completed*
+        // blocks already committed to scrollback stay (they can't be
+        // un-committed, and are real output).
+        self.streaming = None;
+        self.streaming_committed_any = false;
         self.outbox.push(turn_end(report, elapsed));
         self.run = RunState::Idle;
         // Defensive: a terminal report clears any lingering overlay (the loop
@@ -1347,7 +1354,6 @@ mod tests {
         );
         assert!(app.streaming.is_none(), "the void partial is dropped");
         assert!(!app.streaming_committed_any);
-        assert!(!app.streaming_finalize);
 
         // The retry streams the whole reply — and it stands alone.
         let _ = app.update(
@@ -1642,8 +1648,8 @@ mod tests {
             "nothing pushed to outbox while streaming"
         );
 
-        // The whole Message lands → the reducer signals `fold_streaming` (the loop)
-        // to commit the remaining block; it does NOT push a duplicate whole block.
+        // The whole Message lands → the reducer commits the remaining block
+        // through the outbox; it does NOT push a duplicate whole-text block.
         let _ = app.update(
             Msg::Engine(Box::new(EngineMsg::Event(Box::new(Event::Message {
                 message: Message {
@@ -1655,16 +1661,94 @@ mod tests {
             })))),
             t0,
         );
-        assert!(app.streaming_finalize, "finalize signalled to the loop");
+        assert!(app.streaming.is_none(), "streaming state cleared");
+        assert!(!app.streaming_committed_any);
         assert_eq!(
-            app.streaming.as_deref(),
-            Some("Hello streamed world"),
-            "text kept for the loop to commit"
+            app.outbox,
+            vec![Block::AssistantChunk {
+                text: "Hello streamed world".into(),
+                first: true,
+            }],
+            "the remainder commits as one chunk, not a duplicate whole block"
+        );
+    }
+
+    /// Regression (mid-run ordering): when one drain batch spans the finalizing
+    /// assistant `Message`, the tool-result carrier with delivered mid-run
+    /// input, and the next turn's first deltas, the transcript must keep wire
+    /// order — reply, then tool cells, then the interjection echo — and the new
+    /// deltas must open a FRESH buffer instead of gluing onto the old one. The
+    /// deferred loop-top finalize lost both: the next turn's text committed
+    /// (glued to the old buffer) ahead of the queued cells and echo, so the
+    /// user's message rendered BELOW the reply that reacted to it.
+    #[test]
+    fn a_burst_batch_keeps_the_mid_run_echo_before_the_next_turn() {
+        let mut app = ready_app();
+        let t0 = Instant::now();
+        let iq = locode_core::InputQueue::new();
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::RunStarted {
+                cancel: locode_core::CancellationToken::new(),
+                input_queue: iq.clone(),
+            })),
+            t0,
+        );
+        // Turn N streams, then the user interjects mid-run.
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::Event(Box::new(Event::MessageDelta {
+                text: "Working on it.".into(),
+            })))),
+            t0,
+        );
+        type_str(&mut app, "also add jiaxi", t0);
+        let _ = app.update(key(KeyCode::Enter), t0);
+        let _ = iq.take_all(); // the engine drains the queue at the boundary
+        // The rest of the batch arrives in one drain: the finalizing Message
+        // (with a tool call), the carrier delivering the interjection, and the
+        // next turn's first delta.
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::Event(Box::new(Event::Message {
+                message: Message {
+                    role: Role::Assistant,
+                    content: vec![
+                        ContentBlock::Text {
+                            text: "Working on it.".into(),
+                        },
+                        ContentBlock::ToolUse {
+                            id: "t1".into(),
+                            name: "bash".into(),
+                            input: json!({"command": "true"}),
+                        },
+                    ],
+                },
+            })))),
+            t0,
+        );
+        let _ = app.update(mid_run_carrier("t1", "also add jiaxi"), t0);
+        let _ = app.update(
+            Msg::Engine(Box::new(EngineMsg::Event(Box::new(Event::MessageDelta {
+                text: "Looking up jiaxi now.".into(),
+            })))),
+            t0,
+        );
+
+        let kinds: Vec<&Block> = app.outbox.iter().collect();
+        assert!(
+            matches!(kinds[0], Block::AssistantChunk { text, first: true } if text == "Working on it."),
+            "turn N's reply commits first: {kinds:?}"
         );
         assert!(
-            app.outbox.is_empty(),
-            "no duplicate whole-text block pushed: {:?}",
-            app.outbox
+            matches!(kinds[1], Block::ToolCall { name, .. } if name == "bash"),
+            "then the batch's tool cell: {kinds:?}"
+        );
+        assert!(
+            matches!(kinds[2], Block::UserPrompt(p) if p == "also add jiaxi"),
+            "then the interjection echo: {kinds:?}"
+        );
+        assert_eq!(
+            app.streaming.as_deref(),
+            Some("Looking up jiaxi now."),
+            "the next turn's deltas open a fresh buffer, not glued onto turn N"
         );
     }
 
