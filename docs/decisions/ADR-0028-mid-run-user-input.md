@@ -296,3 +296,30 @@ should follow. Correct by construction beats correct by timing.
 
 This binds the P0.5 task notifications that reuse the queue: a notification
 renders where it was drained, not where it arrived.
+
+## Amendment (2026-08-07): two more ways the invariant was violated
+
+Both found in the field, both fixed the same day; recorded because each is a
+*class* of violation, not a one-off.
+
+1. **Replay is a delivery path too, and it had neither consequence applied.**
+   The resume/`--continue` replay rendered the stored carrier text verbatim —
+   delivery marker included — and echoed it *before* the batch's tool results
+   (it flushed text blocks inline but batched results to the end of the
+   message). The marker is delivery machinery, like the pack's prompt wrapper:
+   the live UI never showed it, so replay must strip it and must flush results
+   ahead of the echo. Anything the live UI renders from *local* state (the
+   pending list's display text) has to be reconstructed from the *wire* form on
+   replay — every such asymmetry is a replay bug waiting.
+2. **Order is only preserved inside ONE queue.** The TUI committed transcript
+   blocks from two places — streaming text via a loop-top fold of its own
+   buffer, everything else via the outbox — and the fold ran first. Whenever
+   one channel-drain batch spanned a turn's finalize, the carrier, and the next
+   turn's first deltas (a stalled loop — e.g. SSH backpressure — queues exactly
+   that), the next turn's text committed ahead of the carrier's cells and echo:
+   the user's message rendered *below* the reply that reacted to it, and the
+   deltas glued onto the finalized buffer. The fix routes every transcript
+   commit through the outbox FIFO, with the finalize performed at
+   event-processing time. The rule: **wire order survives only while blocks
+   ride a single ordered queue; a second buffer with its own flush point is a
+   reorder waiting for a burst.**

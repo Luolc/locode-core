@@ -126,14 +126,14 @@ pub async fn run(cli: Cli, registry: ProviderRegistry) -> Result<ExitCode, RunEr
         // bottom-anchored frame (rate-capped; deferred paint instead of
         // spinning). Overflow leaves the frame via `scroll_up`, not
         // `insert_before` (ADR-0022).
-        // Commit completed streaming blocks into the tail (→ scrollback), so a
-        // long in-progress reply is scrollable mid-stream (ADR-0021). This runs
-        // BEFORE `flush_outbox`: the last assistant `Message` (which signals the
-        // finalize) and `RunFinished` (which pushes the `completed · … · Ns`
-        // turn-end summary to the outbox) are drained in the SAME batch, so the
-        // final block must be committed to the tail before the summary — else the
-        // summary interleaves into the middle of the reply (ADR-0022).
-        fold_streaming(&terminal, &mut app, &mut tail)?;
+        // Commit completed streaming blocks (ADR-0021), so a long in-progress
+        // reply is scrollable mid-stream. The commit goes through the outbox —
+        // the ONE ordered queue every transcript block rides — so a chunk can
+        // never jump ahead of blocks queued earlier in the same drain batch
+        // (the reducer commits the finalize/turn-end blocks in event order for
+        // the same reason). `fold_streaming` runs before `flush_outbox` so its
+        // chunk lands in this same flush.
+        fold_streaming(&mut app);
         if !app.outbox.is_empty() {
             flush_outbox(&terminal, &mut app, &mut tail)?;
         }
@@ -253,50 +253,29 @@ fn flush_outbox<B: ratatui::backend::Backend>(
 }
 
 /// Commit *completed* markdown blocks of the in-progress streaming message into
-/// the transcript `tail` (which `paint` then commits to native scrollback), so a
-/// long reply is scrollable mid-stream (ADR-0021). Only the current in-progress
-/// block stays in `app.streaming` (rendered as the live cell). On finalize, the
-/// remaining block is committed and the streaming state cleared. Completed blocks
-/// are stable (fence-aware boundary) so they never reflow after committing.
-fn fold_streaming<B: ratatui::backend::Backend>(
-    terminal: &crate::frame_terminal::FrameTerminal<B>,
-    app: &mut App,
-    tail: &mut Vec<Line<'static>>,
-) -> std::io::Result<()> {
-    let width = terminal.size()?.width;
-    if app.streaming_finalize {
-        if let Some(text) = app.streaming.take()
-            && !text.trim().is_empty()
-        {
-            tail.extend(ui::blocks::render_assistant_chunk(
-                &text,
-                width,
-                !app.streaming_committed_any,
-            ));
-        }
-        app.streaming = None;
-        app.streaming_committed_any = false;
-        app.streaming_finalize = false;
-        app.dirty = true;
-        return Ok(());
-    }
+/// the outbox (flushed to the transcript tail right after, which `paint` then
+/// commits to native scrollback), so a long reply is scrollable mid-stream
+/// (ADR-0021). Only the current in-progress block stays in `app.streaming`
+/// (rendered as the live cell); the finalizing assistant `Message` commits the
+/// remainder in `App::on_event`, through the same outbox, which is what keeps
+/// every committed block in event order. Completed blocks are stable
+/// (fence-aware boundary) so they never reflow after committing.
+fn fold_streaming(app: &mut App) {
     let Some(buffer) = app.streaming.as_deref() else {
-        return Ok(());
+        return;
     };
     let stable_end = ui::blocks::stable_prefix_end(buffer);
     if stable_end > 0 {
         let stable = buffer[..stable_end].to_string();
         let remainder = buffer[stable_end..].to_string();
-        tail.extend(ui::blocks::render_assistant_chunk(
-            &stable,
-            width,
-            !app.streaming_committed_any,
-        ));
+        app.outbox.push(ui::blocks::Block::AssistantChunk {
+            text: stable,
+            first: !app.streaming_committed_any,
+        });
         app.streaming = Some(remainder);
         app.streaming_committed_any = true;
         app.dirty = true;
     }
-    Ok(())
 }
 
 /// Paint one bottom-anchored frame (ADR-0022): commit the transcript overflow
@@ -649,7 +628,8 @@ mod tests {
 
         // Two completed blocks + an in-progress third (no trailing blank line).
         app.streaming = Some("First block.\n\nSecond block.\n\nThird in prog".into());
-        fold_streaming(&t, &mut app, &mut tail).unwrap();
+        fold_streaming(&mut app);
+        super::flush_outbox(&t, &mut app, &mut tail).unwrap();
         // The two completed blocks committed to the tail; only the in-progress
         // block remains live.
         assert_eq!(app.streaming.as_deref(), Some("Third in prog"));
@@ -672,12 +652,25 @@ mod tests {
             "single bullet: {committed}"
         );
 
-        // Finalize: the remaining block commits, streaming state clears.
-        app.streaming_finalize = true;
-        fold_streaming(&t, &mut app, &mut tail).unwrap();
+        // Finalize (the whole assistant `Message` arrives): the reducer commits
+        // the remainder through the outbox and clears the streaming state.
+        let _ = app.update(
+            crate::app::Msg::Engine(Box::new(crate::engine::EngineMsg::Event(Box::new(
+                locode_core::Event::Message {
+                    message: locode_core::Message {
+                        role: locode_core::Role::Assistant,
+                        content: vec![locode_core::ContentBlock::Text {
+                            text: "First block.\n\nSecond block.\n\nThird in prog".into(),
+                        }],
+                    },
+                },
+            )))),
+            std::time::Instant::now(),
+        );
         assert_eq!(app.streaming, None);
         assert!(!app.streaming_committed_any);
-        assert!(!app.streaming_finalize);
+        fold_streaming(&mut app);
+        super::flush_outbox(&t, &mut app, &mut tail).unwrap();
         let all = tail
             .iter()
             .map(std::string::ToString::to_string)
@@ -692,26 +685,27 @@ mod tests {
 
     #[test]
     fn finalize_commits_the_last_block_before_the_run_summary() {
-        // Regression: the final assistant `Message` (finalize signal) and
-        // `RunFinished` (which pushes the `completed · … · Ns` summary to the
-        // outbox) drain in the SAME batch. The loop must fold the streaming
-        // finalize into the tail BEFORE flushing the outbox, or the summary
-        // interleaves into the middle of the reply.
+        // Regression: the final assistant `Message` (which commits the streaming
+        // remainder to the outbox) and `RunFinished` (which pushes the
+        // `completed · … · Ns` summary after it) drain in the SAME batch. The
+        // outbox is one FIFO, so the summary can never interleave into the
+        // middle of the reply.
         use crate::ui::blocks::Block;
         let t = FrameTerminal::new(TestBackend::new(60, 20)).unwrap();
         let mut app = App::new();
         let mut tail: Vec<Line<'static>> = Vec::new();
 
-        // A streaming turn whose last in-progress block is pending finalize, and
-        // the run-summary already sitting in the outbox (same-batch order).
-        app.streaming = Some("The final paragraph of the reply.".into());
-        app.streaming_committed_any = true;
-        app.streaming_finalize = true;
+        // The reducer committed the last in-progress block at the finalizing
+        // `Message`, then `RunFinished` queued the summary — same-batch order.
+        app.outbox.push(Block::AssistantChunk {
+            text: "The final paragraph of the reply.".into(),
+            first: false,
+        });
         app.outbox
             .push(Block::Notice("completed · 13 turns · 82s".into()));
 
         // Mirror the loop's top-of-iteration order exactly.
-        super::fold_streaming(&t, &mut app, &mut tail).unwrap();
+        super::fold_streaming(&mut app);
         super::flush_outbox(&t, &mut app, &mut tail).unwrap();
 
         let joined = tail
@@ -736,7 +730,8 @@ mod tests {
         let mut tail: Vec<Line<'static>> = Vec::new();
         // A paragraph, then an OPEN code fence with a blank line inside it.
         app.streaming = Some("intro\n\n```rust\nlet a = 1;\n\nlet b = 2;".into());
-        fold_streaming(&t, &mut app, &mut tail).unwrap();
+        fold_streaming(&mut app);
+        super::flush_outbox(&t, &mut app, &mut tail).unwrap();
         // Only the paragraph commits; the open fence stays live (uncommitted).
         assert_eq!(
             app.streaming.as_deref(),

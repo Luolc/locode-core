@@ -309,7 +309,7 @@ fn replay_message(
     msg_tx: &tokio::sync::mpsc::UnboundedSender<EngineMsg>,
     message: locode_core::Message,
 ) {
-    use locode_core::{ContentBlock, Event, Message, Role};
+    use locode_core::{ContentBlock, Event, Role};
     match message.role {
         // The pack preamble is never rendered.
         Role::System | Role::Developer => {}
@@ -319,7 +319,12 @@ fn replay_message(
         Role::User => {
             // Split: tool results pair with the already-replayed tool calls via
             // the normal event path; plain text is a prompt echo — minus the
-            // engine-injected reminders and the pack's prompt wrapper.
+            // engine-injected reminders, the pack's prompt wrapper, and the
+            // mid-run delivery marker. Results collected so far flush BEFORE
+            // each echo, so the replayed order stays the wire order: mid-run
+            // input sits after the batch's results in the same message
+            // (ADR-0028) and must render after their cells, exactly as it did
+            // live.
             let mut tool_results = Vec::new();
             for block in message.content {
                 match block {
@@ -328,21 +333,44 @@ fn replay_message(
                         if text.trim_start().starts_with("<system-reminder>") {
                             continue; // injected machinery, never rendered live
                         }
-                        let _ = msg_tx.send(EngineMsg::ReplayedPrompt(unwrap_user_query(&text)));
+                        flush_tool_results(msg_tx, &mut tool_results);
+                        let prompt = strip_mid_run_marker(&text)
+                            .map_or_else(|| unwrap_user_query(&text), str::to_string);
+                        let _ = msg_tx.send(EngineMsg::ReplayedPrompt(prompt));
                     }
                     _ => {}
                 }
             }
-            if !tool_results.is_empty() {
-                let _ = msg_tx.send(EngineMsg::Event(Box::new(Event::Message {
-                    message: Message {
-                        role: Role::User,
-                        content: tool_results,
-                    },
-                })));
-            }
+            flush_tool_results(msg_tx, &mut tool_results);
         }
     }
+}
+
+/// Forward the tool results accumulated so far as one `User` message (they pair
+/// with the already-replayed calls); a no-op when none are pending.
+fn flush_tool_results(
+    msg_tx: &tokio::sync::mpsc::UnboundedSender<EngineMsg>,
+    tool_results: &mut Vec<locode_core::ContentBlock>,
+) {
+    use locode_core::{Event, Message, Role};
+    if tool_results.is_empty() {
+        return;
+    }
+    let _ = msg_tx.send(EngineMsg::Event(Box::new(Event::Message {
+        message: Message {
+            role: Role::User,
+            content: std::mem::take(tool_results),
+        },
+    })));
+}
+
+/// The user's words from a stored mid-run message, or `None` for an ordinary
+/// prompt. Queued input is delivered marked with [`locode_core::MID_RUN_PREAMBLE`]
+/// (ADR-0028); the marker is delivery machinery, and the live UI echoed only the
+/// words — so the replay does too.
+fn strip_mid_run_marker(text: &str) -> Option<&str> {
+    let rest = text.strip_prefix(locode_core::MID_RUN_PREAMBLE)?;
+    Some(rest.strip_prefix(':').unwrap_or(rest).trim_start())
 }
 
 /// Strip grok's `<user_query>` shaping wrapper for display (the live UI echoes
@@ -888,5 +916,47 @@ mod replay_tests {
             "plain claude prompt"
         );
         assert_eq!(unwrap_user_query("<user_query>\nhi\n</user_query>"), "hi");
+    }
+
+    /// A mid-run carrier (ADR-0028): the batch's tool results, then the queued
+    /// input marked for delivery. The replay must render it the way it rendered
+    /// live — the marker stripped (the live echo shows only the user's words)
+    /// and the echo AFTER the results' cells (the text sits after them on the
+    /// wire).
+    #[test]
+    fn replay_strips_the_mid_run_marker_and_keeps_it_after_the_results() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        replay_message(
+            &tx,
+            Message {
+                role: Role::User,
+                content: vec![
+                    ContentBlock::ToolResult {
+                        tool_use_id: "t1".into(),
+                        content: vec![],
+                        is_error: false,
+                    },
+                    ContentBlock::Text {
+                        text: format!(
+                            "{}:\n\nlet's also remove docs/DEBUGGING_NOTES.md",
+                            locode_core::MID_RUN_PREAMBLE
+                        ),
+                    },
+                ],
+            },
+        );
+
+        let msgs = drain(&mut rx);
+        assert_eq!(msgs.len(), 2);
+        assert!(
+            matches!(&msgs[0], EngineMsg::Event(e)
+                if matches!(&**e, locode_core::Event::Message { message } if message.role == Role::User)),
+            "the results flush first, so their cells render above the echo"
+        );
+        assert!(
+            matches!(&msgs[1], EngineMsg::ReplayedPrompt(p)
+                if p == "let's also remove docs/DEBUGGING_NOTES.md"),
+            "the delivery marker is machinery, not the user's words: {msgs:?}"
+        );
     }
 }
