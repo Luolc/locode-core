@@ -271,6 +271,13 @@ Prefer scoping to a crate while iterating (`-p <crate>`); run the full workspace
 (all four) before merge. The canonical shortcut is `just check` (`fmt-check ·
 clippy · test · doc`); `SPEC.md` → Commands lists the raw commands.
 
+**Secret scanning.** After the first clone, run `uvx pre-commit install` once: the
+commit hook then runs gitleaks on the staged changes, so a secret is caught before it
+is committed. CI does not depend on it: the required job also runs gitleaks on the
+commits of each PR or push, and `.github/workflows/gitleaks.yml` scans the whole
+history weekly. The gitleaks version is pinned in `.pre-commit-config.yaml` and both
+workflows; change all three together.
+
 ## Boundaries
 
 - **Always:** run the mandatory four-part gate (`fmt · clippy · test · doc`) before merge; derive tool schemas from

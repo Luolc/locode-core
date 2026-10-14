@@ -104,3 +104,19 @@ pure redundancy. This is a workflow-only change — no version re-tag of 0.1.5 i
 needed; it takes effect on the next tag. `locode-exec` stays a published
 *library* crate (see ADR-0019 amendment, same date); only its release binary
 and its README advertisement are dropped.
+
+## Amendment (2026-10-13): secret scanning, and no cancelled `main` runs
+
+The required job (`fmt · clippy · test · doc`) now starts with
+`gitleaks/gitleaks-action` (v3.0.0, pinned by SHA, gitleaks 8.30.1), which scans
+the commits of each PR or push; it sits in the required job, not a job of its own,
+so a finding blocks the merge. A new workflow, `.github/workflows/gitleaks.yml`,
+scans the whole history weekly and on `workflow_dispatch`; it is not a required
+check. Locally, `.pre-commit-config.yaml` now exists, holding only the gitleaks hook
+(staged changes); the fmt+clippy hooks the Decision lists as optional are still not
+adopted. The official action downloads gitleaks without checking a SHA-256; that is
+the price of using it instead of a hand-written download.
+
+`concurrency` no longer cancels on `main`: each `main` commit gets its own group
+(`github.sha`), so a run is never cancelled or replaced by the next merge and every
+`main` commit keeps a CI result. A PR branch still cancels its older run.
