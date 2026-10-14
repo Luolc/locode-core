@@ -1,0 +1,25 @@
+# Weekly secret scan of the whole history. CI scans only the commits of each
+# PR or push, so this is what finds an old secret that a newer gitleaks rule
+# recognizes. Not a required check.
+name: gitleaks
+
+on:
+  schedule:
+    - cron: "37 5 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITLEAKS_VERSION: 8.30.1 # the rev of the hook in .pre-commit-config.yaml
+          GITLEAKS_ENABLE_COMMENTS: false

@@ -1,0 +1,8 @@
+# Install once after cloning: `uvx pre-commit install`. gitleaks scans the
+# staged changes; keep its rev in step with GITLEAKS_VERSION in
+# .github/workflows/ci.yml and gitleaks.yml.
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
